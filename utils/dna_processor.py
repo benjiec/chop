@@ -246,8 +246,26 @@ class DNADataset:
         if len(sequence) < self.max_length:
             attention_mask[len(sequence):] = False
         
-        # Extract biological features
+        # Extract biological features - only return scalars and fixed-size arrays
         features = self.feature_extractor.extract_features(sequence)
+        
+        # Convert features to tensors and pad/truncate to max_length
+        processed_features = {}
+        for key, value in features.items():
+            if isinstance(value, np.ndarray):
+                # Pad or truncate arrays to max_length
+                if len(value) > self.max_length:
+                    value = value[:self.max_length]
+                elif len(value) < self.max_length:
+                    padding = np.zeros(self.max_length - len(value), dtype=value.dtype)
+                    value = np.concatenate([value, padding])
+                processed_features[key] = torch.from_numpy(value)
+            elif isinstance(value, dict):
+                # Skip dictionary features for now (like kmer_frequencies)
+                continue
+            else:
+                # Scalar values
+                processed_features[key] = torch.tensor(float(value))
         
         # Prepare targets if annotations exist
         targets = {}
@@ -257,8 +275,8 @@ class DNADataset:
         return {
             'input_ids': tokens,
             'attention_mask': attention_mask,
-            'sequence_length': len(sequence),
-            'features': features,
+            'sequence_length': torch.tensor(len(sequence)),
+            'features': processed_features,
             'targets': targets
         }
     
@@ -266,12 +284,12 @@ class DNADataset:
         """Prepare target tensors from annotations."""
         targets = {}
         
-        # Initialize target arrays
-        seq_length = len(sequence)
-        gene_boundaries = torch.zeros(seq_length, 3)  # No gene, start, end
-        exon_intron = torch.zeros(seq_length, 3)     # Exon, intron, intergenic
-        splice_sites = torch.zeros(seq_length, 3)    # No splice, donor, acceptor
-        coding_potential = torch.zeros(seq_length)
+        # Initialize target arrays - use max_length for consistency
+        seq_length = min(len(sequence), self.max_length)
+        gene_boundaries = torch.zeros(self.max_length, 3)  # No gene, start, end
+        exon_intron = torch.zeros(self.max_length, 3)     # Exon, intron, intergenic
+        splice_sites = torch.zeros(self.max_length, 3)    # No splice, donor, acceptor
+        coding_potential = torch.zeros(self.max_length)
         
         # Fill targets based on annotation
         if 'genes' in annotation:
@@ -280,16 +298,16 @@ class DNADataset:
                 end = gene.get('end', seq_length)
                 
                 # Gene boundaries
-                if start < seq_length:
+                if start < self.max_length:
                     gene_boundaries[start, 1] = 1  # Start
-                if end < seq_length:
+                if end < self.max_length:
                     gene_boundaries[end, 2] = 1    # End
                 
                 # Exon/intron structure
                 if 'exons' in gene:
                     for exon in gene['exons']:
                         exon_start = max(0, exon.get('start', start))
-                        exon_end = min(seq_length, exon.get('end', end))
+                        exon_end = min(self.max_length, exon.get('end', end))
                         exon_intron[exon_start:exon_end, 0] = 1  # Exon
                 
                 # Splice sites
@@ -298,14 +316,14 @@ class DNADataset:
                         donor_pos = intron.get('donor_pos', 0)
                         acceptor_pos = intron.get('acceptor_pos', 0)
                         
-                        if donor_pos < seq_length:
+                        if donor_pos < self.max_length:
                             splice_sites[donor_pos, 1] = 1  # Donor
-                        if acceptor_pos < seq_length:
+                        if acceptor_pos < self.max_length:
                             splice_sites[acceptor_pos, 2] = 1  # Acceptor
                 
                 # Coding potential
                 coding_start = max(0, gene.get('coding_start', start))
-                coding_end = min(seq_length, gene.get('coding_end', end))
+                coding_end = min(self.max_length, gene.get('coding_end', end))
                 coding_potential[coding_start:coding_end] = 1
         
         targets['gene_boundaries'] = gene_boundaries
@@ -327,7 +345,7 @@ def load_fasta_sequences(file_path: str) -> List[str]:
 def load_gff_annotations(file_path: str) -> List[Dict]:
     """Load gene annotations from a GFF file."""
     # This is a simplified GFF parser - you might want to use a more robust one
-    annotations = []
+    annotations = {}  # Use dict to group CDS by gene ID
     
     with open(file_path, 'r') as f:
         for line in f:
@@ -338,16 +356,59 @@ def load_gff_annotations(file_path: str) -> List[Dict]:
             if len(parts) < 9:
                 continue
             
-            if parts[2] == 'gene':
-                annotation = {
-                    'start': int(parts[3]) - 1,  # Convert to 0-based
-                    'end': int(parts[4]),
-                    'strand': parts[6],
-                    'attributes': parts[8]
-                }
-                annotations.append(annotation)
+            # Handle both 'gene' and 'CDS' entries
+            if parts[2] in ['gene', 'CDS']:
+                start = int(parts[3]) - 1  # Convert to 0-based
+                end = int(parts[4])
+                strand = parts[6]
+                attributes = parts[8]
+                
+                # Extract gene ID from attributes
+                gene_id = None
+                for attr in attributes.split(';'):
+                    if 'ID=' in attr:
+                        gene_id = attr.split('ID=')[1].split(';')[0]
+                        break
+                    elif 'locus_tag=' in attr:
+                        gene_id = attr.split('locus_tag=')[1].split(';')[0]
+                        break
+                    elif 'gene=' in attr:
+                        gene_id = attr.split('gene=')[1].split(';')[0]
+                        break
+                
+                if gene_id is None:
+                    gene_id = f"gene_{start}_{end}"  # Fallback ID
+                
+                if gene_id not in annotations:
+                    annotations[gene_id] = {
+                        'genes': [{
+                            'start': start,
+                            'end': end,
+                            'strand': strand,
+                            'coding_start': start,
+                            'coding_end': end,
+                            'exons': []
+                        }]
+                    }
+                else:
+                    # Extend gene boundaries if needed
+                    gene = annotations[gene_id]['genes'][0]
+                    gene['start'] = min(gene['start'], start)
+                    gene['end'] = max(gene['end'], end)
+                
+                # Add as exon if it's a CDS
+                if parts[2] == 'CDS':
+                    annotations[gene_id]['genes'][0]['exons'].append({
+                        'start': start,
+                        'end': end
+                    })
     
-    return annotations
+    # Convert to list format expected by the dataset
+    annotation_list = []
+    for gene_id, annotation in annotations.items():
+        annotation_list.append(annotation)
+    
+    return annotation_list
 
 
 def create_sequence_windows(sequence: str, window_size: int = 1024, 

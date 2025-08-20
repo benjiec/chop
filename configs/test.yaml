@@ -1,12 +1,12 @@
-# Default configuration for gene prediction model training
+# Test configuration for gene prediction model training with smaller memory footprint
 
-# Model configuration
+# Model configuration - smaller model for testing
 model:
   vocab_size: 5  # A, C, G, T, N
-  d_model: 512
-  n_layers: 6
-  n_heads: 8
-  max_seq_length: 8192
+  d_model: 128   # Reduced from 512
+  n_layers: 2    # Reduced from 6
+  n_heads: 4     # Reduced from 8
+  max_seq_length: 1024  # Reduced from 8192
   dropout: 0.1
 
 # Loss function weights
@@ -17,39 +17,39 @@ loss:
   coding_weight: 0.5
   constraint_weight: 0.1
 
-# Training configuration
+# Training configuration - smaller batch size
 training:
-  batch_size: 8
-  max_epochs: 100
+  batch_size: 2    # Reduced from 8
+  max_epochs: 5    # Reduced for testing
   learning_rate: 1e-4
   weight_decay: 0.01
   gradient_clip_val: 1.0
-  patience: 10
+  patience: 3      # Reduced from 10
   accumulate_grad_batches: 1
-  num_workers: 4
+  num_workers: 1   # Reduced from 4
   checkpoint_dir: "models/checkpoints"
 
 # Data configuration
 data:
   sequences_path: "data/GCA_001939145.1.fna"
   annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
-  max_sequence_length: 8192
-  window_size: 1024
-  stride: 512
+  max_sequence_length: 1024  # Reduced from 8192
+  window_size: 512    # Reduced from 1024
+  stride: 256         # Reduced from 512
 
 # Logging configuration
 logging:
   use_wandb: false
   project_name: "gene-prediction"
-  run_name: "transformer-gene-predictor"
+  run_name: "transformer-gene-predictor-test"
   log_every_n_steps: 10
   val_check_interval: 0.25
 
 # Hardware configuration
 hardware:
-  accelerator: "auto"  # auto, cpu, gpu, tpu
-  devices: "auto"      # auto, 1, 2, etc.
-  precision: 16        # 16, 32, 64
+  accelerator: "cpu"    # Force CPU
+  devices: 1            # Single device
+  precision: 32         # Use 32-bit precision
 
 # Evaluation configuration
 evaluation:

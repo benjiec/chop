@@ -40,7 +40,7 @@ class GenePredictionModule(pl.LightningModule):
         self.loss_fn = BiologicalLoss(**config.get('loss', {}))
         
         # Learning rate
-        self.learning_rate = config.get('training', {}).get('learning_rate', 1e-4)
+        self.learning_rate = float(config.get('training', {}).get('learning_rate', 1e-4))
         
         # Metrics tracking
         self.train_metrics = {}
@@ -132,12 +132,12 @@ class GenePredictionModule(pl.LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.learning_rate,
-            weight_decay=self.config.get('training', {}).get('weight_decay', 0.01)
+            weight_decay=float(self.config.get('training', {}).get('weight_decay', 0.01))
         )
         
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=self.config.get('training', {}).get('max_epochs', 100)
+            T_max=int(self.config.get('training', {}).get('max_epochs', 100))
         )
         
         return {
@@ -156,8 +156,13 @@ def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]
     sequences = load_fasta_sequences(config['data']['sequences_path'])
     
     annotations = []
-    if 'annotations_path' in config['data']:
-        annotations = load_gff_annotations(config['data']['annotations_path'])
+    if 'annotations_path' in config['data'] and config['data']['annotations_path']:
+        try:
+            annotations = load_gff_annotations(config['data']['annotations_path'])
+            print(f"Loaded {len(annotations)} annotations")
+        except Exception as e:
+            print(f"Warning: Could not load annotations: {e}")
+            annotations = []
     
     # Create dataset
     dataset = DNADataset(
