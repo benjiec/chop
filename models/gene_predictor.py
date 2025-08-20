@@ -222,10 +222,10 @@ class BiologicalLoss(nn.Module):
         if not targets or len(targets) == 0 or not all(key in targets for key in required_keys):
             # Return a dummy loss if no targets are available
             dummy_targets = {
-                'gene_boundaries': torch.zeros_like(predictions['gene_boundaries'][:, :, 0]).long(),
-                'exon_intron': torch.zeros_like(predictions['exon_intron'][:, :, 0]).long(),
-                'splice_sites': torch.zeros_like(predictions['splice_sites'][:, :, 0]).long(),
-                'coding_potential': torch.zeros_like(predictions['coding_potential'].squeeze(-1)).float()
+                'gene_boundaries': torch.zeros(predictions['gene_boundaries'].shape[0], predictions['gene_boundaries'].shape[1], dtype=torch.long),
+                'exon_intron': torch.zeros(predictions['exon_intron'].shape[0], predictions['exon_intron'].shape[1], dtype=torch.long),
+                'splice_sites': torch.zeros(predictions['splice_sites'].shape[0], predictions['splice_sites'].shape[1], dtype=torch.long),
+                'coding_potential': torch.zeros(predictions['coding_potential'].shape[0], predictions['coding_potential'].shape[1], dtype=torch.float32)
             }
             targets = dummy_targets
         

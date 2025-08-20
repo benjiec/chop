@@ -286,10 +286,10 @@ class DNADataset:
         
         # Initialize target arrays - use max_length for consistency
         seq_length = min(len(sequence), self.max_length)
-        gene_boundaries = torch.zeros(self.max_length, 3)  # No gene, start, end
-        exon_intron = torch.zeros(self.max_length, 3)     # Exon, intron, intergenic
-        splice_sites = torch.zeros(self.max_length, 3)    # No splice, donor, acceptor
-        coding_potential = torch.zeros(self.max_length)
+        gene_boundaries = torch.zeros(self.max_length, dtype=torch.long)  # Class indices for CrossEntropyLoss
+        exon_intron = torch.zeros(self.max_length, dtype=torch.long)       # Class indices for CrossEntropyLoss
+        splice_sites = torch.zeros(self.max_length, dtype=torch.long)      # Class indices for CrossEntropyLoss
+        coding_potential = torch.zeros(self.max_length, dtype=torch.float32)  # Binary for BCELoss
         
         # Fill targets based on annotation
         if 'genes' in annotation:
@@ -297,29 +297,29 @@ class DNADataset:
                 start = gene.get('start', 0)
                 end = gene.get('end', seq_length)
                 
-                # Gene boundaries
+                # Gene boundaries (class indices: 0=no_gene, 1=start, 2=end)
                 if start < self.max_length:
-                    gene_boundaries[start, 1] = 1  # Start
+                    gene_boundaries[start] = 1  # Start class
                 if end < self.max_length:
-                    gene_boundaries[end, 2] = 1    # End
+                    gene_boundaries[end] = 2    # End class
                 
-                # Exon/intron structure
+                # Exon/intron structure (class indices: 0=intergenic, 1=exon, 2=intron)
                 if 'exons' in gene:
                     for exon in gene['exons']:
                         exon_start = max(0, exon.get('start', start))
                         exon_end = min(self.max_length, exon.get('end', end))
-                        exon_intron[exon_start:exon_end, 0] = 1  # Exon
+                        exon_intron[exon_start:exon_end] = 1  # Exon class
                 
-                # Splice sites
+                # Splice sites (class indices: 0=no_splice, 1=donor, 2=acceptor)
                 if 'introns' in gene:
                     for intron in gene['introns']:
                         donor_pos = intron.get('donor_pos', 0)
                         acceptor_pos = intron.get('acceptor_pos', 0)
                         
                         if donor_pos < self.max_length:
-                            splice_sites[donor_pos, 1] = 1  # Donor
+                            splice_sites[donor_pos] = 1  # Donor class
                         if acceptor_pos < self.max_length:
-                            splice_sites[acceptor_pos, 2] = 1  # Acceptor
+                            splice_sites[acceptor_pos] = 2  # Acceptor class
                 
                 # Coding potential
                 coding_start = max(0, gene.get('coding_start', start))

@@ -1,0 +1,58 @@
+# Configuration optimized for long genes with introns
+
+# Model configuration - optimized for long sequences
+model:
+  vocab_size: 5  # A, C, G, T, N
+  d_model: 384   # Good balance
+  n_layers: 6    # Keep depth for long-range dependencies
+  n_heads: 8     # Multiple attention heads
+  max_seq_length: 4096  # 4kb windows - compromise between memory and gene length
+  dropout: 0.1
+
+# Loss function weights - emphasize splice sites for long genes
+loss:
+  gene_weight: 1.0
+  exon_weight: 1.5      # Higher weight for exon detection
+  splice_weight: 2.0    # Higher weight for splice sites (crucial for long genes)
+  coding_weight: 1.0
+  constraint_weight: 0.2
+
+# Training configuration
+training:
+  batch_size: 2         # Small batch for memory
+  max_epochs: 20
+  learning_rate: 5e-5   # Slightly lower for stability
+  weight_decay: 0.01
+  gradient_clip_val: 1.0
+  patience: 8
+  accumulate_grad_batches: 4  # Effective batch size = 2*4 = 8
+  num_workers: 1
+  checkpoint_dir: "models/checkpoints"
+
+# Data configuration - overlapping windows for long genes
+data:
+  sequences_path: "data/GCA_001939145.1.fna"
+  annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
+  max_sequence_length: 4096    # 4kb windows
+  window_size: 4096           # Match max_sequence_length
+  stride: 2048                # 50% overlap to capture gene boundaries
+
+# Logging configuration
+logging:
+  use_wandb: false
+  project_name: "gene-prediction"
+  run_name: "long-gene-predictor"
+  log_every_n_steps: 50
+  val_check_interval: 0.5
+
+# Hardware configuration
+hardware:
+  accelerator: "cpu"
+  devices: 1
+  precision: 32
+
+# Evaluation configuration
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]
+  save_predictions: true
+  output_dir: "results"
