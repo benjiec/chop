@@ -1,0 +1,5 @@
+services:
+  chop:
+    build: .
+    volumes:
+      - .:/app
