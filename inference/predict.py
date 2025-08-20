@@ -54,7 +54,18 @@ class GenePredictorInference:
         
         # Load trained weights
         checkpoint = torch.load(model_path, map_location=self.device)
-        model.load_state_dict(checkpoint)
+        
+        # Handle PyTorch Lightning checkpoint format
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
+        
+        # Remove 'model.' prefix if present (from PyTorch Lightning)
+        if any(key.startswith('model.') for key in state_dict.keys()):
+            state_dict = {key.replace('model.', ''): value for key, value in state_dict.items()}
+        
+        model.load_state_dict(state_dict)
         
         return model
     
@@ -194,12 +205,12 @@ class GenePredictorInference:
             # Save individual results
             output_file = os.path.join(output_dir, f"{record.id}_predictions.json")
             with open(output_file, 'w') as f:
-                json.dump(predictions, f, indent=2)
+                json.dump(predictions, f, indent=2, default=self._json_serializer)
         
         # Save combined results
         combined_file = os.path.join(output_dir, 'all_predictions.json')
         with open(combined_file, 'w') as f:
-            json.dump(results, f, indent=2)
+            json.dump(results, f, indent=2, default=self._json_serializer)
         
         print(f"Results saved to {output_dir}")
         return results
@@ -279,6 +290,16 @@ class GenePredictorInference:
             plt.show()
         
         plt.close()
+    
+    def _json_serializer(self, obj):
+        """JSON serializer for numpy types."""
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        raise TypeError(f'Object of type {obj.__class__.__name__} is not JSON serializable')
 
 
 def main():
