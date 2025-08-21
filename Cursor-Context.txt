@@ -1,0 +1,157 @@
+# CHOP Gene Prediction - Cursor Context
+
+## Project Overview
+CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool that uses attention mechanisms to identify genes, exons, introns, splice sites, and coding regions in genomic DNA sequences.
+
+## Current Working Setup
+
+### Environment
+- **Platform**: M2 MacBook native Python (faster than Docker)
+- **Python Environment**: `chop_env` virtual environment
+- **Training Command**: `python train_cpu_only.py --config [config].yaml`
+- **Inference Command**: `python inference/predict.py --model [model] --config [config] --input data/x.fna`
+
+### Data Characteristics
+- **Sequences**: 9688 sequences in `data/GCA_001939145.1.fna` (819MB)
+- **Annotations**: 893 genes in `data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff`
+- **GFF Format**: CDS entries grouped by `Parent=rna-gnl|WGS:LSRX|SmicXXX_mrna`
+- **Exon Sizes**: 22-1778 bp (largest exon needs seqlen≥2048)
+- **Gene Types**: Both single-exon and multi-exon genes
+- **Example Multi-exon**: `Parent=rna-gnl|WGS:LSRX|Smic1949_mrna` has 3 exons
+
+### Configuration Files (Naming Convention)
+Format: `[platform]_[cpu/mps]_model[size]_layer[layers]_head[heads]_seqlen[length]_[notes].yaml`
+
+Available configs:
+- `docker_cpu_model1M_layer3_head4_seqlen1024_conservative.yaml` - Docker baseline
+- `m2_cpu_model1M_layer3_head4_seqlen1024_fast.yaml` - Fast M2 training
+- `m2_cpu_model1M_layer3_head4_seqlen2048_longexon.yaml` - Optimized for large exons
+- `m2_cpu_model7M_layer4_head8_seqlen2048_medium.yaml` - Balanced speed/quality
+- `m2_cpu_model14M_layer4_head8_seqlen2048_large.yaml` - Best quality, slower
+
+### Recommended Configuration
+**For your data**: `m2_cpu_model1M_layer3_head4_seqlen2048_longexon.yaml`
+- Captures all exons up to 1778 bp
+- Fast training with good quality
+- 50% overlap windows (stride=1024) for long gene reconstruction
+
+## Key Technical Fixes Applied
+
+### 1. GFF Parser (`utils/dna_processor.py`)
+- **Issue**: Original parser didn't handle CDS entries properly
+- **Fix**: Groups CDS entries by `Parent=` field to reconstruct genes
+- **Result**: Proper multi-exon genes with introns and splice sites
+
+### 2. Target Format (`utils/dna_processor.py`)
+- **Issue**: CrossEntropyLoss expected class indices, got one-hot vectors
+- **Fix**: Targets now use class indices format:
+  - gene_boundaries: 0=no_gene, 1=start, 2=end
+  - exon_intron: 0=intergenic, 1=exon, 2=intron
+  - splice_sites: 0=no_splice, 1=donor, 2=acceptor
+
+### 3. Metrics Calculation (`training/train.py`)
+- **Issue**: Applied argmax to both predictions and targets
+- **Fix**: Only apply argmax to predictions (targets already class indices)
+
+### 4. Data Loading
+- **Issue**: KeyError in multi-worker data loading
+- **Fix**: Set `num_workers: 0` for single-threaded loading
+
+### 5. MPS Compatibility
+- **Issue**: M2 MPS backend has compatibility issues
+- **Fix**: Use CPU with `accelerator: "cpu"` for stability
+
+### 6. Missing Dependencies
+- **Issue**: matplotlib/seaborn missing from requirements.txt
+- **Fix**: Added visualization libraries to requirements.txt
+
+## Performance Results
+
+### Training Speed Comparison
+- **Docker**: ~12 it/s but slower overall due to overhead
+- **M2 Native**: ~3.67 it/s but faster completion (less overhead per step)
+- **Result**: M2 native completes epochs faster despite lower it/s
+
+### Model Sizes
+- **Small (1M params)**: d_model=128, n_layers=3, n_heads=4
+- **Medium (7M params)**: d_model=192, n_layers=4, n_heads=8  
+- **Large (14M params)**: d_model=256, n_layers=4, n_heads=8
+
+### Loss Progression (Docker training)
+- Started: ~0.663
+- After partial training: 0.0155 → 0.00595 → 0.00543 → 0.00415
+- Shows good learning trajectory
+
+## File Structure
+```
+chop/
+├── configs/                    # YAML configuration files
+├── data/
+│   ├── GCA_001939145.1.fna    # DNA sequences (819MB)
+│   ├── GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff  # Annotations
+│   └── x.fna                  # Test sequences (3.2MB)
+├── models/
+│   ├── gene_predictor.py      # Main model architecture
+│   └── checkpoints/           # Trained model files
+├── training/
+│   └── train.py              # Training script
+├── inference/
+│   └── predict.py            # Inference script
+├── utils/
+│   ├── dna_processor.py      # Data processing (fixed GFF parser)
+│   └── long_gene_processor.py # Long gene reconstruction
+├── train_cpu_only.py         # MPS-disabled training wrapper
+├── example_usage.py          # Usage examples
+├── QUICKSTART.md            # Quick start guide
+└── requirements.txt         # Dependencies (includes matplotlib/seaborn)
+```
+
+## Splice Sites Configuration
+Located in `utils/dna_processor.py` lines 30-32:
+```python
+self.donor_motifs = ['GT', 'GC']      # 5' splice site
+self.acceptor_motifs = ['AG', 'AC']   # 3' splice site
+```
+
+## Current Status
+- ✅ Training pipeline working on M2 native
+- ✅ All major bugs fixed
+- ✅ Proper GFF parsing for multi-exon genes
+- ✅ Inference pipeline working with visualizations
+- ⚠️ Need to test seqlen=2048 config for full exon coverage
+- ⚠️ Consider longer training for better model performance
+
+## Next Steps
+1. Train with `m2_cpu_model1M_layer3_head4_seqlen2048_longexon.yaml` for full exon coverage
+2. Complete training (currently stopping at ~75% of epoch 0)
+3. Test predictions on `data/x.fna` with lower thresholds
+4. Evaluate performance on long genes with multiple exons
+
+## Common Commands
+```bash
+# Activate environment
+source chop_env/bin/activate
+
+# Train model
+python train_cpu_only.py --config configs/m2_cpu_model1M_layer3_head4_seqlen2048_longexon.yaml
+
+# Make predictions
+python inference/predict.py \
+  --model models/checkpoints/final_model.pt \
+  --config configs/m2_cpu_model1M_layer3_head4_seqlen2048_longexon.yaml \
+  --input data/x.fna \
+  --output results/ \
+  --visualize
+
+# Resume training from checkpoint
+python train_cpu_only.py \
+  --config configs/[config].yaml \
+  --resume models/checkpoints/[checkpoint].ckpt
+```
+
+## Troubleshooting
+- **MPS errors**: Use CPU configs (all current configs use CPU)
+- **KeyError in data loading**: Ensure num_workers=0
+- **Memory issues**: Use smaller model or batch_size=1
+- **Slow training**: Check if seqlen can be reduced for your data
+
