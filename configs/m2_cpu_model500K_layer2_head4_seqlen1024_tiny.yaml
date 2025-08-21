@@ -1,0 +1,51 @@
+# Tiny M2 model for very fast training/testing
+
+model:
+  vocab_size: 5
+  d_model: 64    # Very small
+  n_layers: 2    # Minimal layers
+  n_heads: 4     
+  max_seq_length: 1024
+  dropout: 0.1
+
+loss:
+  gene_weight: 1.0
+  exon_weight: 1.5
+  splice_weight: 2.0
+  coding_weight: 1.0
+  constraint_weight: 0.1
+
+training:
+  batch_size: 4         # Larger batch for speed
+  max_epochs: 20        
+  learning_rate: 1e-4   
+  weight_decay: 0.01
+  gradient_clip_val: 1.0
+  patience: 10          
+  accumulate_grad_batches: 2
+  num_workers: 0
+  checkpoint_dir: "models/checkpoints"
+
+data:
+  sequences_path: "data/GCA_001939145.1.fna"
+  annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
+  max_sequence_length: 1024
+  window_size: 1024           
+  stride: 512                 
+
+logging:
+  use_wandb: false
+  project_name: "gene-prediction"
+  run_name: "m2-tiny"
+  log_every_n_steps: 50
+  val_check_interval: 0.25
+
+hardware:
+  accelerator: "cpu"    
+  devices: 1            
+  precision: 32         
+
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]
+  save_predictions: true
+  output_dir: "results"

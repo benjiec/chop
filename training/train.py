@@ -109,21 +109,21 @@ class GenePredictionModule(pl.LightningModule):
         # Gene boundary accuracy
         if 'gene_boundaries' in predictions and 'gene_boundaries' in targets:
             pred_labels = torch.argmax(predictions['gene_boundaries'], dim=-1)
-            true_labels = torch.argmax(targets['gene_boundaries'], dim=-1)
+            true_labels = targets['gene_boundaries']  # Already class indices, no argmax needed
             accuracy = (pred_labels == true_labels).float().mean()
             metrics['gene_boundary_accuracy'] = accuracy
         
         # Exon/intron accuracy
         if 'exon_intron' in predictions and 'exon_intron' in targets:
             pred_labels = torch.argmax(predictions['exon_intron'], dim=-1)
-            true_labels = torch.argmax(targets['exon_intron'], dim=-1)
+            true_labels = targets['exon_intron']  # Already class indices, no argmax needed
             accuracy = (pred_labels == true_labels).float().mean()
             metrics['exon_intron_accuracy'] = accuracy
         
         # Splice site accuracy
         if 'splice_sites' in predictions and 'splice_sites' in targets:
             pred_labels = torch.argmax(predictions['splice_sites'], dim=-1)
-            true_labels = torch.argmax(targets['splice_sites'], dim=-1)
+            true_labels = targets['splice_sites']  # Already class indices, no argmax needed
             accuracy = (pred_labels == true_labels).float().mean()
             metrics['splice_site_accuracy'] = accuracy
     

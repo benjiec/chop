@@ -269,8 +269,16 @@ class DNADataset:
         
         # Prepare targets if annotations exist
         targets = {}
-        if idx < len(self.annotations):
+        if idx < len(self.annotations) and self.annotations:
             targets = self._prepare_targets(sequence, self.annotations[idx])
+        else:
+            # Create empty targets for sequences without annotations
+            targets = {
+                'gene_boundaries': torch.zeros(self.max_length, dtype=torch.long),
+                'exon_intron': torch.zeros(self.max_length, dtype=torch.long),
+                'splice_sites': torch.zeros(self.max_length, dtype=torch.long),
+                'coding_potential': torch.zeros(self.max_length, dtype=torch.float32)
+            }
         
         return {
             'input_ids': tokens,
@@ -343,12 +351,14 @@ def load_fasta_sequences(file_path: str) -> List[str]:
 
 
 def load_gff_annotations(file_path: str) -> List[Dict]:
-    """Load gene annotations from a GFF file."""
-    # This is a simplified GFF parser - you might want to use a more robust one
-    annotations = {}  # Use dict to group CDS by gene ID
+    """Load gene annotations from a GFF file with CDS entries."""
+    print(f"Loading GFF annotations from {file_path}")
+    
+    # Group CDS entries by Parent (transcript/mRNA ID)
+    transcripts = {}  # parent_id -> list of CDS entries
     
     with open(file_path, 'r') as f:
-        for line in f:
+        for line_num, line in enumerate(f):
             if line.startswith('#'):
                 continue
             
@@ -356,59 +366,97 @@ def load_gff_annotations(file_path: str) -> List[Dict]:
             if len(parts) < 9:
                 continue
             
-            # Handle both 'gene' and 'CDS' entries
-            if parts[2] in ['gene', 'CDS']:
+            if parts[2] == 'CDS':
                 start = int(parts[3]) - 1  # Convert to 0-based
                 end = int(parts[4])
                 strand = parts[6]
                 attributes = parts[8]
                 
-                # Extract gene ID from attributes
-                gene_id = None
+                # Extract Parent ID (transcript/mRNA ID)
+                parent_id = None
+                locus_tag = None
+                
                 for attr in attributes.split(';'):
-                    if 'ID=' in attr:
-                        gene_id = attr.split('ID=')[1].split(';')[0]
-                        break
-                    elif 'locus_tag=' in attr:
-                        gene_id = attr.split('locus_tag=')[1].split(';')[0]
-                        break
-                    elif 'gene=' in attr:
-                        gene_id = attr.split('gene=')[1].split(';')[0]
-                        break
+                    attr = attr.strip()
+                    if attr.startswith('Parent='):
+                        parent_id = attr.split('Parent=')[1].split(',')[0]
+                    elif attr.startswith('locus_tag='):
+                        locus_tag = attr.split('locus_tag=')[1]
                 
-                if gene_id is None:
-                    gene_id = f"gene_{start}_{end}"  # Fallback ID
+                # Use Parent as the gene identifier (each Parent = one gene)
+                gene_id = parent_id or locus_tag or f"unknown_gene_{line_num}"
                 
-                if gene_id not in annotations:
-                    annotations[gene_id] = {
-                        'genes': [{
-                            'start': start,
-                            'end': end,
-                            'strand': strand,
-                            'coding_start': start,
-                            'coding_end': end,
-                            'exons': []
-                        }]
-                    }
-                else:
-                    # Extend gene boundaries if needed
-                    gene = annotations[gene_id]['genes'][0]
-                    gene['start'] = min(gene['start'], start)
-                    gene['end'] = max(gene['end'], end)
+                if gene_id not in transcripts:
+                    transcripts[gene_id] = []
                 
-                # Add as exon if it's a CDS
-                if parts[2] == 'CDS':
-                    annotations[gene_id]['genes'][0]['exons'].append({
-                        'start': start,
-                        'end': end
+                transcripts[gene_id].append({
+                    'start': start,
+                    'end': end,
+                    'strand': strand
+                })
+    
+    print(f"Found {len(transcripts)} genes/transcripts from CDS entries")
+    
+    # Convert to the expected annotation format
+    annotations = []
+    
+    for gene_id, cds_list in transcripts.items():
+        if not cds_list:
+            continue
+            
+        # Sort CDS by position
+        cds_list.sort(key=lambda x: x['start'])
+        
+        # Calculate gene boundaries
+        gene_start = min(cds['start'] for cds in cds_list)
+        gene_end = max(cds['end'] for cds in cds_list)
+        strand = cds_list[0]['strand']
+        
+        # Create exons (each CDS is an exon)
+        exons = [{'start': cds['start'], 'end': cds['end']} for cds in cds_list]
+        
+        # Create introns (gaps between CDS entries for multi-exon genes)
+        introns = []
+        if len(cds_list) > 1:  # Multi-exon gene
+            for i in range(len(cds_list) - 1):
+                intron_start = cds_list[i]['end']
+                intron_end = cds_list[i + 1]['start']
+                if intron_end > intron_start:  # Valid intron
+                    introns.append({
+                        'start': intron_start,
+                        'end': intron_end,
+                        'donor_pos': intron_start,      # 5' splice site
+                        'acceptor_pos': intron_end - 1  # 3' splice site
                     })
+        
+        # Create the annotation structure
+        annotation = {
+            'genes': [{
+                'start': gene_start,
+                'end': gene_end,
+                'strand': strand,
+                'coding_start': gene_start,
+                'coding_end': gene_end,
+                'exons': exons,
+                'introns': introns
+            }]
+        }
+        
+        annotations.append(annotation)
     
-    # Convert to list format expected by the dataset
-    annotation_list = []
-    for gene_id, annotation in annotations.items():
-        annotation_list.append(annotation)
+    # Count single vs multi-exon genes
+    single_exon = sum(1 for ann in annotations if len(ann['genes'][0]['exons']) == 1)
+    multi_exon = len(annotations) - single_exon
     
-    return annotation_list
+    print(f"Created {len(annotations)} gene annotations:")
+    print(f"  - {single_exon} single-exon genes")
+    print(f"  - {multi_exon} multi-exon genes")
+    
+    if annotations:
+        sample = annotations[0]['genes'][0]
+        print(f"Sample gene: {sample['start']}-{sample['end']}, {len(sample['exons'])} exons, {len(sample['introns'])} introns")
+    
+    return annotations
 
 
 def create_sequence_windows(sequence: str, window_size: int = 1024, 
