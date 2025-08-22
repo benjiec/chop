@@ -12,6 +12,10 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 import re
 
+from .constants import (
+    GeneBoundaryClass, ExonIntronClass, SpliceSiteClass, DNA_VOCAB
+)
+
 # Handle different BioPython versions for GC content calculation
 try:
     from Bio.SeqUtils import GC
@@ -40,7 +44,7 @@ class DNATokenizer:
     
     def __init__(self):
         # DNA vocabulary: A, C, G, T, N (unknown/ambiguous)
-        self.vocab = {'A': 0, 'C': 1, 'G': 2, 'T': 3, 'N': 4}
+        self.vocab = DNA_VOCAB
         self.vocab_size = len(self.vocab)
         self.reverse_vocab = {v: k for k, v in self.vocab.items()}
         
@@ -305,29 +309,29 @@ class DNADataset:
                 start = gene.get('start', 0)
                 end = gene.get('end', seq_length)
                 
-                # Gene boundaries (class indices: 0=no_gene, 1=start, 2=end)
+                # Gene boundaries
                 if start < self.max_length:
-                    gene_boundaries[start] = 1  # Start class
+                    gene_boundaries[start] = GeneBoundaryClass.START
                 if end < self.max_length:
-                    gene_boundaries[end] = 2    # End class
+                    gene_boundaries[end] = GeneBoundaryClass.END
                 
-                # Exon/intron structure (class indices: 0=intergenic, 1=exon, 2=intron)
+                # Exon/intron structure
                 if 'exons' in gene:
                     for exon in gene['exons']:
                         exon_start = max(0, exon.get('start', start))
                         exon_end = min(self.max_length, exon.get('end', end))
-                        exon_intron[exon_start:exon_end] = 1  # Exon class
+                        exon_intron[exon_start:exon_end] = ExonIntronClass.EXON
                 
-                # Splice sites (class indices: 0=no_splice, 1=donor, 2=acceptor)
+                # Splice sites
                 if 'introns' in gene:
                     for intron in gene['introns']:
                         donor_pos = intron.get('donor_pos', 0)
                         acceptor_pos = intron.get('acceptor_pos', 0)
                         
                         if donor_pos < self.max_length:
-                            splice_sites[donor_pos] = 1  # Donor class
+                            splice_sites[donor_pos] = SpliceSiteClass.DONOR
                         if acceptor_pos < self.max_length:
-                            splice_sites[acceptor_pos] = 2  # Acceptor class
+                            splice_sites[acceptor_pos] = SpliceSiteClass.ACCEPTOR
                 
                 # Coding potential
                 coding_start = max(0, gene.get('coding_start', start))

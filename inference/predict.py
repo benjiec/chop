@@ -23,6 +23,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from models.gene_predictor import GenePredictor, create_model
 from utils.dna_processor import DNATokenizer, BiologicalFeatureExtractor
+from utils.constants import (
+    GeneBoundaryClass, ExonIntronClass, SpliceSiteClass, DEFAULT_THRESHOLD
+)
 
 
 class GenePredictorInference:
@@ -69,7 +72,7 @@ class GenePredictorInference:
         
         return model
     
-    def predict_sequence(self, sequence: str, threshold: float = 0.5) -> Dict:
+    def predict_sequence(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
         """Make predictions on a single DNA sequence."""
         # Tokenize sequence
         tokens = self.tokenizer.tokenize(sequence)
@@ -119,8 +122,8 @@ class GenePredictorInference:
         coding_potential = predictions['coding_potential'][0].cpu().numpy()
         
         # Find gene boundaries
-        gene_starts = np.where(gene_boundaries[:, 1] > 0.5)[0]
-        gene_ends = np.where(gene_boundaries[:, 2] > 0.5)[0]
+        gene_starts = np.where(gene_boundaries[:, GeneBoundaryClass.START] > 0.5)[0]
+        gene_ends = np.where(gene_boundaries[:, GeneBoundaryClass.END] > 0.5)[0]
         
         # Pair start and end positions
         for start in gene_starts:
@@ -136,16 +139,16 @@ class GenePredictorInference:
                 })
         
         # Find exons and introns
-        exon_positions = np.where(exon_intron[:, 0] > 0.5)[0]
-        intron_positions = np.where(exon_intron[:, 1] > 0.5)[0]
+        exon_positions = np.where(exon_intron[:, ExonIntronClass.EXON] > 0.5)[0]
+        intron_positions = np.where(exon_intron[:, ExonIntronClass.INTRON] > 0.5)[0]
         
         # Group consecutive positions
         results['exons'] = self._group_consecutive_positions(exon_positions)
         results['introns'] = self._group_consecutive_positions(intron_positions)
         
         # Find splice sites
-        donor_sites = np.where(splice_sites[:, 1] > 0.5)[0]
-        acceptor_sites = np.where(splice_sites[:, 2] > 0.5)[0]
+        donor_sites = np.where(splice_sites[:, SpliceSiteClass.DONOR] > 0.5)[0]
+        acceptor_sites = np.where(splice_sites[:, SpliceSiteClass.ACCEPTOR] > 0.5)[0]
         
         results['splice_sites'] = {
             'donor_sites': donor_sites.tolist(),
@@ -309,7 +312,7 @@ def main():
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
     parser.add_argument('--input', type=str, required=True, help='Input FASTA file or sequence')
     parser.add_argument('--output', type=str, default='results', help='Output directory')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Prediction threshold')
+    parser.add_argument('--threshold', type=float, default=DEFAULT_THRESHOLD, help='Prediction threshold')
     parser.add_argument('--device', type=str, default='auto', help='Device to use')
     parser.add_argument('--visualize', action='store_true', help='Create visualizations')
     

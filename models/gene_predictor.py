@@ -11,12 +11,21 @@ import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer
 from typing import Dict, List, Tuple, Optional
 import math
+import sys
+from pathlib import Path
+
+# Add utils to path for constants
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.constants import (
+    DEFAULT_VOCAB_SIZE, DEFAULT_MAX_SEQ_LENGTH, DEFAULT_D_MODEL, 
+    DEFAULT_N_LAYERS, DEFAULT_N_HEADS, DEFAULT_DROPOUT, DEFAULT_THRESHOLD
+)
 
 
 class DNAEmbedding(nn.Module):
     """DNA sequence embedding layer with k-mer features and positional encoding."""
     
-    def __init__(self, vocab_size: int = 5, d_model: int = 512, max_seq_length: int = 8192):
+    def __init__(self, vocab_size: int = DEFAULT_VOCAB_SIZE, d_model: int = DEFAULT_D_MODEL, max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH):
         super().__init__()
         self.d_model = d_model
         self.max_seq_length = max_seq_length
@@ -57,7 +66,7 @@ class DNAEmbedding(nn.Module):
 class BiologicalAttention(nn.Module):
     """Attention mechanism with biological constraints for splice sites and coding regions."""
     
-    def __init__(self, d_model: int, n_heads: int = 8, dropout: float = 0.1):
+    def __init__(self, d_model: int, n_heads: int = DEFAULT_N_HEADS, dropout: float = DEFAULT_DROPOUT):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
@@ -101,12 +110,12 @@ class GenePredictor(nn.Module):
     """Main gene prediction model with multi-task learning."""
     
     def __init__(self, 
-                 vocab_size: int = 5,
-                 d_model: int = 512,
-                 n_layers: int = 6,
-                 n_heads: int = 8,
-                 max_seq_length: int = 8192,
-                 dropout: float = 0.1):
+                 vocab_size: int = DEFAULT_VOCAB_SIZE,
+                 d_model: int = DEFAULT_D_MODEL,
+                 n_layers: int = DEFAULT_N_LAYERS,
+                 n_heads: int = DEFAULT_N_HEADS,
+                 max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,
+                 dropout: float = DEFAULT_DROPOUT):
         super().__init__()
         
         self.d_model = d_model
@@ -172,7 +181,7 @@ class GenePredictor(nn.Module):
             'hidden_states': hidden_states
         }
     
-    def predict_genes(self, x: torch.Tensor, threshold: float = 0.5) -> Dict[str, torch.Tensor]:
+    def predict_genes(self, x: torch.Tensor, threshold: float = DEFAULT_THRESHOLD) -> Dict[str, torch.Tensor]:
         """Generate final gene predictions with post-processing."""
         outputs = self.forward(x)
         
@@ -274,10 +283,10 @@ class BiologicalLoss(nn.Module):
 def create_model(config: Dict) -> GenePredictor:
     """Factory function to create a gene prediction model."""
     return GenePredictor(
-        vocab_size=config.get('vocab_size', 5),
-        d_model=config.get('d_model', 512),
-        n_layers=config.get('n_layers', 6),
-        n_heads=config.get('n_heads', 8),
-        max_seq_length=config.get('max_seq_length', 8192),
-        dropout=config.get('dropout', 0.1)
+        vocab_size=config.get('vocab_size', DEFAULT_VOCAB_SIZE),
+        d_model=config.get('d_model', DEFAULT_D_MODEL),
+        n_layers=config.get('n_layers', DEFAULT_N_LAYERS),
+        n_heads=config.get('n_heads', DEFAULT_N_HEADS),
+        max_seq_length=config.get('max_seq_length', DEFAULT_MAX_SEQ_LENGTH),
+        dropout=config.get('dropout', DEFAULT_DROPOUT)
     )
