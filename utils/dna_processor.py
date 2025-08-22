@@ -42,20 +42,23 @@ except ImportError:
 class DNATokenizer:
     """Tokenizes DNA sequences for the transformer model."""
     
-    def __init__(self):
+    def __init__(self, possible_donor_motifs=None):
         # DNA vocabulary: A, C, G, T, N (unknown/ambiguous)
         self.vocab = DNA_VOCAB
         self.vocab_size = len(self.vocab)
         self.reverse_vocab = {v: k for k, v in self.vocab.items()}
         
         # Start and stop codons
-        self.start_codons = {'ATG', 'GTG', 'TTG'}  # Common start codons
+        self.start_codons = {'ATG'}  # Common start codons
         self.stop_codons = {'TAA', 'TAG', 'TGA'}   # Stop codons
         
         # Splice site motifs
-        self.donor_motifs = ['GT', 'GC']      # 5' splice site
-        self.acceptor_motifs = ['AG']         # 3' splice site
-        
+        if possible_donor_motifs is None:
+            self.donor_motifs = ['GT', 'GC', 'GA']
+        else:
+            self.donor_motifs = possible_donor_motifs
+        self.acceptor_motifs = ['AG']
+
     def tokenize(self, sequence: str) -> torch.Tensor:
         """Convert DNA sequence string to token indices."""
         # Convert to uppercase and handle ambiguous bases
@@ -321,6 +324,14 @@ class DNADataset:
                         exon_start = max(0, exon.get('start', start))
                         exon_end = min(self.max_length, exon.get('end', end))
                         exon_intron[exon_start:exon_end] = ExonIntronClass.EXON
+                
+                # Intron regions
+                if 'introns' in gene:
+                    for intron in gene['introns']:
+                        intron_start = max(0, intron.get('start', 0))
+                        intron_end = min(self.max_length, intron.get('end', 0))
+                        if intron_start < intron_end:  # Valid intron
+                            exon_intron[intron_start:intron_end] = ExonIntronClass.INTRON
                 
                 # Splice sites
                 if 'introns' in gene:

@@ -1,0 +1,141 @@
+# CHOP Gene Prediction - Updated Project Context
+
+## Project Overview
+CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool that uses attention mechanisms to identify genes, exons, introns, splice sites, and coding regions in genomic DNA sequences. This project has been significantly enhanced to handle extraordinarily complex gene structures found in coral/cnidarian species.
+
+## Current Working Setup
+
+### Environment
+- **Platform**: M4 MacBook Air with 24GB RAM (native Python - faster than Docker)
+- **Python Environment**: `chop_env` virtual environment
+- **Training Command**: `python train_cpu_only.py --config [config].yaml`
+- **Inference Command**: `python inference/predict.py --model [model] --config [config] --input data/x.fna`
+
+### Data Characteristics (UPDATED ANALYSIS)
+- **Sequences**: Multiple coral species datasets in `data/` directory
+- **Primary dataset**: `data/GCA_001939145.1.fna` (819MB) with annotations `data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff`
+- **Family-wide analysis**: 153,709 genes across 3 coral species
+- **Gene complexity**: 99.8% multi-exon genes, average 17.7 exons per gene (vs ~8 in humans)
+- **Gene sizes**: 508 bp to 370 kb (mean: 13.9 kb)
+- **Most complex genes**: Up to 299 exons in single genes
+
+### Current Optimal Configuration
+**File**: `configs/m2_cpu_model4M_layer4_head6_seqlen12k_sliding.yaml`
+- **Model size**: 4M parameters, d_model=256, 4 layers, 6 heads
+- **Sequence length**: 12,288 bp (12k) - optimal memory/coverage tradeoff
+- **Sliding windows**: 6,144 bp stride (50% overlap)
+- **Gene coverage**: 83.4% of genes within 24kb (2 sliding windows)
+- **Memory usage**: 16.5 GB (safe within 19.2 GB available)
+
+## Major Technical Improvements Applied
+
+### 1. Architecture Optimization
+**Problem**: Original 2k sequence length only captured 20% of genes
+**Solution**: 12k sliding windows capture 83.4% of genes (4x improvement)
+**Details**: See `notes/Model-Design.txt` for complete analysis
+
+### 2. Critical Bug Fixes
+- **Intron labeling bug**: Fixed missing ExonIntronClass.INTRON labels in `_prepare_targets()`
+- **Inference class indices**: Fixed exon detection looking at wrong class index
+- **Symbolic constants**: Replaced magic numbers with named constants across codebase
+
+### 3. Data Processing Enhancements
+- **GFF parser improvements**: Better handling of multi-exon genes via Parent ID grouping
+- **Target representation**: Cleaned up to focus on pure observations vs interpretations
+- **Sliding window support**: Infrastructure for overlapping window processing
+
+### 4. Memory Management
+- **Comprehensive analysis**: Memory scaling with sequence length (O(seq_len²) attention)
+- **Hardware optimization**: Configured for M4 MacBook Air 24GB RAM constraints
+- **Gradient checkpointing**: Enabled for memory efficiency
+
+## File Structure
+```
+chop/
+├── configs/                    # YAML configuration files
+│   ├── m2_cpu_model4M_layer4_head6_seqlen12k_sliding.yaml  # OPTIMAL CONFIG
+│   └── [other configs]         # Previous experimental configs
+├── data/
+│   ├── GCA_001939145.1.fna    # Primary DNA sequences (819MB)
+│   ├── GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff  # Annotations
+│   └── x.fna                  # Test sequences (3.2MB)
+├── models/
+│   ├── gene_predictor.py      # Main model architecture (enhanced)
+│   └── checkpoints/           # Trained model files
+├── training/
+│   └── train.py              # Training script
+├── inference/
+│   └── predict.py            # Inference script (bug fixes applied)
+├── utils/
+│   ├── constants.py          # NEW: Symbolic constants for class indices
+│   ├── dna_processor.py      # Data processing (major fixes applied)
+│   └── long_gene_processor.py # Long gene reconstruction
+├── notes/                     # NEW: Documentation
+├── analysis_scripts/          # Generated analysis tools
+│   ├── analyze_gene_sizes.py
+│   ├── analyze_all_gffs.py
+│   └── create_gene_coverage_cdf.py
+├── train_cpu_only.py         # MPS-disabled training wrapper
+├── example_usage.py          # Usage examples
+└── requirements.txt         # Dependencies (includes matplotlib/seaborn)
+```
+
+## Species-Specific Biological Insights
+
+### Coral/Cnidarian Gene Characteristics
+- **Extreme complexity**: Far exceeds typical eukaryotic gene structure
+- **Consistent across family**: 3 species show similar patterns
+- **Biological implications**: Highly regulated gene expression, extensive alternative splicing potential
+
+### Sequence Length Requirements
+Based on comprehensive CDF analysis of 153,709 genes:
+- **2k windows**: 20.2% coverage (original - inadequate)
+- **12k windows**: 66.1% single, 83.4% sliding coverage (optimal)
+- **16k windows**: 73.7% single, 89.0% sliding coverage (memory prohibitive)
+
+## Model Architecture Rationale
+
+### Biological Pattern Requirements
+**Essential attention heads needed** (see symbiodinium-model-design.txt):
+- Splice site motifs (GT/GC donors, AG acceptors)
+- Start/stop codon contexts
+- Exon/intron boundary detection
+- Reading frame maintenance
+- Long-range gene coordination
+
+### Layer Hierarchy (4 layers chosen)
+1. **Local motifs** (3-10 bp): GT, AG, ATG patterns
+2. **Contextual motifs** (10-50 bp): Splice contexts, regulatory elements
+3. **Structural elements** (50-500 bp): Complete exons/introns
+4. **Gene architecture** (500-5000 bp): Multi-exon coordination
+
+## Current Status
+- ✅ **Architecture optimized** for coral gene complexity
+- ✅ **Memory requirements** fit available hardware
+- ✅ **Major bugs fixed** in data processing and inference
+- ✅ **Sliding window infrastructure** designed
+- ⚠️ **Implementation pending** for sliding window training/inference
+- ⚠️ **Post-processing pipeline** needs implementation
+- ⚠️ **Species-specific motif discovery** planned enhancement
+
+## Next Implementation Steps
+1. **Implement sliding window data processing** in DNADataset class
+2. **Implement sliding window inference** with consensus merging
+3. **Create post-processing pipeline** for gene structure validation
+4. **Test 12k configuration** with new architecture
+5. **Evaluate performance** on complex multi-exon genes
+
+## Key Lessons Learned
+- **Sequence length is critical**: Gene complexity demands much longer context than typical
+- **Memory scaling is brutal**: O(seq_len²) attention requires careful optimization
+- **Biological patterns matter**: Need sufficient attention heads for motif diversity
+- **Species-specific analysis essential**: Generic assumptions fail for complex organisms
+- **Sliding windows enable coverage**: Can handle genes beyond single window limits
+
+## Troubleshooting
+- **Memory errors**: Current 12k config should fit in 24GB RAM with 2.7GB safety margin
+- **Training instability**: Use gradient checkpointing and lower learning rates
+- **Poor predictions**: Ensure proper class indices and intron labeling fixes are applied
+- **Long gene handling**: Implement sliding window reconstruction for >24kb genes
+
+For detailed technical decisions and analysis methodology, see `notes/Model-Design.txt`.

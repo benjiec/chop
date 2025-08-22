@@ -1,0 +1,138 @@
+# Symbiodinium Gene Prediction Model Design Notes
+
+## Overview
+This document summarizes the biological requirements, technical decisions, and analysis that led to our optimized model configuration for predicting genes in coral/cnidarian species with extraordinarily complex gene structures.
+
+## Biological Requirements Analysis
+
+### Key Biological Patterns to Capture
+1. **Splice site motifs** - GT/GC donors, AG/AC acceptors + flanking context
+2. **Start codon contexts** - ATG + upstream regulatory sequences (Kozak-like)
+3. **Stop codon patterns** - TAA/TAG/TGA usage and context
+4. **Exon/intron boundaries** - Compositional differences and transition signals
+5. **Reading frame maintenance** - 3-nucleotide periodicity in coding regions
+6. **Long-range gene structure** - Coordination across 15-20 exon genes
+7. **Regulatory elements** - TATA boxes, promoter regions, enhancers
+
+### Species-Specific Characteristics Discovered
+- **99.8% multi-exon genes** (extremely high complexity)
+- **Average 17.7 exons per gene** (vs ~8 in humans)
+- **Gene sizes**: 508 bp to 370 kb (mean: 13.9 kb)
+- **Up to 299 exons** in single genes
+- **Consistent across 3 species** - family-wide characteristic
+
+## Gene Size Distribution Analysis
+
+### CDF Analysis Methodology
+Generated comprehensive cumulative distribution functions by:
+1. Loading all GFF annotations from 3 coral species (153,709 total genes)
+2. Calculating gene sizes (end - start positions)
+3. Creating CDFs showing percentage of genes within various length thresholds
+4. Analyzing coverage with sliding window approaches
+5. Estimating memory requirements for different sequence lengths
+
+### Key Coverage Statistics
+```
+Sequence Length | Single Window | Sliding Window (2x) | Memory (GB)
+12k            | 66.1%         | 83.4%              | 16.5
+14k            | 70.2%         | 86.5%              | 21.7
+16k            | 73.7%         | 89.0%              | 27.8
+```
+
+### Critical Finding
+Only 20% of genes fit in 2k windows (original config), but 83.4% fit within 24k using 12k sliding windows - a 4x improvement in coverage.
+
+## Architecture Decisions
+
+### Sequence Length: 12k (Optimal Choice)
+**Rationale:**
+- **Coverage**: 83.4% of genes with sliding windows (up to 24kb)
+- **Memory**: 16.5 GB - safe within 19.2 GB available RAM
+- **Manageable outliers**: Only 16.6% of genes need special handling
+- **Enables 4 layers**: Critical for long-range dependencies
+
+### Model Architecture: 4 Layers, 6 Heads, d_model=256
+**Layers (4 chosen for hierarchical learning):**
+- Layer 1: Local motifs (GT, AG, ATG, 3-10 bp patterns)
+- Layer 2: Contextual motifs (splice contexts, Kozak sequences, 10-50 bp)
+- Layer 3: Structural elements (complete exons/introns, 50-500 bp)
+- Layer 4: Gene architecture (multi-exon coordination, 500-5000 bp)
+
+**Heads (6 required for biological diversity):**
+- Head 1: Splice donor sites (GT + context)
+- Head 2: Splice acceptor sites (AG + context)  
+- Head 3: Start codons (ATG + upstream context)
+- Head 4: Stop codons (TAA/TAG/TGA)
+- Head 5: Exon/intron composition differences
+- Head 6: Long-range gene structure
+
+**d_model (256 for rich representations):**
+- Sufficient capacity for complex biological patterns
+- Enables learning of species-specific motifs
+- Balances performance with memory constraints
+
+### Sliding Window Strategy
+- **Window size**: 12,288 bp
+- **Stride**: 6,144 bp (50% overlap)
+- **Reconstruction**: Consensus merging across overlapping windows
+- **Coverage**: Handles genes up to 24kb with 2 windows, 36kb with 3 windows
+
+## Target Representation Decisions
+
+### What to Include in Training Targets
+**Pure observations from annotations:**
+- `gene_boundaries`: Direct gene start/end positions
+- `exon_intron`: Annotated exon/intron regions
+- `coding_potential`: Protein-coding regions
+
+**What NOT to include:**
+- `splice_sites`: Removed as too interpretive (let model discover splice patterns from exon/intron boundaries)
+
+### Key Bug Fixes Applied
+1. **Intron labeling bug**: Fixed missing intron class labels (were defaulting to intergenic)
+2. **Inference class indices**: Fixed exon lookup from class 0 to class 1
+3. **Symbolic constants**: Replaced magic numbers with named constants
+
+## Memory Optimization Analysis
+
+### Memory Scaling Insights
+- **Attention matrices dominate**: O(seq_len²) scaling is brutal
+- **16k config requires 27.8 GB** - exceeds available RAM
+- **12k config requires 16.5 GB** - fits comfortably
+- **Gradient checkpointing saves <1 GB** - insufficient for 16k
+
+### Hardware Constraints
+- **Total RAM**: 24 GB M4 MacBook Air
+- **Available for ML**: 19.2 GB (80% of total)
+- **Safety margin**: 2.7 GB with 12k config
+
+## Species-Specific Motif Discovery (Future)
+Plan to derive biological motifs from training data rather than hardcoded values:
+- Analyze actual splice sites in annotations to find GT/GC vs AG patterns
+- Extract start codon contexts from real gene starts
+- Learn species-specific regulatory sequences
+- Automatically adapt to organism-specific biology
+
+## Model Limitations and Future Improvements
+
+### Current Limitations
+- **Gene identity tracking**: Cannot distinguish which exons belong to which genes
+- **Overlapping genes**: No handling of nested or antisense genes
+- **Alternative splicing**: No support for multiple isoforms
+- **16.6% of genes**: Beyond 24kb coverage (require >3 windows)
+
+### Future Architecture Improvements
+- Gene identity embedding for multi-gene regions
+- Hierarchical prediction (genes → exons → splice sites)
+- Alternative splicing support
+- Graph-based gene structure representation
+
+## Configuration Generation
+Final optimized configuration saved as:
+`configs/m2_cpu_model4M_layer4_head6_seqlen12k_sliding.yaml`
+
+This represents the optimal balance of:
+- Biological pattern recognition capability
+- Gene coverage for complex coral genomes  
+- Memory efficiency for available hardware
+- Training stability and performance

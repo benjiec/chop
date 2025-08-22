@@ -1,0 +1,107 @@
+# M2 config optimized for coral gene complexity with 12k sliding windows
+# Based on comprehensive analysis of 153,709 genes across 3 coral species
+# Provides 83.4% gene coverage within 24GB RAM constraints
+
+model:
+  vocab_size: 5
+  d_model: 256          # Rich representations for complex biological patterns
+  n_layers: 4           # Hierarchical learning: motifs → contexts → structures → genes
+  n_heads: 6            # Essential biological diversity: splice sites, codons, boundaries
+  max_seq_length: 12288 # 12k - optimal memory/coverage tradeoff (83.4% genes covered with sliding window)
+  dropout: 0.1
+
+loss:
+  gene_weight: 1.0
+  exon_weight: 1.5      # Emphasize exon detection for complex multi-exon genes
+  splice_weight: 0.0    # REMOVED - let model discover splice patterns from exon/intron boundaries
+  coding_weight: 1.0
+  constraint_weight: 0.1
+
+training:
+  batch_size: 1         # Required for 12k sequences
+  max_epochs: 30        # More epochs for complex architecture
+  learning_rate: 5e-5   # Conservative for stability
+  weight_decay: 0.01
+  gradient_clip_val: 1.0
+  patience: 15          # Allow longer convergence time
+  accumulate_grad_batches: 8  # Effective batch size of 8
+  num_workers: 0
+  checkpoint_dir: "models/checkpoints"
+
+data:
+  sequences_path: "data/GCA_001939145.1.fna"
+  annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
+  max_sequence_length: 12288    # Match model max_seq_length
+  window_size: 12288            # 12k windows
+  stride: 6144                  # 50% overlap for seamless reconstruction
+  use_sliding_windows: true     # Enable sliding window processing
+  min_gene_coverage: 0.5        # Minimum fraction of gene in window for training
+
+# Sliding window inference settings
+inference:
+  enable_sliding_windows: true
+  window_size: 12288
+  stride: 6144
+  overlap_threshold: 0.5        # Minimum overlap to merge predictions
+  consensus_method: "weighted"  # Weight by prediction confidence
+  boundary_smoothing: true      # Smooth predictions at window boundaries
+  gene_reconstruction: true     # Enable multi-window gene reconstruction
+  max_reconstruction_windows: 8 # Handle genes up to 96kb (8 * 12k)
+
+# Post-processing settings for biological validation
+postprocessing:
+  enable: true
+  min_gene_length: 300          # Minimum biologically reasonable gene (100 codons)
+  min_exon_length: 9            # Minimum exon (3 codons)
+  max_intron_length: 50000      # Maximum reasonable intron for corals
+  gene_boundary_smoothing: 5    # Smooth boundaries over 5bp window
+  remove_isolated_predictions: true  # Remove single-position artifacts
+  enforce_gene_structure: true  # Ensure genes have proper start/end
+  splice_site_validation: false # Disabled - let model learn species-specific motifs
+
+logging:
+  use_wandb: false
+  project_name: "gene-prediction-coral-12k"
+  run_name: "m2-sliding-12k-coral"
+  log_every_n_steps: 25
+  val_check_interval: 0.25
+
+hardware:
+  accelerator: "cpu"    
+  devices: 1            
+  precision: 32         
+
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]
+  save_predictions: true
+  output_dir: "results"
+  evaluate_gene_reconstruction: true  # Test multi-window gene assembly
+  evaluate_sliding_windows: true      # Validate sliding window performance
+
+# Memory optimization for 24GB RAM system
+optimization:
+  gradient_checkpointing: true   # Trade compute for memory
+  mixed_precision: false         # Not supported on CPU
+  dataloader_pin_memory: false   # CPU training
+  empty_cache_frequency: 50      # Clear cache regularly
+  max_memory_usage_gb: 19        # Stay within 80% of 24GB RAM
+
+# Species-specific motif discovery (future enhancement)
+motif_discovery:
+  enable: false                  # TODO: Implement in future version
+  derive_from_annotations: true  # Learn from actual coral splice sites
+  min_motif_frequency: 10        # Minimum occurrences to consider valid
+  motif_context_length: 10       # Analyze 10bp around splice sites
+  
+# Target configuration (cleaned up based on analysis)
+targets:
+  include_splice_sites: false    # REMOVED - too interpretive, let model discover
+  gene_boundaries: true          # Direct observations from annotations
+  exon_intron: true             # Direct observations (with intron bug fix applied)
+  coding_potential: true        # Direct observations from CDS regions
+
+# Model capacity analysis
+# Estimated parameters: ~4M (d_model=256, n_layers=4, n_heads=6)
+# Estimated memory usage: 16.5 GB (safe within 19.2 GB available)
+# Gene coverage: 66.1% single window, 83.4% sliding window (up to 24kb genes)
+# Uncovered genes: 16.6% (25,586 genes beyond 24kb - require special handling)
