@@ -26,7 +26,7 @@ def main():
     gff_path = data_dir / "GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
     
     # Output file
-    tsv_path = data_dir / "GCA_001939145.1_annotations.tsv"
+    tsv_path = data_dir / "GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"
     
     # Check if input exists
     if not gff_path.exists():

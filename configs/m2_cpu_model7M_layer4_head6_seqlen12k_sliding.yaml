@@ -4,7 +4,7 @@
 
 model:
   vocab_size: 5
-  d_model: 256          # Rich representations for complex biological patterns
+  d_model: 252          # Rich representations for complex biological patterns (divisible by 6 heads)
   n_layers: 4           # Hierarchical learning: motifs → contexts → structures → genes
   n_heads: 6            # Essential biological diversity: splice sites, codons, boundaries
   max_seq_length: 12288 # 12k - optimal memory/coverage tradeoff (83.4% genes covered with sliding window)
@@ -30,13 +30,13 @@ training:
 
 data:
   sequences_path: "data/GCA_001939145.1.fna"
-  tsv_annotations_path: "data/GCA_001939145.1_annotations.tsv"  # Standard format
+  tsv_annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"  # Standard format
   max_sequence_length: 12288    # Match model max_seq_length
   window_size: 12288            # 12k windows
   stride: 6144                  # 50% overlap for seamless reconstruction
   use_sliding_windows: true     # Enable sliding window processing
   min_gene_coverage: 0.5        # Minimum fraction of gene in window for training
-  validate_sequences: true      # Enable sequence quality validation
+  # validate_sequences removed - data preparation is separate from training
   use_cache: true              # Enable caching for faster loading
   cache_dir: "cache"           # Cache directory
   augmentation:                # Data augmentation settings

@@ -5,7 +5,7 @@ Example script demonstrating the improved data loading system.
 Shows how to:
 1. Convert GFF to TSV format
 2. Load data with sliding windows
-3. Use caching and validation
+3. Use caching
 4. Apply data augmentation
 """
 
@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from scripts.gff_to_tsv import GFFToTSVConverter
 from utils.dna_processor import (
     DNADataset, load_fasta_sequences_with_ids, load_tsv_annotations, 
-    map_sequences_to_annotations, DataAugmentation, validate_sequence
+    map_sequences_to_annotations, DataAugmentation
 )
 from utils.constants import DEFAULT_WINDOW_SIZE, DEFAULT_STRIDE
 
@@ -30,7 +30,7 @@ def demonstrate_gff_to_tsv_conversion():
     
     # Paths
     gff_path = "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
-    tsv_path = "data/GCA_001939145.1_annotations.tsv"
+    tsv_path = "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"
     
     if not Path(gff_path).exists():
         print(f"GFF file not found: {gff_path}")
@@ -61,7 +61,7 @@ def demonstrate_sliding_window_loading():
     
     # Load sequences with IDs for proper mapping
     print("Loading sequences with IDs...")
-    sequences_with_ids = load_fasta_sequences_with_ids(sequences_path, validate=True)
+    sequences_with_ids = load_fasta_sequences_with_ids(sequences_path)
     print(f"Loaded {len(sequences_with_ids)} sequences with IDs")
     
     # Load annotations if available
@@ -146,23 +146,7 @@ def demonstrate_data_augmentation():
         print(f"Augmented gene: {aug_gene['start']}-{aug_gene['end']} ({aug_gene['strand']})")
 
 
-def demonstrate_sequence_validation():
-    """Demonstrate sequence validation."""
-    print("\n=== Sequence Validation ===")
-    
-    test_cases = [
-        ("ATCGATCGATCG", "Valid DNA sequence"),
-        ("ATCGATCGATCGNNNNNATCG", "Sequence with some N bases"),
-        ("ATCG" * 100, "Long valid sequence"),
-        ("ATCG", "Too short sequence"),
-        ("ATCGATCGXYZ", "Invalid bases"),
-        ("N" * 1000, "Too many N bases")
-    ]
-    
-    for sequence, description in test_cases:
-        is_valid, message = validate_sequence(sequence)
-        status = "✓" if is_valid else "✗"
-        print(f"{status} {description}: {message}")
+# Sequence validation removed - data preparation is separate from training
 
 
 def main():
@@ -173,7 +157,6 @@ def main():
     demonstrate_gff_to_tsv_conversion()
     demonstrate_sliding_window_loading()
     demonstrate_data_augmentation()
-    demonstrate_sequence_validation()
     
     print("\n" + "=" * 50)
     print("Demonstration completed!")

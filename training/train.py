@@ -150,10 +150,9 @@ class GenePredictionModule(pl.LightningModule):
 def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]:
     """Create training and validation data loaders with sliding window support."""
     
-    # Load sequences with IDs for proper mapping
+    # Load sequences with IDs for proper mapping (no validation - accepts all sequences)
     sequences_with_ids = load_fasta_sequences_with_ids(
-        config['data']['sequences_path'],
-        validate=config['data'].get('validate_sequences', True)
+        config['data']['sequences_path']
     )
     
     # Load annotations from TSV format
@@ -163,7 +162,6 @@ def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]
     if 'tsv_annotations_path' in data_config and data_config['tsv_annotations_path']:
         try:
             annotations = load_tsv_annotations(data_config['tsv_annotations_path'])
-            print(f"Loaded {len(annotations)} annotations from TSV")
         except Exception as e:
             print(f"Error: Could not load TSV annotations: {e}")
             print("Please convert GFF to TSV format using: python scripts/gff_to_tsv.py")

@@ -23,7 +23,7 @@ from .constants import (
     GeneBoundaryClass, ExonIntronClass, SpliceSiteClass, DNA_VOCAB,
     DEFAULT_WINDOW_SIZE, DEFAULT_STRIDE, DEFAULT_MIN_GENE_COVERAGE,
     TSV_COLUMNS, UNKNOWN_GENE_ID, MAX_GENES_PER_WINDOW,
-    MIN_SEQUENCE_LENGTH, MAX_N_CONTENT_RATIO, DEFAULT_CACHE_DIR, DEFAULT_MAX_CACHE_SIZE_GB
+    DEFAULT_CACHE_DIR, DEFAULT_MAX_CACHE_SIZE_GB
 )
 
 # Handle different BioPython versions for GC content calculation
@@ -70,17 +70,12 @@ class DNATokenizer:
         self.acceptor_motifs = ['AG']
 
     def tokenize(self, sequence: str) -> torch.Tensor:
-        """Convert DNA sequence string to token indices."""
-        # Convert to uppercase and handle ambiguous bases
+        """Convert DNA sequence string to token indices. Treats any non-ATGC bases as N."""
+        # Convert to uppercase
         sequence = sequence.upper()
         
-        # Replace ambiguous bases with N
-        for base in sequence:
-            if base not in self.vocab:
-                sequence = sequence.replace(base, 'N')
-        
-        # Convert to indices
-        tokens = [self.vocab.get(base, 4) for base in sequence]  # Default to N
+        # Convert to indices - any non-ATGC base becomes N (index 4)
+        tokens = [self.vocab.get(base, 4) for base in sequence]  # Default to N for any unknown base
         return torch.tensor(tokens, dtype=torch.long)
     
     def detokenize(self, tokens: torch.Tensor) -> str:
@@ -317,41 +312,28 @@ class DataCache:
             print(f"Cache write error: {e}")
 
 
-def load_fasta_sequences(file_path: str, validate: bool = True, use_cache: bool = True) -> List[str]:
-    """Load DNA sequences from a FASTA file with optional validation and caching."""
+def load_fasta_sequences_cached(file_path: str, use_cache: bool = True) -> List[str]:
+    """Load DNA sequences from a FASTA file with caching. No validation - accepts all sequences."""
     
     cache = DataCache() if use_cache else None
-    cache_params = {'validate': validate} if cache else None
     
     # Try cache first
     if cache:
-        cached_sequences = cache.get(file_path, cache_params)
+        cached_sequences = cache.get(file_path)
         if cached_sequences is not None:
             return cached_sequences
     
     sequences = []
-    invalid_count = 0
     
-    for i, record in enumerate(SeqIO.parse(file_path, "fasta")):
+    for record in SeqIO.parse(file_path, "fasta"):
         sequence = str(record.seq)
-        
-        if validate:
-            is_valid, message = validate_sequence(sequence)
-            if not is_valid:
-                print(f"Warning: Skipping invalid sequence {i} ({record.id}): {message}")
-                invalid_count += 1
-                continue
-                
         sequences.append(sequence)
-    
-    if validate and invalid_count > 0:
-        print(f"Filtered out {invalid_count} invalid sequences")
         
-    print(f"Loaded {len(sequences)} valid sequences from {file_path}")
+    print(f"Loaded {len(sequences)} sequences from {file_path}")
     
     # Cache the results
     if cache:
-        cache.set(file_path, sequences, cache_params)
+        cache.set(file_path, sequences)
     
     return sequences
 
@@ -673,87 +655,42 @@ class DNADataset:
         return window_annotation
 
 
-def validate_sequence(sequence: str, min_length: int = MIN_SEQUENCE_LENGTH, 
-                     max_n_ratio: float = MAX_N_CONTENT_RATIO) -> Tuple[bool, str]:
-    """Validate DNA sequence quality."""
-    
-    if len(sequence) < min_length:
-        return False, f"Sequence too short ({len(sequence)} bp < {min_length} bp)"
-    
-    # Count N bases
-    n_count = sequence.upper().count('N')
-    n_ratio = n_count / len(sequence) if len(sequence) > 0 else 0
-    
-    if n_ratio > max_n_ratio:
-        return False, f"Too many N bases ({n_ratio:.2%} > {max_n_ratio:.2%})"
-    
-    # Check for valid DNA bases
-    valid_bases = set('ATCGN')
-    invalid_bases = set(sequence.upper()) - valid_bases
-    if invalid_bases:
-        return False, f"Invalid DNA bases found: {invalid_bases}"
-    
-    return True, "Valid"
+# Validation functions removed - data preparation is separate from training
 
 
-def load_fasta_sequences_with_ids(file_path: str, validate: bool = True) -> List[Tuple[str, str]]:
-    """Load DNA sequences from a FASTA file with sequence IDs."""
+def load_fasta_sequences_with_ids(file_path: str) -> List[Tuple[str, str]]:
+    """Load DNA sequences from a FASTA file with sequence IDs. No validation - accepts all sequences."""
     sequences_with_ids = []
-    invalid_count = 0
     
-    for i, record in enumerate(SeqIO.parse(file_path, "fasta")):
+    for record in SeqIO.parse(file_path, "fasta"):
         sequence = str(record.seq)
         sequence_id = record.id
-        
-        if validate:
-            is_valid, message = validate_sequence(sequence)
-            if not is_valid:
-                print(f"Warning: Skipping invalid sequence {i} ({sequence_id}): {message}")
-                invalid_count += 1
-                continue
-                
         sequences_with_ids.append((sequence_id, sequence))
-    
-    if validate and invalid_count > 0:
-        print(f"Filtered out {invalid_count} invalid sequences")
         
-    print(f"Loaded {len(sequences_with_ids)} valid sequences with IDs from {file_path}")
+    print(f"Loaded {len(sequences_with_ids)} sequences with IDs from {file_path}")
     
     # Cache the results
     cache = DataCache()
-    cache_params = {'validate': validate, 'with_ids': True}
-    cache.set(file_path, sequences_with_ids, cache_params)
+    cache.set(file_path, sequences_with_ids)
     
     return sequences_with_ids
 
 
-def load_fasta_sequences(file_path: str, validate: bool = True) -> List[str]:
-    """Load DNA sequences from a FASTA file with optional validation."""
+def load_fasta_sequences(file_path: str) -> List[str]:
+    """Load DNA sequences from a FASTA file. No validation - accepts all sequences."""
     sequences = []
-    invalid_count = 0
     
-    for i, record in enumerate(SeqIO.parse(file_path, "fasta")):
+    for record in SeqIO.parse(file_path, "fasta"):
         sequence = str(record.seq)
-        
-        if validate:
-            is_valid, message = validate_sequence(sequence)
-            if not is_valid:
-                print(f"Warning: Skipping invalid sequence {i} ({record.id}): {message}")
-                invalid_count += 1
-                continue
-                
         sequences.append(sequence)
-    
-    if validate and invalid_count > 0:
-        print(f"Filtered out {invalid_count} invalid sequences")
         
-    print(f"Loaded {len(sequences)} valid sequences from {file_path}")
+    print(f"Loaded {len(sequences)} sequences from {file_path}")
     return sequences
 
 
 
 def load_tsv_annotations(file_path: str) -> List[Dict]:
-    """Load gene annotations from TSV file in standardized format."""
+    """Load gene annotations from TSV file in standardized format. Returns sequence objects with their genes."""
     print(f"Loading TSV annotations from {file_path}")
     
     if not os.path.exists(file_path):
@@ -840,16 +777,16 @@ def load_tsv_annotations(file_path: str) -> List[Dict]:
         sequence_id = gene_data['sequence_id']
         sequence_groups[sequence_id].append(gene_structure)
     
-    # Create annotations with all genes grouped by sequence_id
-    annotations = []
+    # Create sequence objects with all genes grouped by sequence_id
+    sequence_objects = []
     for sequence_id, genes in sequence_groups.items():
-        annotation = {'genes': genes, 'sequence_id': sequence_id}
-        annotations.append(annotation)
+        sequence_obj = {'genes': genes, 'sequence_id': sequence_id}
+        sequence_objects.append(sequence_obj)
     
     # Statistics
     all_genes = []
-    for ann in annotations:
-        all_genes.extend(ann['genes'])
+    for seq_obj in sequence_objects:
+        all_genes.extend(seq_obj['genes'])
     
     total_genes = len(all_genes)
     single_exon = sum(1 for gene in all_genes if len(gene['exons']) == 1)
@@ -865,40 +802,42 @@ def load_tsv_annotations(file_path: str) -> List[Dict]:
         sample = all_genes[0]
         print(f"Sample gene: {sample['gene_id']} ({sample['start']}-{sample['end']}, {len(sample['exons'])} exons)")
     
-    return annotations
+    print(f"Loaded {len(sequence_objects)} annotated sequences from TSV")
+    
+    return sequence_objects
 
 
 def map_sequences_to_annotations(sequences_with_ids: List[Tuple[str, str]], 
-                                annotations: List[Dict]) -> Tuple[List[str], List[Dict]]:
-    """Map sequences to their corresponding annotations using sequence IDs."""
+                                sequence_objects: List[Dict]) -> Tuple[List[str], List[Dict]]:
+    """Map sequences to their corresponding gene annotations using sequence IDs."""
     
-    # Create mapping from sequence_id to annotation
-    annotation_map = {}
-    for annotation in annotations:
-        if 'sequence_id' in annotation:
-            annotation_map[annotation['sequence_id']] = annotation
+    # Create mapping from sequence_id to sequence object
+    sequence_map = {}
+    for seq_obj in sequence_objects:
+        if 'sequence_id' in seq_obj:
+            sequence_map[seq_obj['sequence_id']] = seq_obj
         else:
-            # For annotations with multiple genes, map each gene's sequence_id
-            for gene in annotation.get('genes', []):
+            # For legacy format compatibility
+            for gene in seq_obj.get('genes', []):
                 # This shouldn't happen with the new TSV format, but handle legacy
                 pass
     
-    # Map sequences to annotations
+    # Map sequences to their gene annotations
     mapped_sequences = []
     mapped_annotations = []
     
     for sequence_id, sequence in sequences_with_ids:
         mapped_sequences.append(sequence)
         
-        # Find matching annotation
-        if sequence_id in annotation_map:
-            mapped_annotations.append(annotation_map[sequence_id])
+        # Find matching sequence object with genes
+        if sequence_id in sequence_map:
+            mapped_annotations.append(sequence_map[sequence_id])
         else:
-            # No annotation for this sequence
+            # No genes annotated for this sequence
             mapped_annotations.append({})
     
-    print(f"Mapped {len(mapped_sequences)} sequences to annotations")
-    print(f"Found annotations for {sum(1 for ann in mapped_annotations if ann)} sequences")
+    annotated_count = sum(1 for ann in mapped_annotations if ann)
+    print(f"Mapped {len(mapped_sequences)} sequences ({annotated_count} have annotated genes)")
     
     return mapped_sequences, mapped_annotations
 

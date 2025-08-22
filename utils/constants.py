@@ -50,9 +50,7 @@ DEFAULT_MAX_CACHE_SIZE_GB = 5
 TSV_COLUMNS = ['sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand']
 TSV_HEADER = '\t'.join(TSV_COLUMNS)
 
-# Data validation constants
-MIN_SEQUENCE_LENGTH = 1  # No artificial minimum - accept any valid sequence
-MAX_N_CONTENT_RATIO = 0.1  # Maximum 10% N bases
+# Gene structure constants (for annotation processing only)
 MIN_GENE_LENGTH = 300      # Minimum 100 codons
 MIN_EXON_LENGTH = 1        # Allow micro-exons (biologically valid)
 MAX_INTRON_LENGTH = 50000  # Maximum reasonable intron for corals
