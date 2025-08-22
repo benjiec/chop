@@ -38,3 +38,26 @@ DEFAULT_DROPOUT = 0.1
 
 # Training constants
 DEFAULT_THRESHOLD = 0.5
+
+# Data loading constants
+DEFAULT_WINDOW_SIZE = 12288
+DEFAULT_STRIDE = 6144
+DEFAULT_MIN_GENE_COVERAGE = 0.5
+DEFAULT_CACHE_DIR = "cache"
+DEFAULT_MAX_CACHE_SIZE_GB = 5
+
+# TSV format constants
+TSV_COLUMNS = ['sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand']
+TSV_HEADER = '\t'.join(TSV_COLUMNS)
+
+# Data validation constants
+MIN_SEQUENCE_LENGTH = 1  # No artificial minimum - accept any valid sequence
+MAX_N_CONTENT_RATIO = 0.1  # Maximum 10% N bases
+MIN_GENE_LENGTH = 300      # Minimum 100 codons
+MIN_EXON_LENGTH = 1        # Allow micro-exons (biologically valid)
+MAX_INTRON_LENGTH = 50000  # Maximum reasonable intron for corals
+MAX_GENE_EXONS = 500       # Maximum exons per gene (safety limit)
+
+# Gene ID tracking constants
+UNKNOWN_GENE_ID = -1       # For intergenic regions
+MAX_GENES_PER_WINDOW = 100 # Maximum genes that can overlap in one window

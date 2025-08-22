@@ -30,12 +30,20 @@ training:
 
 data:
   sequences_path: "data/GCA_001939145.1.fna"
-  annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff"
+  tsv_annotations_path: "data/GCA_001939145.1_annotations.tsv"  # Standard format
   max_sequence_length: 12288    # Match model max_seq_length
   window_size: 12288            # 12k windows
   stride: 6144                  # 50% overlap for seamless reconstruction
   use_sliding_windows: true     # Enable sliding window processing
   min_gene_coverage: 0.5        # Minimum fraction of gene in window for training
+  validate_sequences: true      # Enable sequence quality validation
+  use_cache: true              # Enable caching for faster loading
+  cache_dir: "cache"           # Cache directory
+  augmentation:                # Data augmentation settings
+    enable: false              # Enable for training robustness
+    reverse_complement_prob: 0.5  # Probability of reverse complement
+    masking_prob: 0.1          # Probability of random masking
+    max_mask_length: 50        # Maximum length of masked regions
 
 # Sliding window inference settings
 inference:

@@ -138,7 +138,7 @@ class GenePredictor(nn.Module):
         # Multi-task prediction heads
         self.gene_boundary_head = nn.Linear(d_model, 3)  # No gene, start, end
         self.exon_intron_head = nn.Linear(d_model, 3)    # Exon, intron, intergenic
-        self.splice_site_head = nn.Linear(d_model, 3)    # No splice, donor, acceptor
+        # splice_site_head removed - model will discover splice patterns from exon/intron boundaries
         self.coding_potential_head = nn.Linear(d_model, 1)  # Binary: coding/non-coding
         
         # Biological feature extractors
@@ -162,7 +162,7 @@ class GenePredictor(nn.Module):
         # Multi-task predictions
         gene_boundaries = self.gene_boundary_head(hidden_states)
         exon_intron = self.exon_intron_head(hidden_states)
-        splice_sites = self.splice_site_head(hidden_states)
+        # splice_sites removed - model will discover splice patterns from exon/intron boundaries
         coding_potential_logits = self.coding_potential_head(hidden_states)
         coding_potential = torch.sigmoid(coding_potential_logits)  # For other uses
         
@@ -173,7 +173,7 @@ class GenePredictor(nn.Module):
         return {
             'gene_boundaries': gene_boundaries,
             'exon_intron': exon_intron,
-            'splice_sites': splice_sites,
+            # splice_sites removed - model will discover splice patterns from exon/intron boundaries
             'coding_potential': coding_potential,
             'coding_potential_logits': coding_potential_logits,
             'splice_features': splice_features,
@@ -188,7 +188,7 @@ class GenePredictor(nn.Module):
         # Apply softmax for classification tasks
         gene_boundaries = F.softmax(outputs['gene_boundaries'], dim=-1)
         exon_intron = F.softmax(outputs['exon_intron'], dim=-1)
-        splice_sites = F.softmax(outputs['splice_sites'], dim=-1)
+        # splice_sites removed - model will discover splice patterns from exon/intron boundaries
         
         # Threshold-based predictions
         coding_mask = outputs['coding_potential'] > threshold
@@ -196,7 +196,7 @@ class GenePredictor(nn.Module):
         return {
             'gene_boundaries': gene_boundaries,
             'exon_intron': exon_intron,
-            'splice_sites': splice_sites,
+            # splice_sites removed - model will discover splice patterns from exon/intron boundaries
             'coding_potential': outputs['coding_potential'],
             'coding_mask': coding_mask
         }
@@ -227,14 +227,15 @@ class BiologicalLoss(nn.Module):
                 targets: Dict[str, torch.Tensor]) -> torch.Tensor:
         
         # Handle empty targets gracefully or missing keys
-        required_keys = ['gene_boundaries', 'exon_intron', 'splice_sites', 'coding_potential']
+        required_keys = ['gene_boundaries', 'exon_intron', 'coding_potential']
         if not targets or len(targets) == 0 or not all(key in targets for key in required_keys):
             # Return a dummy loss if no targets are available
             dummy_targets = {
                 'gene_boundaries': torch.zeros(predictions['gene_boundaries'].shape[0], predictions['gene_boundaries'].shape[1], dtype=torch.long),
                 'exon_intron': torch.zeros(predictions['exon_intron'].shape[0], predictions['exon_intron'].shape[1], dtype=torch.long),
-                'splice_sites': torch.zeros(predictions['splice_sites'].shape[0], predictions['splice_sites'].shape[1], dtype=torch.long),
-                'coding_potential': torch.zeros(predictions['coding_potential'].shape[0], predictions['coding_potential'].shape[1], dtype=torch.float32)
+                # splice_sites removed - model will discover splice patterns from exon/intron boundaries
+                'coding_potential': torch.zeros(predictions['coding_potential'].shape[0], predictions['coding_potential'].shape[1], dtype=torch.float32),
+                'gene_ids': torch.full((predictions['gene_boundaries'].shape[0], predictions['gene_boundaries'].shape[1]), -1, dtype=torch.long)
             }
             targets = dummy_targets
         
@@ -243,8 +244,7 @@ class BiologicalLoss(nn.Module):
                                 targets['gene_boundaries'].view(-1))
         exon_loss = self.ce_loss(predictions['exon_intron'].view(-1, 3), 
                                 targets['exon_intron'].view(-1))
-        splice_loss = self.ce_loss(predictions['splice_sites'].view(-1, 3), 
-                                  targets['splice_sites'].view(-1))
+        # splice_loss removed - model will discover splice patterns from exon/intron boundaries
         # Use logits for BCEWithLogitsLoss
         coding_loss = self.bce_loss(predictions['coding_potential_logits'].view(-1), 
                                    targets['coding_potential'].view(-1).float())
@@ -255,7 +255,7 @@ class BiologicalLoss(nn.Module):
         # Total loss
         total_loss = (self.gene_weight * gene_loss + 
                      self.exon_weight * exon_loss + 
-                     self.splice_weight * splice_loss + 
+                     # splice_loss removed - model will discover splice patterns from exon/intron boundaries
                      self.coding_weight * coding_loss + 
                      self.constraint_weight * constraint_loss)
         
@@ -269,13 +269,12 @@ class BiologicalLoss(nn.Module):
         start_codons = (predictions['gene_boundaries'][:, :, 1] > 0.5).float()
         coding_regions = (predictions['coding_potential'].squeeze(-1) > 0.5).float()
         
-        # Constraint 2: Splice sites should be at intron boundaries
-        donor_sites = (predictions['splice_sites'][:, :, 1] > 0.5).float()
-        acceptor_sites = (predictions['splice_sites'][:, :, 2] > 0.5).float()
+        # Constraint 2: Exons should be within coding regions
+        exon_regions = (predictions['exon_intron'][:, :, 1] > 0.5).float()  # ExonIntronClass.EXON = 1
         
         # Simple constraint: penalize biologically impossible combinations
         constraint_loss = torch.mean(start_codons * (1 - coding_regions)) + \
-                         torch.mean(donor_sites * acceptor_sites)  # Can't have both at same position
+                         torch.mean(exon_regions * (1 - coding_regions))  # Exons should be in coding regions
         
         return constraint_loss
 

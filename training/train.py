@@ -21,7 +21,10 @@ from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 sys.path.append(str(Path(__file__).parent.parent))
 
 from models.gene_predictor import GenePredictor, BiologicalLoss, create_model
-from utils.dna_processor import DNADataset, load_fasta_sequences, load_gff_annotations
+from utils.dna_processor import (
+    DNADataset, load_fasta_sequences, load_fasta_sequences_with_ids, 
+    load_tsv_annotations, map_sequences_to_annotations
+)
 from torch.utils.data import DataLoader, random_split
 
 
@@ -120,12 +123,7 @@ class GenePredictionModule(pl.LightningModule):
             accuracy = (pred_labels == true_labels).float().mean()
             metrics['exon_intron_accuracy'] = accuracy
         
-        # Splice site accuracy
-        if 'splice_sites' in predictions and 'splice_sites' in targets:
-            pred_labels = torch.argmax(predictions['splice_sites'], dim=-1)
-            true_labels = targets['splice_sites']  # Already class indices, no argmax needed
-            accuracy = (pred_labels == true_labels).float().mean()
-            metrics['splice_site_accuracy'] = accuracy
+        # Splice site accuracy removed - model will discover splice patterns from exon/intron boundaries
     
     def configure_optimizers(self):
         """Configure optimizers and learning rate schedulers."""
@@ -150,25 +148,60 @@ class GenePredictionModule(pl.LightningModule):
 
 
 def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]:
-    """Create training and validation data loaders."""
+    """Create training and validation data loaders with sliding window support."""
     
-    # Load sequences and annotations
-    sequences = load_fasta_sequences(config['data']['sequences_path'])
+    # Load sequences with IDs for proper mapping
+    sequences_with_ids = load_fasta_sequences_with_ids(
+        config['data']['sequences_path'],
+        validate=config['data'].get('validate_sequences', True)
+    )
     
+    # Load annotations from TSV format
     annotations = []
-    if 'annotations_path' in config['data'] and config['data']['annotations_path']:
+    data_config = config['data']
+    
+    if 'tsv_annotations_path' in data_config and data_config['tsv_annotations_path']:
         try:
-            annotations = load_gff_annotations(config['data']['annotations_path'])
-            print(f"Loaded {len(annotations)} annotations")
+            annotations = load_tsv_annotations(data_config['tsv_annotations_path'])
+            print(f"Loaded {len(annotations)} annotations from TSV")
         except Exception as e:
-            print(f"Warning: Could not load annotations: {e}")
-            annotations = []
+            print(f"Error: Could not load TSV annotations: {e}")
+            print("Please convert GFF to TSV format using: python scripts/gff_to_tsv.py")
+            raise
+    else:
+        print("Warning: No TSV annotations path specified in config")
+        print("Use 'tsv_annotations_path' in config or convert GFF using: python scripts/gff_to_tsv.py")
+        annotations = []
+    
+    # Map sequences to annotations using sequence IDs
+    sequences, mapped_annotations = map_sequences_to_annotations(sequences_with_ids, annotations)
+    
+    # Get sliding window parameters from config
+    use_sliding_windows = data_config.get('use_sliding_windows', False)
+    window_size = data_config.get('window_size', config['model']['max_seq_length'])
+    stride = data_config.get('stride', window_size // 2)
+    min_gene_coverage = data_config.get('min_gene_coverage', 0.5)
+    
+    # Get data augmentation parameters from config
+    augmentation_config = data_config.get('augmentation', {})
+    enable_augmentation = augmentation_config.get('enable', False)
+    augmentation_params = {
+        'reverse_complement_prob': augmentation_config.get('reverse_complement_prob', 0.5),
+        'masking_prob': augmentation_config.get('masking_prob', 0.1),
+        'max_mask_length': augmentation_config.get('max_mask_length', 50)
+    }
     
     # Create dataset
     dataset = DNADataset(
         sequences=sequences,
-        annotations=annotations,
-        max_length=config['model']['max_seq_length']
+        annotations=mapped_annotations,
+        max_length=config['model']['max_seq_length'],
+        use_sliding_windows=use_sliding_windows,
+        window_size=window_size,
+        stride=stride,
+        min_gene_coverage=min_gene_coverage,
+        enable_augmentation=enable_augmentation,
+        augmentation_params=augmentation_params
     )
     
     # Split dataset

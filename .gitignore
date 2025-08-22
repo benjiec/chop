@@ -4,3 +4,4 @@ logs
 results
 chop_env
 models/checkpoints
+cache

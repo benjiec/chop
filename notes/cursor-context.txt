@@ -9,7 +9,7 @@ CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool th
 - **Platform**: M4 MacBook Air with 24GB RAM (native Python - faster than Docker)
 - **Python Environment**: `chop_env` virtual environment
 - **Training Command**: `python train_cpu_only.py --config [config].yaml`
-- **Inference Command**: `python inference/predict.py --model [model] --config [config] --input data/x.fna`
+- **Inference Command**: `python inference/predict.py --model [model] --config [config] --input data/test_query.fna`
 
 ### Data Characteristics (UPDATED ANALYSIS)
 - **Sequences**: Multiple coral species datasets in `data/` directory
