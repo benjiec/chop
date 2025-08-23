@@ -807,8 +807,74 @@ def load_tsv_annotations(file_path: str) -> List[Dict]:
     return sequence_objects
 
 
+def reverse_complement(sequence: str) -> str:
+    """Generate reverse complement of DNA sequence."""
+    complement_map = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
+    complement = ''.join(complement_map.get(base.upper(), 'N') for base in sequence)
+    return complement[::-1]
+
+
+def validate_start_stop_codons(sequence: str, gene_start: int, gene_end: int, strand: str = '+') -> bool:
+    """
+    Validate that a gene has proper start and stop codons, considering strand.
+    
+    Args:
+        sequence: DNA sequence string
+        gene_start: Gene start position (0-based)
+        gene_end: Gene end position (0-based, exclusive)
+        strand: '+' for forward strand, '-' for reverse strand
+        
+    Returns:
+        True if gene has valid ATG start and TAA/TAG/TGA stop codons
+    """
+    valid_start_codons = {'ATG'}
+    valid_stop_codons = {'TAA', 'TAG', 'TGA'}
+    
+    if strand == '+':
+        # Forward strand: check codons directly
+        # Check start codon
+        if gene_start + 2 >= len(sequence):
+            return False
+        start_codon = sequence[gene_start:gene_start+3].upper()
+        if start_codon not in valid_start_codons:
+            return False
+        
+        # Check stop codon
+        if gene_end < 3:
+            return False
+        stop_codon = sequence[gene_end-3:gene_end].upper()
+        if stop_codon not in valid_stop_codons:
+            return False
+            
+    else:  # strand == '-'
+        # Reverse strand: check reverse complement
+        # For minus strand, the "start" is actually at gene_end and "stop" at gene_start
+        # But we need to look at the reverse complement
+        
+        # Check start codon (at gene_end on reverse complement)
+        if gene_end < 3:
+            return False
+        # The start codon is the last 3 bases of the gene, reverse complemented
+        start_region = sequence[gene_end-3:gene_end].upper()
+        start_codon = reverse_complement(start_region)
+        if start_codon not in valid_start_codons:
+            return False
+        
+        # Check stop codon (at gene_start on reverse complement)  
+        if gene_start + 2 >= len(sequence):
+            return False
+        # The stop codon is the first 3 bases of the gene, reverse complemented
+        stop_region = sequence[gene_start:gene_start+3].upper()
+        stop_codon = reverse_complement(stop_region)
+        if stop_codon not in valid_stop_codons:
+            return False
+        
+    return True
+
+
 def load_gene_contexts_with_annotations(gene_contexts_path: str, 
-                                       annotations_path: str) -> Tuple[List[str], List[Dict]]:
+                                       annotations_path: str,
+                                       filter_invalid_codons: bool = True) -> Tuple[List[str], List[Dict]]:
     """
     Load pre-extracted gene contexts and their corresponding annotations.
     
@@ -844,11 +910,10 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
     matched_sequences = []
     matched_annotations = []
     flank_size = 2000  # Should match the flanking size used in extract_gene_contexts.py
+    filtered_count = 0
     
     for gene_id, sequence in gene_context_dict.items():
         if gene_id in gene_annotation_map:
-            matched_sequences.append(sequence)
-            
             # Get original gene annotation
             original_gene = gene_annotation_map[gene_id]
             
@@ -860,6 +925,15 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
             adjusted_gene = original_gene.copy()
             adjusted_gene['start'] = flank_size  # Gene starts at position flank_size in context
             adjusted_gene['end'] = flank_size + gene_length  # Gene ends at flank_size + gene_length
+            
+            # Filter out genes with invalid start/stop codons if requested
+            if filter_invalid_codons:
+                strand = adjusted_gene.get('strand', '+')
+                if not validate_start_stop_codons(sequence, adjusted_gene['start'], adjusted_gene['end'], strand):
+                    filtered_count += 1
+                    continue  # Skip this gene
+            
+            matched_sequences.append(sequence)
             
             # Adjust exon coordinates too
             if 'exons' in adjusted_gene:
@@ -880,6 +954,9 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
             matched_annotations.append(sequence_obj)
         else:
             print(f"Warning: No annotation found for gene context {gene_id}")
+    
+    if filter_invalid_codons and filtered_count > 0:
+        print(f"Filtered out {filtered_count} genes with invalid start/stop codons")
     
     print(f"Matched {len(matched_sequences)} gene contexts with annotations")
     

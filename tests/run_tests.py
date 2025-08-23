@@ -14,10 +14,11 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from test_gff_to_tsv import TestGFFToTSV
 from test_tsv_to_targets import TestTSVToTargets
+from test_codon_constraints import TestCodonValidation, TestBiologicalLoss, TestIntegration
 
 
 def run_all_tests():
-    """Run all data loading tests."""
+    """Run all data loading and codon constraint tests."""
     
     # Create test suite
     loader = unittest.TestLoader()
@@ -26,6 +27,9 @@ def run_all_tests():
     # Add test cases
     suite.addTests(loader.loadTestsFromTestCase(TestGFFToTSV))
     suite.addTests(loader.loadTestsFromTestCase(TestTSVToTargets))
+    suite.addTests(loader.loadTestsFromTestCase(TestCodonValidation))
+    suite.addTests(loader.loadTestsFromTestCase(TestBiologicalLoss))
+    suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

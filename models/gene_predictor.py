@@ -266,7 +266,12 @@ class BiologicalLoss(nn.Module):
     
     def _check_start_stop_codons(self, sequence_tokens: torch.Tensor, 
                                  gene_boundaries: torch.Tensor) -> torch.Tensor:
-        """Check if predicted gene boundaries have valid start/stop codons."""
+        """Check if predicted gene boundaries have valid start/stop codons.
+        
+        Note: This function assumes forward strand genes for simplicity.
+        In practice, gene prediction should consider both strands, but that
+        requires strand information which isn't available in the current setup.
+        """
         batch_size, seq_len = sequence_tokens.shape
         device = sequence_tokens.device
         
@@ -275,6 +280,14 @@ class BiologicalLoss(nn.Module):
         # Stop codons: TAA=[3,0,0], TAG=[3,0,2], TGA=[3,2,0]
         start_codon = torch.tensor([0, 3, 2], device=device)  # ATG
         stop_codons = torch.tensor([[3, 0, 0], [3, 0, 2], [3, 2, 0]], device=device)  # TAA, TAG, TGA
+        
+        # Reverse complement codons for minus strand
+        # ATG reverse complement = CAT = [1, 0, 3]
+        # TAA reverse complement = TTA = [3, 3, 0]
+        # TAG reverse complement = CTA = [1, 3, 0] 
+        # TGA reverse complement = TCA = [3, 1, 0]
+        start_codon_rc = torch.tensor([1, 0, 3], device=device)  # CAT (ATG reverse complement)
+        stop_codons_rc = torch.tensor([[3, 3, 0], [1, 3, 0], [3, 1, 0]], device=device)  # TTA, CTA, TCA
         
         codon_penalty = 0.0
         
@@ -288,8 +301,10 @@ class BiologicalLoss(nn.Module):
             for start_pos in start_positions:
                 if start_pos + 2 < seq_len:  # Ensure we can read 3 nucleotides
                     predicted_codon = sequence_tokens[batch_idx, start_pos:start_pos+3]
-                    # Penalty if not ATG
-                    if not torch.equal(predicted_codon, start_codon):
+                    # Check both forward and reverse strand start codons
+                    valid_start = (torch.equal(predicted_codon, start_codon) or 
+                                 torch.equal(predicted_codon, start_codon_rc))
+                    if not valid_start:
                         codon_penalty += 1.0
             
             # Find end positions  
@@ -297,12 +312,17 @@ class BiologicalLoss(nn.Module):
             for end_pos in end_positions:
                 if end_pos >= 3:  # Ensure we can read 3 nucleotides before end
                     predicted_codon = sequence_tokens[batch_idx, end_pos-3:end_pos]
-                    # Check if matches any stop codon
+                    # Check if matches any stop codon (forward or reverse)
                     is_valid_stop = False
                     for stop_codon in stop_codons:
                         if torch.equal(predicted_codon, stop_codon):
                             is_valid_stop = True
                             break
+                    if not is_valid_stop:
+                        for stop_codon_rc in stop_codons_rc:
+                            if torch.equal(predicted_codon, stop_codon_rc):
+                                is_valid_stop = True
+                                break
                     if not is_valid_stop:
                         codon_penalty += 1.0
         
@@ -330,7 +350,7 @@ class BiologicalLoss(nn.Module):
         # Simple constraint: penalize biologically impossible combinations
         constraint_loss = (torch.mean(start_codons * (1 - coding_regions)) + 
                           torch.mean(exon_regions * (1 - coding_regions)) +  # Exons should be in coding regions
-                          codon_constraint * 0.1)  # Weight codon constraint
+                          codon_constraint * 0.01)  # Reduced weight for codon constraint
         
         return constraint_loss
 
