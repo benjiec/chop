@@ -82,7 +82,7 @@ chop/
 
 ## Species-Specific Biological Insights
 
-### Coral/Cnidarian Gene Characteristics
+### Gene Characteristics
 - **Extreme complexity**: Far exceeds typical eukaryotic gene structure
 - **Consistent across family**: 3 species show similar patterns
 - **Biological implications**: Highly regulated gene expression, extensive alternative splicing potential
