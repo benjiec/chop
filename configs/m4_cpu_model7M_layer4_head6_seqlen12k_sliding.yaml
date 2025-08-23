@@ -4,10 +4,10 @@
 
 model:
   vocab_size: 5
-  d_model: 252          # Rich representations for complex biological patterns (divisible by 6 heads)
-  n_layers: 4           # Hierarchical learning: motifs → contexts → structures → genes
-  n_heads: 6            # Essential biological diversity: splice sites, codons, boundaries
-  max_seq_length: 12288 # 12k - optimal memory/coverage tradeoff (83.4% genes covered with sliding window)
+  d_model: 190          # Rich representations for complex biological patterns (divisible by 6 heads)
+  n_layers: 3           # Hierarchical learning: motifs → contexts → structures → genes
+  n_heads: 5            # Essential biological diversity: splice sites, codons, boundaries
+  max_seq_length: 10000
   dropout: 0.1
 
 loss:
@@ -33,9 +33,9 @@ data:
   sequences_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_gene_context.fna"  # Pre-extracted gene contexts
   tsv_annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"  # Standard format
   use_gene_contexts: true  # Use gene context loading instead of full genomic sequences
-  max_sequence_length: 12288    # Match model max_seq_length
-  window_size: 12288            # 12k windows
-  stride: 6144                  # 50% overlap for seamless reconstruction
+  max_sequence_length: 10000
+  window_size: 10000
+  stride: 5000
   use_sliding_windows: true     # Enable sliding window processing
   min_gene_coverage: 0.5        # Minimum fraction of gene in window for training
   # validate_sequences removed - data preparation is separate from training
