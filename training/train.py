@@ -207,13 +207,14 @@ def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    # Create data loaders
+    # Create data loaders  
+    pin_memory = config['data'].get('pin_memory', False)  # Read from config
     train_loader = DataLoader(
         train_dataset,
         batch_size=config['training']['batch_size'],
         shuffle=True,
         num_workers=config['training'].get('num_workers', 4),
-        pin_memory=True
+        pin_memory=pin_memory
     )
     
     val_loader = DataLoader(
@@ -221,7 +222,7 @@ def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]
         batch_size=config['training']['batch_size'],
         shuffle=False,
         num_workers=config['training'].get('num_workers', 4),
-        pin_memory=True
+        pin_memory=pin_memory
     )
     
     return train_loader, val_loader

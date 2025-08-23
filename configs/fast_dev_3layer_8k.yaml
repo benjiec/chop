@@ -1,13 +1,12 @@
-# M2 config optimized for coral gene complexity with 12k sliding windows
-# Based on comprehensive analysis of 153,709 genes across 3 coral species
-# Provides 83.4% gene coverage within 24GB RAM constraints
+# Fast development config for quick iteration and testing
+# Optimized for speed while maintaining biological pattern recognition
 
 model:
   vocab_size: 5
   d_model: 252          # Rich representations for complex biological patterns (divisible by 6 heads)
-  n_layers: 4           # Hierarchical learning: motifs → contexts → structures → genes
+  n_layers: 3           # Reduced layers for faster training while preserving key biological hierarchy
   n_heads: 6            # Essential biological diversity: splice sites, codons, boundaries
-  max_seq_length: 12288 # 12k - optimal memory/coverage tradeoff (83.4% genes covered with sliding window)
+  max_seq_length: 8192  # 8k sequences for faster training with good gene coverage
   dropout: 0.1
 
 loss:
@@ -18,29 +17,28 @@ loss:
   constraint_weight: 0.1
 
 training:
-  batch_size: 2         # Optimized for memory usage with 12k sequences
+  batch_size: 4         # Higher batch size possible with 8k sequences
   max_epochs: 30        # More epochs for complex architecture
-  learning_rate: 1e-4   # Scaled appropriately for effective batch size of 32
+  learning_rate: 1e-4   # Scaled appropriately for effective batch size of 64
   weight_decay: 0.01
   gradient_clip_val: 1.0
   patience: 15          # Allow longer convergence time
-  accumulate_grad_batches: 16  # Effective batch size of 32 for stable gradients
+  accumulate_grad_batches: 16  # Effective batch size of 64 for stable gradients
   num_workers: 4        # Parallel data loading for faster throughput
   checkpoint_dir: "models/checkpoints"
 
 data:
   sequences_path: "data/GCA_001939145.1.fna"
   tsv_annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"  # Standard format
-  max_sequence_length: 12288    # Match model max_seq_length
-  window_size: 12288            # 12k windows
-  stride: 6144                  # 50% overlap for seamless reconstruction
+  max_sequence_length: 8192     # Match model max_seq_length
+  window_size: 8192             # 8k windows for faster processing
+  stride: 4096                  # 50% overlap for seamless reconstruction
   use_sliding_windows: true     # Enable sliding window processing
   min_gene_coverage: 0.5        # Minimum fraction of gene in window for training
-  # validate_sequences removed - data preparation is separate from training
   use_cache: true              # Enable caching for faster loading
   cache_dir: "cache"           # Cache directory
   augmentation:                # Data augmentation settings
-    enable: false              # Enable for training robustness
+    enable: false              # Disabled for development speed
     reverse_complement_prob: 0.5  # Probability of reverse complement
     masking_prob: 0.1          # Probability of random masking
     max_mask_length: 50        # Maximum length of masked regions
@@ -48,13 +46,13 @@ data:
 # Sliding window inference settings
 inference:
   enable_sliding_windows: true
-  window_size: 12288
-  stride: 6144
+  window_size: 8192
+  stride: 4096
   overlap_threshold: 0.5        # Minimum overlap to merge predictions
   consensus_method: "weighted"  # Weight by prediction confidence
   boundary_smoothing: true      # Smooth predictions at window boundaries
   gene_reconstruction: true     # Enable multi-window gene reconstruction
-  max_reconstruction_windows: 8 # Handle genes up to 96kb (8 * 12k)
+  max_reconstruction_windows: 6 # Handle genes up to 48kb (6 * 8k)
 
 # Post-processing settings for biological validation
 postprocessing:
@@ -69,8 +67,8 @@ postprocessing:
 
 logging:
   use_wandb: false
-  project_name: "gene-prediction-coral-12k"
-  run_name: "m2-sliding-12k-coral"
+  project_name: "gene-prediction-coral-dev"
+  run_name: "fast-dev-3layer-8k"
   log_every_n_steps: 100     # Balanced frequency for monitoring without overhead
   val_check_interval: 1.0    # Validate once per epoch for efficiency
 
@@ -109,7 +107,7 @@ targets:
   coding_potential: true        # Direct observations from CDS regions
 
 # Model capacity analysis
-# Estimated parameters: ~4M (d_model=256, n_layers=4, n_heads=6)
-# Estimated memory usage: 16.5 GB (safe within 19.2 GB available)
-# Gene coverage: 66.1% single window, 83.4% sliding window (up to 24kb genes)
-# Uncovered genes: 16.6% (25,586 genes beyond 24kb - require special handling)
+# Estimated parameters: ~3.5M (d_model=252, n_layers=3, n_heads=6)
+# Estimated memory usage: ~12 GB (safe within 19.2 GB available)
+# Gene coverage: ~55% single window, ~75% sliding window (up to 16kb genes)
+# Optimized for development speed while maintaining biological pattern recognition
