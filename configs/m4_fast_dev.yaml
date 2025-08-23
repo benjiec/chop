@@ -60,7 +60,7 @@ postprocessing:
   enable: true
   min_gene_length: 300          # Minimum biologically reasonable gene (100 codons)
   min_exon_length: 9            # Minimum exon (3 codons)
-  max_intron_length: 50000      # Maximum reasonable intron for corals
+  max_intron_length: 50000      # Maximum reasonable intron for algae
   gene_boundary_smoothing: 5    # Smooth boundaries over 5bp window
   remove_isolated_predictions: true  # Remove single-position artifacts
   enforce_gene_structure: true  # Ensure genes have proper start/end
@@ -68,7 +68,7 @@ postprocessing:
 
 logging:
   use_wandb: false
-  project_name: "gene-prediction-coral-dev-mps"
+  project_name: "gene-prediction-algae-dev-mps"
   run_name: "fast-dev-mps-3layer-8k"
   log_every_n_steps: 100     # Balanced frequency for monitoring without overhead
   val_check_interval: 1.0    # Validate once per epoch for efficiency
@@ -96,7 +96,7 @@ optimization:
 # Species-specific motif discovery (future enhancement)
 motif_discovery:
   enable: false                  # TODO: Implement in future version
-  derive_from_annotations: true  # Learn from actual coral splice sites
+  derive_from_annotations: true  # Learn from actual algae splice sites
   min_motif_frequency: 10        # Minimum occurrences to consider valid
   motif_context_length: 10       # Analyze 10bp around splice sites
   

@@ -202,7 +202,7 @@ class GFFToTSVConverter:
                 if intron_length > MAX_INTRON_LENGTH:
                     if self.verbose:
                         print(f"Warning: Gene {gene_id} has very long intron ({intron_length} bp)")
-                    # Don't reject, just warn - corals may have long introns
+                    # Don't reject, just warn - algae may have long introns
                     
         return True
         

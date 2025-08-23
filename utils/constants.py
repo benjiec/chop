@@ -53,7 +53,7 @@ TSV_HEADER = '\t'.join(TSV_COLUMNS)
 # Gene structure constants (for annotation processing only)
 MIN_GENE_LENGTH = 300      # Minimum 100 codons
 MIN_EXON_LENGTH = 1        # Allow micro-exons (biologically valid)
-MAX_INTRON_LENGTH = 50000  # Maximum reasonable intron for corals
+MAX_INTRON_LENGTH = 50000  # Maximum reasonable intron for algae
 MAX_GENE_EXONS = 500       # Maximum exons per gene (safety limit)
 
 # Gene ID tracking constants

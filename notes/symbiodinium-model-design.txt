@@ -1,7 +1,7 @@
 # Symbiodinium Gene Prediction Model Design Notes
 
 ## Overview
-This document summarizes the biological requirements, technical decisions, and analysis that led to our optimized model configuration for predicting genes in coral/cnidarian species with extraordinarily complex gene structures.
+This document summarizes the biological requirements, technical decisions, and analysis that led to our optimized model configuration for predicting genes in algae species with extraordinarily complex gene structures.
 
 ## Biological Requirements Analysis
 
@@ -25,7 +25,7 @@ This document summarizes the biological requirements, technical decisions, and a
 
 ### CDF Analysis Methodology
 Generated comprehensive cumulative distribution functions by:
-1. Loading all GFF annotations from 3 coral species (153,709 total genes)
+1. Loading all GFF annotations from 3 algae species (153,709 total genes)
 2. Calculating gene sizes (end - start positions)
 3. Creating CDFs showing percentage of genes within various length thresholds
 4. Analyzing coverage with sliding window approaches
@@ -133,6 +133,6 @@ Final optimized configuration saved as:
 
 This represents the optimal balance of:
 - Biological pattern recognition capability
-- Gene coverage for complex coral genomes  
+- Gene coverage for complex algae genomes  
 - Memory efficiency for available hardware
 - Training stability and performance

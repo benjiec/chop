@@ -1,7 +1,7 @@
 # CHOP Gene Prediction - Updated Project Context
 
 ## Project Overview
-CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool that uses attention mechanisms to identify genes, exons, introns, splice sites, and coding regions in genomic DNA sequences. This project has been significantly enhanced to handle extraordinarily complex gene structures found in coral/cnidarian species.
+CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool that uses attention mechanisms to identify genes, exons, introns, splice sites, and coding regions in genomic DNA sequences. This project has been significantly enhanced to handle extraordinarily complex gene structures found in algae species.
 
 ## Current Working Setup
 
@@ -12,9 +12,9 @@ CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool th
 - **Inference Command**: `python inference/predict.py --model [model] --config [config] --input data/test_query.fna`
 
 ### Data Characteristics (UPDATED ANALYSIS)
-- **Sequences**: Multiple coral species datasets in `data/` directory
+- **Sequences**: Multiple algae species datasets in `data/` directory
 - **Primary dataset**: `data/GCA_001939145.1.fna` (819MB) with annotations `data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20.gff`
-- **Family-wide analysis**: 153,709 genes across 3 coral species
+- **Family-wide analysis**: 153,709 genes across 3 algae species
 - **Gene complexity**: 99.8% multi-exon genes, average 17.7 exons per gene (vs ~8 in humans)
 - **Gene sizes**: 508 bp to 370 kb (mean: 13.9 kb)
 - **Most complex genes**: Up to 299 exons in single genes
@@ -110,7 +110,7 @@ Based on comprehensive CDF analysis of 153,709 genes:
 4. **Gene architecture** (500-5000 bp): Multi-exon coordination
 
 ## Current Status
-- ✅ **Architecture optimized** for coral gene complexity
+- ✅ **Architecture optimized** for algae gene complexity
 - ✅ **Memory requirements** fit available hardware
 - ✅ **Major bugs fixed** in data processing and inference
 - ✅ **Sliding window infrastructure** designed
