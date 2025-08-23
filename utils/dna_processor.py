@@ -822,22 +822,27 @@ def map_sequences_to_annotations(sequences_with_ids: List[Tuple[str, str]],
                 # This shouldn't happen with the new TSV format, but handle legacy
                 pass
     
-    # Map sequences to their gene annotations
+    # Map sequences to their gene annotations - ONLY INCLUDE ANNOTATED SEQUENCES
     mapped_sequences = []
     mapped_annotations = []
     
+    skipped_count = 0
     for sequence_id, sequence in sequences_with_ids:
-        mapped_sequences.append(sequence)
-        
         # Find matching sequence object with genes
         if sequence_id in sequence_map:
+            # Only include sequences that have annotations
+            mapped_sequences.append(sequence)
             mapped_annotations.append(sequence_map[sequence_id])
         else:
-            # No genes annotated for this sequence
-            mapped_annotations.append({})
+            # Skip sequences without annotations to speed up training
+            skipped_count += 1
     
-    annotated_count = sum(1 for ann in mapped_annotations if ann)
-    print(f"Mapped {len(mapped_sequences)} sequences ({annotated_count} have annotated genes)")
+    annotated_count = len(mapped_annotations)
+    total_count = len(sequences_with_ids)
+    speedup = total_count / annotated_count if annotated_count > 0 else 1
+    
+    print(f"Filtered to {annotated_count} annotated sequences (skipped {skipped_count} unannotated)")
+    print(f"Training speedup: {speedup:.1f}x faster ({annotated_count}/{total_count} sequences)")
     
     return mapped_sequences, mapped_annotations
 

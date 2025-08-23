@@ -3,9 +3,9 @@
 
 model:
   vocab_size: 5
-  d_model: 252          # Rich representations for complex biological patterns (divisible by 6 heads)
-  n_layers: 4           # Reduced layers for faster training while preserving key biological hierarchy
-  n_heads: 6            # Essential biological diversity: splice sites, codons, boundaries
+  d_model: 190          # Rich representations for complex biological patterns (divisible by 5 heads)
+  n_layers: 3           # Reduced layers for faster training while preserving key biological hierarchy
+  n_heads: 5            # Essential biological diversity: splice sites, codons, boundaries
   max_seq_length: 4096
   dropout: 0.1
 
@@ -17,7 +17,7 @@ loss:
   constraint_weight: 0.1
 
 training:
-  batch_size: 2         # Conservative batch size for MPS memory limits
+  batch_size: 1         # Conservative batch size for MPS memory limits
   max_epochs: 30        # More epochs for complex architecture
   learning_rate: 1e-4   # Scaled appropriately for effective batch size of 32
   weight_decay: 0.01
