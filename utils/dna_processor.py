@@ -807,6 +807,85 @@ def load_tsv_annotations(file_path: str) -> List[Dict]:
     return sequence_objects
 
 
+def load_gene_contexts_with_annotations(gene_contexts_path: str, 
+                                       annotations_path: str) -> Tuple[List[str], List[Dict]]:
+    """
+    Load pre-extracted gene contexts and their corresponding annotations.
+    
+    This function expects:
+    - gene_contexts_path: FASTA file with gene contexts (sequence ID = gene ID)
+    - annotations_path: TSV file with gene annotations
+    
+    Returns:
+        Tuple of (sequences, annotations) where each sequence corresponds to one gene
+    """
+    print(f"Loading gene contexts from {gene_contexts_path}")
+    
+    # Load gene context sequences
+    gene_contexts = load_fasta_sequences_with_ids(gene_contexts_path)
+    gene_context_dict = {seq_id: sequence for seq_id, sequence in gene_contexts}
+    
+    print(f"Loaded {len(gene_context_dict)} gene context sequences")
+    
+    # Load annotations
+    annotation_objects = load_tsv_annotations(annotations_path)
+    
+    # Create mapping from gene_id to gene annotation
+    gene_annotation_map = {}
+    for seq_obj in annotation_objects:
+        genes = seq_obj.get('genes', [])
+        for gene in genes:
+            gene_id = gene['gene_id']
+            gene_annotation_map[gene_id] = gene
+    
+    print(f"Loaded annotations for {len(gene_annotation_map)} genes")
+    
+    # Match gene contexts with their annotations
+    matched_sequences = []
+    matched_annotations = []
+    flank_size = 2000  # Should match the flanking size used in extract_gene_contexts.py
+    
+    for gene_id, sequence in gene_context_dict.items():
+        if gene_id in gene_annotation_map:
+            matched_sequences.append(sequence)
+            
+            # Get original gene annotation
+            original_gene = gene_annotation_map[gene_id]
+            
+            # Adjust coordinates to be relative to gene context sequence
+            # Gene context starts at (gene_start - flank_size), so gene starts at flank_size
+            gene_length = original_gene['end'] - original_gene['start']
+            
+            # Create adjusted gene annotation for the context sequence
+            adjusted_gene = original_gene.copy()
+            adjusted_gene['start'] = flank_size  # Gene starts at position flank_size in context
+            adjusted_gene['end'] = flank_size + gene_length  # Gene ends at flank_size + gene_length
+            
+            # Adjust exon coordinates too
+            if 'exons' in adjusted_gene:
+                adjusted_exons = []
+                for exon in adjusted_gene['exons']:
+                    adjusted_exon = exon.copy()
+                    # Adjust exon coordinates relative to gene context
+                    adjusted_exon['start'] = exon['start'] - original_gene['start'] + flank_size
+                    adjusted_exon['end'] = exon['end'] - original_gene['start'] + flank_size
+                    adjusted_exons.append(adjusted_exon)
+                adjusted_gene['exons'] = adjusted_exons
+            
+            # Create sequence object format expected by DNADataset
+            sequence_obj = {
+                'sequence_id': gene_id,  # Use gene_id as sequence_id
+                'genes': [adjusted_gene]
+            }
+            matched_annotations.append(sequence_obj)
+        else:
+            print(f"Warning: No annotation found for gene context {gene_id}")
+    
+    print(f"Matched {len(matched_sequences)} gene contexts with annotations")
+    
+    return matched_sequences, matched_annotations
+
+
 def map_sequences_to_annotations(sequences_with_ids: List[Tuple[str, str]], 
                                 sequence_objects: List[Dict]) -> Tuple[List[str], List[Dict]]:
     """Map sequences to their corresponding gene annotations using sequence IDs."""

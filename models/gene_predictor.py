@@ -178,7 +178,8 @@ class GenePredictor(nn.Module):
             'coding_potential_logits': coding_potential_logits,
             'splice_features': splice_features,
             'start_stop_features': start_stop_features,
-            'hidden_states': hidden_states
+            'hidden_states': hidden_states,
+            'sequence_tokens': x  # Include original sequence for codon validation
         }
     
     def predict_genes(self, x: torch.Tensor, threshold: float = DEFAULT_THRESHOLD) -> Dict[str, torch.Tensor]:
@@ -210,7 +211,8 @@ class BiologicalLoss(nn.Module):
                  exon_weight: float = 1.0,
                  splice_weight: float = 1.0,
                  coding_weight: float = 0.5,
-                 constraint_weight: float = 0.1):
+                 constraint_weight: float = 0.1,
+                 enforce_start_stop_codons: bool = True):
         super().__init__()
         
         self.gene_weight = gene_weight
@@ -218,6 +220,7 @@ class BiologicalLoss(nn.Module):
         self.splice_weight = splice_weight
         self.coding_weight = coding_weight
         self.constraint_weight = constraint_weight
+        self.enforce_start_stop_codons = enforce_start_stop_codons
         
         # Standard losses
         self.ce_loss = nn.CrossEntropyLoss()
@@ -261,6 +264,50 @@ class BiologicalLoss(nn.Module):
         
         return total_loss
     
+    def _check_start_stop_codons(self, sequence_tokens: torch.Tensor, 
+                                 gene_boundaries: torch.Tensor) -> torch.Tensor:
+        """Check if predicted gene boundaries have valid start/stop codons."""
+        batch_size, seq_len = sequence_tokens.shape
+        device = sequence_tokens.device
+        
+        # DNA vocab: A=0, C=1, G=2, T=3, N=4
+        # Start codon: ATG = [0, 3, 2]
+        # Stop codons: TAA=[3,0,0], TAG=[3,0,2], TGA=[3,2,0]
+        start_codon = torch.tensor([0, 3, 2], device=device)  # ATG
+        stop_codons = torch.tensor([[3, 0, 0], [3, 0, 2], [3, 2, 0]], device=device)  # TAA, TAG, TGA
+        
+        codon_penalty = 0.0
+        
+        # Get predicted gene start and end positions
+        gene_starts = (gene_boundaries[:, :, 1] > 0.5)  # GeneBoundaryClass.START = 1
+        gene_ends = (gene_boundaries[:, :, 2] > 0.5)    # GeneBoundaryClass.END = 2
+        
+        for batch_idx in range(batch_size):
+            # Find start positions
+            start_positions = torch.where(gene_starts[batch_idx])[0]
+            for start_pos in start_positions:
+                if start_pos + 2 < seq_len:  # Ensure we can read 3 nucleotides
+                    predicted_codon = sequence_tokens[batch_idx, start_pos:start_pos+3]
+                    # Penalty if not ATG
+                    if not torch.equal(predicted_codon, start_codon):
+                        codon_penalty += 1.0
+            
+            # Find end positions  
+            end_positions = torch.where(gene_ends[batch_idx])[0]
+            for end_pos in end_positions:
+                if end_pos >= 3:  # Ensure we can read 3 nucleotides before end
+                    predicted_codon = sequence_tokens[batch_idx, end_pos-3:end_pos]
+                    # Check if matches any stop codon
+                    is_valid_stop = False
+                    for stop_codon in stop_codons:
+                        if torch.equal(predicted_codon, stop_codon):
+                            is_valid_stop = True
+                            break
+                    if not is_valid_stop:
+                        codon_penalty += 1.0
+        
+        return torch.tensor(codon_penalty, device=device)
+
     def _biological_constraints(self, predictions: Dict[str, torch.Tensor], 
                                targets: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Apply biological constraints to the loss function."""
@@ -272,9 +319,18 @@ class BiologicalLoss(nn.Module):
         # Constraint 2: Exons should be within coding regions
         exon_regions = (predictions['exon_intron'][:, :, 1] > 0.5).float()  # ExonIntronClass.EXON = 1
         
+        # Constraint 3: Start/stop codon validation (if enabled and sequence tokens available)
+        codon_constraint = torch.tensor(0.0, device=predictions['gene_boundaries'].device)
+        if self.enforce_start_stop_codons and 'sequence_tokens' in predictions:
+            codon_constraint = self._check_start_stop_codons(
+                predictions['sequence_tokens'], 
+                predictions['gene_boundaries']
+            )
+        
         # Simple constraint: penalize biologically impossible combinations
-        constraint_loss = torch.mean(start_codons * (1 - coding_regions)) + \
-                         torch.mean(exon_regions * (1 - coding_regions))  # Exons should be in coding regions
+        constraint_loss = (torch.mean(start_codons * (1 - coding_regions)) + 
+                          torch.mean(exon_regions * (1 - coding_regions)) +  # Exons should be in coding regions
+                          codon_constraint * 0.1)  # Weight codon constraint
         
         return constraint_loss
 

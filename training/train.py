@@ -23,7 +23,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.gene_predictor import GenePredictor, BiologicalLoss, create_model
 from utils.dna_processor import (
     DNADataset, load_fasta_sequences, load_fasta_sequences_with_ids, 
-    load_tsv_annotations, map_sequences_to_annotations
+    load_tsv_annotations, map_sequences_to_annotations, load_gene_contexts_with_annotations
 )
 from torch.utils.data import DataLoader, random_split
 
@@ -150,29 +150,39 @@ class GenePredictionModule(pl.LightningModule):
 def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]:
     """Create training and validation data loaders with sliding window support."""
     
-    # Load sequences with IDs for proper mapping (no validation - accepts all sequences)
-    sequences_with_ids = load_fasta_sequences_with_ids(
-        config['data']['sequences_path']
-    )
-    
-    # Load annotations from TSV format
-    annotations = []
     data_config = config['data']
     
-    if 'tsv_annotations_path' in data_config and data_config['tsv_annotations_path']:
-        try:
-            annotations = load_tsv_annotations(data_config['tsv_annotations_path'])
-        except Exception as e:
-            print(f"Error: Could not load TSV annotations: {e}")
-            print("Please convert GFF to TSV format using: python scripts/gff_to_tsv.py")
-            raise
+    # Check if using pre-extracted gene contexts
+    if data_config.get('use_gene_contexts', False):
+        print("Using pre-extracted gene contexts...")
+        sequences, mapped_annotations = load_gene_contexts_with_annotations(
+            data_config['sequences_path'],
+            data_config['tsv_annotations_path']
+        )
     else:
-        print("Warning: No TSV annotations path specified in config")
-        print("Use 'tsv_annotations_path' in config or convert GFF using: python scripts/gff_to_tsv.py")
+        print("Using full genomic sequences...")
+        # Load sequences with IDs for proper mapping (no validation - accepts all sequences)
+        sequences_with_ids = load_fasta_sequences_with_ids(
+            config['data']['sequences_path']
+        )
+        
+        # Load annotations from TSV format
         annotations = []
-    
-    # Map sequences to annotations using sequence IDs
-    sequences, mapped_annotations = map_sequences_to_annotations(sequences_with_ids, annotations)
+        
+        if 'tsv_annotations_path' in data_config and data_config['tsv_annotations_path']:
+            try:
+                annotations = load_tsv_annotations(data_config['tsv_annotations_path'])
+            except Exception as e:
+                print(f"Error: Could not load TSV annotations: {e}")
+                print("Please convert GFF to TSV format using: python scripts/gff_to_tsv.py")
+                raise
+        else:
+            print("Warning: No TSV annotations path specified in config")
+            print("Use 'tsv_annotations_path' in config or convert GFF using: python scripts/gff_to_tsv.py")
+            annotations = []
+        
+        # Map sequences to annotations using sequence IDs
+        sequences, mapped_annotations = map_sequences_to_annotations(sequences_with_ids, annotations)
     
     # Get sliding window parameters from config
     use_sliding_windows = data_config.get('use_sliding_windows', False)

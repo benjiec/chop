@@ -16,6 +16,7 @@ loss:
   splice_weight: 0.0    # REMOVED - let model discover splice patterns from exon/intron boundaries
   coding_weight: 1.0
   constraint_weight: 0.1
+  enforce_start_stop_codons: true  # Enforce ATG start codons and TAA/TAG/TGA stop codons
 
 training:
   batch_size: 4         # Increased for MPS - GPU can handle larger batches
@@ -29,8 +30,9 @@ training:
   checkpoint_dir: "models/checkpoints"
 
 data:
-  sequences_path: "data/GCA_001939145.1.fna"
+  sequences_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_gene_context.fna"  # Pre-extracted gene contexts
   tsv_annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"  # Standard format
+  use_gene_contexts: true  # Use gene context loading instead of full genomic sequences
   max_sequence_length: 12288    # Match model max_seq_length
   window_size: 12288            # 12k windows
   stride: 6144                  # 50% overlap for seamless reconstruction
