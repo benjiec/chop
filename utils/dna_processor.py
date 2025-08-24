@@ -716,10 +716,11 @@ def load_tsv_annotations(file_path: str) -> List[Dict]:
             try:
                 gene_id = row['gene_id']
                 sequence_id = row['sequence_id']
-                gene_start = int(row['gene_start'])
-                gene_end = int(row['gene_end'])
-                exon_start = int(row['exon_start'])
-                exon_end = int(row['exon_end'])
+                # TSV coordinates are 1-based, convert to 0-based for internal use
+                gene_start = int(row['gene_start']) - 1
+                gene_end = int(row['gene_end'])  # End is exclusive in 0-based, so don't subtract 1
+                exon_start = int(row['exon_start']) - 1 
+                exon_end = int(row['exon_end'])  # End is exclusive in 0-based, so don't subtract 1
                 strand = row['strand']
                 
                 # Update gene boundaries
@@ -814,6 +815,71 @@ def reverse_complement(sequence: str) -> str:
     return complement[::-1]
 
 
+def validate_start_stop_codons_from_exons(sequence: str, exons: List[Dict], strand: str = '+') -> bool:
+    """
+    Validate that a gene has proper start and stop codons based on exon boundaries.
+    
+    Args:
+        sequence: DNA sequence string
+        exons: List of exon dictionaries with 'start' and 'end' keys (0-based coordinates)
+        strand: '+' for forward strand, '-' for reverse strand
+        
+    Returns:
+        True if gene has valid ATG start and TAA/TAG/TGA stop codons
+    """
+    if not exons:
+        return False
+        
+    valid_start_codons = {'ATG'}
+    valid_stop_codons = {'TAA', 'TAG', 'TGA'}
+    
+    # Sort exons by start position
+    sorted_exons = sorted(exons, key=lambda x: x['start'])
+    
+    if strand == '+':
+        # Forward strand: start codon from first exon, stop codon from last exon
+        first_exon = sorted_exons[0]
+        last_exon = sorted_exons[-1]
+        
+        # Check start codon (first 3 bp of first exon)
+        if first_exon['start'] + 2 >= len(sequence):
+            return False
+        start_codon = sequence[first_exon['start']:first_exon['start']+3].upper()
+        if start_codon not in valid_start_codons:
+            return False
+        
+        # Check stop codon (last 3 bp of last exon)
+        if last_exon['end'] < 3:
+            return False
+        stop_codon = sequence[last_exon['end']-3:last_exon['end']].upper()
+        if stop_codon not in valid_stop_codons:
+            return False
+            
+    else:  # strand == '-'
+        # Reverse strand: start codon from last exon (5' end), stop codon from first exon (3' end)
+        # But we need to look at the reverse complement
+        first_exon = sorted_exons[0]  # 3' end of gene
+        last_exon = sorted_exons[-1]  # 5' end of gene
+        
+        # Check start codon (last 3 bp of last exon, reverse complemented)
+        if last_exon['end'] < 3:
+            return False
+        start_region = sequence[last_exon['end']-3:last_exon['end']].upper()
+        start_codon = reverse_complement(start_region)
+        if start_codon not in valid_start_codons:
+            return False
+        
+        # Check stop codon (first 3 bp of first exon, reverse complemented)
+        if first_exon['start'] + 2 >= len(sequence):
+            return False
+        stop_region = sequence[first_exon['start']:first_exon['start']+3].upper()
+        stop_codon = reverse_complement(stop_region)
+        if stop_codon not in valid_stop_codons:
+            return False
+        
+    return True
+
+
 def validate_start_stop_codons(sequence: str, gene_start: int, gene_end: int, strand: str = '+') -> bool:
     """
     Validate that a gene has proper start and stop codons, considering strand.
@@ -882,8 +948,12 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
     - gene_contexts_path: FASTA file with gene contexts (sequence ID = gene ID)
     - annotations_path: TSV file with gene annotations
     
+    Args:
+        filter_invalid_codons: Remove genes without valid start/stop codons
+    
     Returns:
-        Tuple of (sequences, annotations) where each sequence corresponds to one gene
+        Tuple of (sequences, annotations) where each sequence corresponds to one gene,
+        all in + strand 5'->3' orientation (strand normalization is always applied)
     """
     print(f"Loading gene contexts from {gene_contexts_path}")
     
@@ -926,30 +996,72 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
             adjusted_gene['start'] = flank_size  # Gene starts at position flank_size in context
             adjusted_gene['end'] = flank_size + gene_length  # Gene ends at flank_size + gene_length
             
+            # Handle strand normalization
+            strand = adjusted_gene.get('strand', '+')
+            final_sequence = sequence
+            final_gene = adjusted_gene.copy()
+            
+            if strand == '-':
+                # Convert to + strand by reverse-complementing the sequence
+                final_sequence = reverse_complement(sequence)
+                
+                # Adjust coordinates for reverse-complemented sequence
+                # Original coordinates are relative to the forward sequence
+                seq_length = len(sequence)
+                
+                # For reverse complement, coordinates are flipped
+                # If gene was at positions [start, end) on forward strand,
+                # it becomes [seq_length - end, seq_length - start) on reverse complement
+                original_start = adjusted_gene['start']
+                original_end = adjusted_gene['end']
+                
+                # Calculate flipped coordinates
+                new_start = seq_length - original_end
+                new_end = seq_length - original_start
+                
+                # Ensure start < end (fix coordinate ordering)
+                final_gene['start'] = min(new_start, new_end)
+                final_gene['end'] = max(new_start, new_end)
+                final_gene['strand'] = '+'  # Now normalized to + strand
+                
+                # Adjust exon coordinates too
+                if 'exons' in final_gene and final_gene['exons']:
+                    adjusted_exons = []
+                    for exon in final_gene['exons']:
+                        adjusted_exon = exon.copy()
+                        # Flip exon coordinates for reverse complement
+                        exon_start = exon['start']
+                        exon_end = exon['end']
+                        new_exon_start = seq_length - exon_end
+                        new_exon_end = seq_length - exon_start
+                        
+                        # Debug: print coordinate transformation for exons
+                        # print(f"DEBUG: Exon {exon_start}-{exon_end} -> RC: {new_exon_start}-{new_exon_end}")
+                        
+                        # Ensure start < end for exons too
+                        adjusted_exon['start'] = min(new_exon_start, new_exon_end)
+                        adjusted_exon['end'] = max(new_exon_start, new_exon_end)
+                        adjusted_exons.append(adjusted_exon)
+                    
+                    # Sort exons by start position (they'll be in reverse order after flipping)
+                    adjusted_exons.sort(key=lambda x: x['start'])
+                    final_gene['exons'] = adjusted_exons
+            
             # Filter out genes with invalid start/stop codons if requested
+            # After strand normalization, all genes should be on + strand
             if filter_invalid_codons:
-                strand = adjusted_gene.get('strand', '+')
-                if not validate_start_stop_codons(sequence, adjusted_gene['start'], adjusted_gene['end'], strand):
+                validation_strand = final_gene.get('strand', '+')
+                gene_exons = final_gene.get('exons', [])
+                if not validate_start_stop_codons_from_exons(final_sequence, gene_exons, validation_strand):
                     filtered_count += 1
                     continue  # Skip this gene
             
-            matched_sequences.append(sequence)
-            
-            # Adjust exon coordinates too
-            if 'exons' in adjusted_gene:
-                adjusted_exons = []
-                for exon in adjusted_gene['exons']:
-                    adjusted_exon = exon.copy()
-                    # Adjust exon coordinates relative to gene context
-                    adjusted_exon['start'] = exon['start'] - original_gene['start'] + flank_size
-                    adjusted_exon['end'] = exon['end'] - original_gene['start'] + flank_size
-                    adjusted_exons.append(adjusted_exon)
-                adjusted_gene['exons'] = adjusted_exons
+            matched_sequences.append(final_sequence)
             
             # Create sequence object format expected by DNADataset
             sequence_obj = {
                 'sequence_id': gene_id,  # Use gene_id as sequence_id
-                'genes': [adjusted_gene]
+                'genes': [final_gene]  # Use the strand-normalized gene
             }
             matched_annotations.append(sequence_obj)
         else:

@@ -157,7 +157,8 @@ def create_data_loaders(config: Dict[str, Any]) -> tuple[DataLoader, DataLoader]
         print("Using pre-extracted gene contexts...")
         sequences, mapped_annotations = load_gene_contexts_with_annotations(
             data_config['sequences_path'],
-            data_config['tsv_annotations_path']
+            data_config['tsv_annotations_path'],
+            filter_invalid_codons=data_config.get('filter_invalid_codons', True)
         )
     else:
         print("Using full genomic sequences...")

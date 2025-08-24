@@ -33,6 +33,8 @@ data:
   sequences_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_gene_context.fna"  # Pre-extracted gene contexts
   tsv_annotations_path: "data/GCA_001939145.1_filtered_tcov0.99_evalue1e-20_annotations.tsv"  # Standard format
   use_gene_contexts: true  # Use gene context loading instead of full genomic sequences
+
+  filter_invalid_codons: true   # Remove genes without valid ATG start and TAA/TAG/TGA stop codons
   max_sequence_length: 12288    # Match model max_seq_length
   window_size: 12288            # 12k windows
   stride: 6144                  # 50% overlap for seamless reconstruction

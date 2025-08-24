@@ -73,15 +73,40 @@ class GenePredictorInference:
         return model
     
     def predict_sequence(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
-        """Make predictions for a single DNA sequence using sliding windows for long sequences."""
+        """Make predictions for a single DNA sequence using sliding windows for long sequences.
+        
+        Predicts on both forward and reverse strands to find genes in either direction.
+        """
+        # Predict on forward strand
+        forward_results = self._predict_sequence_single_strand(sequence, threshold, '+')
+        
+        # Predict on reverse strand
+        reverse_sequence = self._reverse_complement(sequence)
+        reverse_results = self._predict_sequence_single_strand(reverse_sequence, threshold, '-')
+        
+        # Adjust reverse strand coordinates back to forward sequence coordinates
+        self._adjust_reverse_coordinates(reverse_results, len(sequence))
+        
+        # Combine results from both strands
+        combined_results = self._combine_strand_results(forward_results, reverse_results)
+        
+        return combined_results
+    
+    def _predict_sequence_single_strand(self, sequence: str, threshold: float, strand: str) -> Dict:
+        """Make predictions for a single strand."""
         max_length = self.config['model']['max_seq_length']
         
         # If sequence is short enough, predict directly
         if len(sequence) <= max_length:
-            return self._predict_single_window(sequence, threshold)
+            results = self._predict_single_window(sequence, threshold)
+        else:
+            # For long sequences, use sliding windows
+            results = self._predict_sliding_windows(sequence, threshold)
         
-        # For long sequences, use sliding windows
-        return self._predict_sliding_windows(sequence, threshold)
+        # Add strand information to all predictions
+        self._add_strand_info(results, strand)
+        
+        return results
     
     def _predict_single_window(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
         """Make predictions for a single window/short sequence."""
@@ -177,6 +202,57 @@ class GenePredictorInference:
         combined_results['exons'].extend(window_results['exons'])
         combined_results['introns'].extend(window_results['introns']) 
         combined_results['coding_regions'].extend(window_results['coding_regions'])
+    
+    def _reverse_complement(self, sequence: str) -> str:
+        """Return reverse complement of DNA sequence."""
+        complement_map = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 'N': 'N'}
+        complement = ''.join(complement_map.get(base.upper(), 'N') for base in sequence)
+        return complement[::-1]
+    
+    def _add_strand_info(self, results: Dict, strand: str):
+        """Add strand information to all predictions."""
+        for gene in results['genes']:
+            gene['strand'] = strand
+    
+    def _adjust_reverse_coordinates(self, results: Dict, sequence_length: int):
+        """Adjust coordinates from reverse-complement sequence back to forward sequence."""
+        # For reverse strand predictions, coordinates need to be flipped
+        # If prediction was at [start, end) on reverse complement,
+        # it corresponds to [seq_length - end, seq_length - start) on forward sequence
+        
+        for gene in results['genes']:
+            original_start = gene['start']
+            original_end = gene['end']
+            gene['start'] = sequence_length - original_end
+            gene['end'] = sequence_length - original_start
+        
+        for item_list in [results['exons'], results['introns'], results['coding_regions']]:
+            for item in item_list:
+                original_start = item[0]
+                original_end = item[1]
+                item[0] = sequence_length - original_end
+                item[1] = sequence_length - original_start
+    
+    def _combine_strand_results(self, forward_results: Dict, reverse_results: Dict) -> Dict:
+        """Combine predictions from both strands."""
+        combined_results = {
+            'sequence_length': forward_results['sequence_length'],
+            'genes': forward_results['genes'] + reverse_results['genes'],
+            'exons': forward_results['exons'] + reverse_results['exons'],
+            'introns': forward_results['introns'] + reverse_results['introns'],
+            'coding_regions': forward_results['coding_regions'] + reverse_results['coding_regions']
+        }
+        
+        # Sort all predictions by start position
+        combined_results['genes'].sort(key=lambda x: x['start'])
+        combined_results['exons'].sort(key=lambda x: x[0])
+        combined_results['introns'].sort(key=lambda x: x[0])
+        combined_results['coding_regions'].sort(key=lambda x: x[0])
+        
+        # Apply deduplication to handle overlapping predictions from both strands
+        combined_results = self._deduplicate_predictions(combined_results)
+        
+        return combined_results
     
     def _deduplicate_predictions(self, results: Dict) -> Dict:
         """Remove overlapping predictions from sliding window results."""
