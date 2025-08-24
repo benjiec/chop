@@ -49,8 +49,9 @@ class TestTSVToTargets(unittest.TestCase):
         """Test target generation for single-exon gene."""
         # Create test data
         test_sequence = "A" * 2000  # 2kb sequence
+        # TSV uses 1-based coordinates, so gene at 501-1000 becomes 500-1000 in 0-based
         tsv_rows = [
-            ["test_seq", "gene1", 500, 1000, 500, 1000, "+"]
+            ["test_seq", "gene1", 501, 1000, 501, 1000, "+"]
         ]
         tsv_path = self._create_test_tsv(tsv_rows)
         
@@ -87,10 +88,11 @@ class TestTSVToTargets(unittest.TestCase):
     def test_multi_exon_gene_targets(self):
         """Test target generation for multi-exon gene."""
         test_sequence = "A" * 3000
+        # TSV uses 1-based coordinates, adjust for conversion to 0-based
         tsv_rows = [
-            ["test_seq", "gene1", 500, 2500, 500, 800, "+"],   # Exon 1
-            ["test_seq", "gene1", 500, 2500, 1200, 1500, "+"], # Exon 2
-            ["test_seq", "gene1", 500, 2500, 2000, 2500, "+"]  # Exon 3
+            ["test_seq", "gene1", 501, 2500, 501, 800, "+"],   # Exon 1: 500-799 in 0-based
+            ["test_seq", "gene1", 501, 2500, 1201, 1500, "+"], # Exon 2: 1200-1499 in 0-based
+            ["test_seq", "gene1", 501, 2500, 2001, 2500, "+"]  # Exon 3: 2000-2499 in 0-based
         ]
         tsv_path = self._create_test_tsv(tsv_rows)
         
@@ -105,15 +107,15 @@ class TestTSVToTargets(unittest.TestCase):
         sample = dataset[0]
         targets = sample['targets']
         
-        # Verify exon regions
+        # Verify exon regions (0-based coordinates after conversion)
         exon_intron = targets['exon_intron']
-        self.assertTrue(torch.all(exon_intron[500:800] == ExonIntronClass.EXON))
-        self.assertTrue(torch.all(exon_intron[1200:1500] == ExonIntronClass.EXON))
-        self.assertTrue(torch.all(exon_intron[2000:2500] == ExonIntronClass.EXON))
+        self.assertTrue(torch.all(exon_intron[500:800] == ExonIntronClass.EXON))    # Exon 1: 500-799
+        self.assertTrue(torch.all(exon_intron[1200:1500] == ExonIntronClass.EXON))  # Exon 2: 1200-1499
+        self.assertTrue(torch.all(exon_intron[2000:2500] == ExonIntronClass.EXON))  # Exon 3: 2000-2499
         
         # Verify intron regions
-        self.assertTrue(torch.all(exon_intron[800:1200] == ExonIntronClass.INTRON))
-        self.assertTrue(torch.all(exon_intron[1500:2000] == ExonIntronClass.INTRON))
+        self.assertTrue(torch.all(exon_intron[800:1200] == ExonIntronClass.INTRON))   # Intron 1: 800-1199
+        self.assertTrue(torch.all(exon_intron[1500:2000] == ExonIntronClass.INTRON))  # Intron 2: 1500-1999
         
         # Verify gene ID consistency
         gene_ids = targets['gene_ids']
@@ -122,9 +124,10 @@ class TestTSVToTargets(unittest.TestCase):
     def test_overlapping_genes_tracking(self):
         """Test gene ID tracking for overlapping genes."""
         test_sequence = "A" * 3000
+        # TSV uses 1-based coordinates, adjust for conversion to 0-based
         tsv_rows = [
-            ["test_seq", "gene1", 500, 1500, 500, 1500, "+"],   # Gene 1
-            ["test_seq", "gene2", 1000, 2000, 1000, 2000, "-"] # Gene 2 (overlaps with gene 1)
+            ["test_seq", "gene1", 501, 1500, 501, 1500, "+"],   # Gene 1: 500-1499 in 0-based
+            ["test_seq", "gene2", 1001, 2000, 1001, 2000, "-"] # Gene 2: 1000-1999 in 0-based (overlaps with gene 1)
         ]
         tsv_path = self._create_test_tsv(tsv_rows)
         
@@ -140,10 +143,10 @@ class TestTSVToTargets(unittest.TestCase):
         targets = sample['targets']
         gene_ids = targets['gene_ids']
         
-        # In overlapping region (1000-1500), the later gene should overwrite
+        # In overlapping region (1000-1499), the later gene should overwrite
         # This tests that gene ID tracking can handle overlaps
         self.assertTrue(torch.all(gene_ids[500:1000] == 0))    # Gene 1 only
-        self.assertTrue(torch.all(gene_ids[1000:1500] == 1))   # Gene 2 overwrites
+        self.assertTrue(torch.all(gene_ids[1000:1500] == 1))   # Gene 2 overwrites (overlapping region)
         self.assertTrue(torch.all(gene_ids[1500:2000] == 1))   # Gene 2 only
     
     def test_sliding_window_annotation_mapping(self):
