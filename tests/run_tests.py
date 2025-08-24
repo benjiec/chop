@@ -15,19 +15,25 @@ sys.path.append(str(Path(__file__).parent.parent))
 from test_gff_to_tsv import TestGFFToTSV
 from test_tsv_to_targets import TestTSVToTargets
 from test_codon_constraints import TestCodonValidation, TestBiologicalLoss, TestIntegration
-from test_strand_normalization import (
-    TestReverseComplement, TestCoordinateTransformation, 
-    TestStrandNormalizationDataLoading, TestCodonValidationStrandAware,
-    TestInferenceStrandHandling
-)
-from test_coordinate_handling import (
-    TestTSVCoordinateParsing, TestMinusStrandCoordinates,
-    TestExonBasedCodonValidation, TestIntegratedCoordinateHandling
+# from test_strand_normalization import (
+#     TestReverseComplement, TestCoordinateTransformation, 
+#     TestStrandNormalizationDataLoading, TestCodonValidationStrandAware,
+#     TestInferenceStrandHandling
+# )
+# NOTE: Strand normalization tests moved to test_preprocessing_pipeline.py
+# from test_coordinate_handling import (
+#     TestTSVCoordinateParsing, TestMinusStrandCoordinates,
+#     TestExonBasedCodonValidation, TestIntegratedCoordinateHandling
+# )
+# NOTE: Coordinate handling tests moved to test_preprocessing_pipeline.py
+from test_preprocessing_pipeline import (
+    TestPreprocessingPipeline, TestDataLoaderValidation,
+    TestEndToEndPreprocessing
 )
 
 
 def run_all_tests():
-    """Run all data loading, codon constraint, strand normalization, and coordinate handling tests."""
+    """Run all data loading, codon constraint, strand normalization, coordinate handling, and preprocessing pipeline tests."""
     
     # Create test suite
     loader = unittest.TestLoader()
@@ -40,18 +46,14 @@ def run_all_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestBiologicalLoss))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
     
-    # Add strand normalization tests
-    suite.addTests(loader.loadTestsFromTestCase(TestReverseComplement))
-    suite.addTests(loader.loadTestsFromTestCase(TestCoordinateTransformation))
-    suite.addTests(loader.loadTestsFromTestCase(TestStrandNormalizationDataLoading))
-    suite.addTests(loader.loadTestsFromTestCase(TestCodonValidationStrandAware))
-    suite.addTests(loader.loadTestsFromTestCase(TestInferenceStrandHandling))
+    # NOTE: Strand normalization tests moved to TestPreprocessingPipeline
     
-    # Add coordinate handling tests
-    suite.addTests(loader.loadTestsFromTestCase(TestTSVCoordinateParsing))
-    suite.addTests(loader.loadTestsFromTestCase(TestMinusStrandCoordinates))
-    suite.addTests(loader.loadTestsFromTestCase(TestExonBasedCodonValidation))
-    suite.addTests(loader.loadTestsFromTestCase(TestIntegratedCoordinateHandling))
+    # NOTE: Coordinate handling tests moved to TestPreprocessingPipeline
+    
+    # Add preprocessing pipeline tests
+    suite.addTests(loader.loadTestsFromTestCase(TestPreprocessingPipeline))
+    suite.addTests(loader.loadTestsFromTestCase(TestDataLoaderValidation))
+    suite.addTests(loader.loadTestsFromTestCase(TestEndToEndPreprocessing))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

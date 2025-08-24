@@ -880,80 +880,22 @@ def validate_start_stop_codons_from_exons(sequence: str, exons: List[Dict], stra
     return True
 
 
-def validate_start_stop_codons(sequence: str, gene_start: int, gene_end: int, strand: str = '+') -> bool:
-    """
-    Validate that a gene has proper start and stop codons, considering strand.
-    
-    Args:
-        sequence: DNA sequence string
-        gene_start: Gene start position (0-based)
-        gene_end: Gene end position (0-based, exclusive)
-        strand: '+' for forward strand, '-' for reverse strand
-        
-    Returns:
-        True if gene has valid ATG start and TAA/TAG/TGA stop codons
-    """
-    valid_start_codons = {'ATG'}
-    valid_stop_codons = {'TAA', 'TAG', 'TGA'}
-    
-    if strand == '+':
-        # Forward strand: check codons directly
-        # Check start codon
-        if gene_start + 2 >= len(sequence):
-            return False
-        start_codon = sequence[gene_start:gene_start+3].upper()
-        if start_codon not in valid_start_codons:
-            return False
-        
-        # Check stop codon
-        if gene_end < 3:
-            return False
-        stop_codon = sequence[gene_end-3:gene_end].upper()
-        if stop_codon not in valid_stop_codons:
-            return False
-            
-    else:  # strand == '-'
-        # Reverse strand: check reverse complement
-        # For minus strand, the "start" is actually at gene_end and "stop" at gene_start
-        # But we need to look at the reverse complement
-        
-        # Check start codon (at gene_end on reverse complement)
-        if gene_end < 3:
-            return False
-        # The start codon is the last 3 bases of the gene, reverse complemented
-        start_region = sequence[gene_end-3:gene_end].upper()
-        start_codon = reverse_complement(start_region)
-        if start_codon not in valid_start_codons:
-            return False
-        
-        # Check stop codon (at gene_start on reverse complement)  
-        if gene_start + 2 >= len(sequence):
-            return False
-        # The stop codon is the first 3 bases of the gene, reverse complemented
-        stop_region = sequence[gene_start:gene_start+3].upper()
-        stop_codon = reverse_complement(stop_region)
-        if stop_codon not in valid_stop_codons:
-            return False
-        
-    return True
 
 
-def load_gene_contexts_with_annotations(gene_contexts_path: str, 
-                                       annotations_path: str,
-                                       filter_invalid_codons: bool = True) -> Tuple[List[str], List[Dict]]:
+
+def load_gene_contexts(gene_contexts_path: str, 
+                      annotations_path: str,
+                      validate_normalization: bool = True) -> Tuple[List[str], List[Dict]]:
     """
-    Load pre-extracted gene contexts and their corresponding annotations.
-    
-    This function expects:
-    - gene_contexts_path: FASTA file with gene contexts (sequence ID = gene ID)
-    - annotations_path: TSV file with gene annotations
+    Load gene contexts and their corresponding annotations.
     
     Args:
-        filter_invalid_codons: Remove genes without valid start/stop codons
+        gene_contexts_path: FASTA file with gene context sequences
+        annotations_path: TSV file with gene annotations
+        validate_normalization: Validate data integrity during loading
     
     Returns:
-        Tuple of (sequences, annotations) where each sequence corresponds to one gene,
-        all in + strand 5'->3' orientation (strand normalization is always applied)
+        Tuple of (sequences, annotations) where each sequence corresponds to one gene
     """
     print(f"Loading gene contexts from {gene_contexts_path}")
     
@@ -976,99 +918,52 @@ def load_gene_contexts_with_annotations(gene_contexts_path: str,
     
     print(f"Loaded annotations for {len(gene_annotation_map)} genes")
     
-    # Match gene contexts with their annotations
+    # Match gene contexts with their annotations (expect 1:1 mapping)
     matched_sequences = []
     matched_annotations = []
-    flank_size = 2000  # Should match the flanking size used in extract_gene_contexts.py
-    filtered_count = 0
+    validation_errors = 0
     
     for gene_id, sequence in gene_context_dict.items():
         if gene_id in gene_annotation_map:
-            # Get original gene annotation
-            original_gene = gene_annotation_map[gene_id]
+            # Get gene annotation (should already be in gene context coordinates)
+            gene = gene_annotation_map[gene_id]
             
-            # Adjust coordinates to be relative to gene context sequence
-            # Gene context starts at (gene_start - flank_size), so gene starts at flank_size
-            gene_length = original_gene['end'] - original_gene['start']
-            
-            # Create adjusted gene annotation for the context sequence
-            adjusted_gene = original_gene.copy()
-            adjusted_gene['start'] = flank_size  # Gene starts at position flank_size in context
-            adjusted_gene['end'] = flank_size + gene_length  # Gene ends at flank_size + gene_length
-            
-            # Handle strand normalization
-            strand = adjusted_gene.get('strand', '+')
-            final_sequence = sequence
-            final_gene = adjusted_gene.copy()
-            
-            if strand == '-':
-                # Convert to + strand by reverse-complementing the sequence
-                final_sequence = reverse_complement(sequence)
+            # Validate that data is properly normalized
+            if validate_normalization:
+                strand = gene.get('strand', '+')
                 
-                # Adjust coordinates for reverse-complemented sequence
-                # Original coordinates are relative to the forward sequence
-                seq_length = len(sequence)
+                # Check that all strands are '+'
+                if strand != '+':
+                    print(f"Error: Gene {gene_id} has strand '{strand}' - expected '+' for normalized data")
+                    validation_errors += 1
+                    continue
                 
-                # For reverse complement, coordinates are flipped
-                # If gene was at positions [start, end) on forward strand,
-                # it becomes [seq_length - end, seq_length - start) on reverse complement
-                original_start = adjusted_gene['start']
-                original_end = adjusted_gene['end']
+                # Check that coordinates are within sequence bounds
+                if gene['start'] < 0 or gene['end'] > len(sequence):
+                    print(f"Error: Gene {gene_id} coordinates {gene['start']}-{gene['end']} exceed sequence length {len(sequence)}")
+                    validation_errors += 1
+                    continue
                 
-                # Calculate flipped coordinates
-                new_start = seq_length - original_end
-                new_end = seq_length - original_start
-                
-                # Ensure start < end (fix coordinate ordering)
-                final_gene['start'] = min(new_start, new_end)
-                final_gene['end'] = max(new_start, new_end)
-                final_gene['strand'] = '+'  # Now normalized to + strand
-                
-                # Adjust exon coordinates too
-                if 'exons' in final_gene and final_gene['exons']:
-                    adjusted_exons = []
-                    for exon in final_gene['exons']:
-                        adjusted_exon = exon.copy()
-                        # Flip exon coordinates for reverse complement
-                        exon_start = exon['start']
-                        exon_end = exon['end']
-                        new_exon_start = seq_length - exon_end
-                        new_exon_end = seq_length - exon_start
-                        
-                        # Debug: print coordinate transformation for exons
-                        # print(f"DEBUG: Exon {exon_start}-{exon_end} -> RC: {new_exon_start}-{new_exon_end}")
-                        
-                        # Ensure start < end for exons too
-                        adjusted_exon['start'] = min(new_exon_start, new_exon_end)
-                        adjusted_exon['end'] = max(new_exon_start, new_exon_end)
-                        adjusted_exons.append(adjusted_exon)
-                    
-                    # Sort exons by start position (they'll be in reverse order after flipping)
-                    adjusted_exons.sort(key=lambda x: x['start'])
-                    final_gene['exons'] = adjusted_exons
+                # Validate start/stop codons if requested
+                gene_exons = gene.get('exons', [])
+                if gene_exons and not validate_start_stop_codons_from_exons(sequence, gene_exons, strand):
+                    print(f"Warning: Gene {gene_id} has invalid start/stop codons")
+                    validation_errors += 1
+                    continue
             
-            # Filter out genes with invalid start/stop codons if requested
-            # After strand normalization, all genes should be on + strand
-            if filter_invalid_codons:
-                validation_strand = final_gene.get('strand', '+')
-                gene_exons = final_gene.get('exons', [])
-                if not validate_start_stop_codons_from_exons(final_sequence, gene_exons, validation_strand):
-                    filtered_count += 1
-                    continue  # Skip this gene
-            
-            matched_sequences.append(final_sequence)
+            matched_sequences.append(sequence)
             
             # Create sequence object format expected by DNADataset
             sequence_obj = {
                 'sequence_id': gene_id,  # Use gene_id as sequence_id
-                'genes': [final_gene]  # Use the strand-normalized gene
+                'genes': [gene]
             }
             matched_annotations.append(sequence_obj)
         else:
             print(f"Warning: No annotation found for gene context {gene_id}")
     
-    if filter_invalid_codons and filtered_count > 0:
-        print(f"Filtered out {filtered_count} genes with invalid start/stop codons")
+    if validation_errors > 0:
+        print(f"Found {validation_errors} validation errors in normalized data")
     
     print(f"Matched {len(matched_sequences)} gene contexts with annotations")
     

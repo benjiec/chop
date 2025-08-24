@@ -1,15 +1,15 @@
 # CHOP: Chromosome Open Prediction
 
-A transformer-based gene prediction tool designed for complex genomic sequences, optimized for Symbiodinium microadriaticum and other organisms with intricate gene structures.
+A transformer-based gene prediction tool designed for complex genomic sequences, optimized for organisms with intricate gene structures.
 
 ## Overview
 
-CHOP uses attention mechanisms to identify genes, exons, introns, splice sites, and coding regions in genomic DNA sequences. The system is specifically designed to handle extraordinarily complex gene structures found in Symbiodinium (dinoflagellate) species, featuring:
+CHOP uses attention mechanisms to identify genes, exons, introns, and coding regions in genomic DNA sequences. The system is designed to handle complex gene structures featuring:
 
-- **99.7% multi-exon genes** with average 40.7 exons per gene
-- **Sliding window processing** for genes up to 24kb+ 
-- **Gene ID tracking** for overlapping gene structures
-- **Memory-optimized** for 24GB RAM systems
+- **Multi-exon genes** with complex structures
+- **Sliding window processing** for long sequences
+- **Gene ID tracking** for overlapping gene structures  
+- **Memory-optimized** for efficient training and inference
 
 ## Quick Start
 
@@ -27,47 +27,50 @@ pip install -r requirements.txt
 
 ### 2. Prepare Data
 
-Convert your GFF annotations to the standardized TSV format:
+Convert your raw genomic data (FASTA + GFF) to gene context format:
 
 ```bash
-# For Symbiodinium data
-python scripts/parse_symbiodinium_gff.py
-
-# For other organisms
-python scripts/gff_to_tsv.py input.gff output.tsv --verbose
+python scripts/preprocess_gene_data.py \
+    --fasta raw_genome.fna \
+    --gff annotations.gff \
+    --output-fasta gene_contexts.fna \
+    --output-tsv gene_annotations.tsv \
+    --flanking-bp 2000
 ```
 
-This creates a TSV file with columns: `sequence_id, gene_id, gene_start, gene_end, exon_start, exon_end, strand`
-
-# Convert genomic fasta with contigs to gene context
-
-```bash
-python scripts/extract_gene_contexts.py data/input_genomic.fna data/output.tsv data/output.fna
-```
-
-Now the output.tsv and output.fna are files to be used in the configuration yaml.
-
+This preprocessing script:
+- Extracts gene ± 2kb contexts from full genomic sequences
+- Normalizes all genes to + strand orientation
+- Adjusts coordinates to gene context coordinate system
+- Validates start/stop codons and filters invalid genes
 
 ### 3. Train Model
 
 ```bash
-python train_cpu_only.py --config configs/m2_cpu_model7M_layer4_head6_seqlen12k_sliding.yaml
+# CPU training
+python train_cpu_only.py --config configs/m4_cpu_model7M_layer4_head6_seqlen12k_sliding.yaml
+
+# MPS (Apple Silicon) training
+python train_mps.py --config configs/m4_mps_model7M_layer4_head6_seqlen12k_sliding.yaml
 ```
 
 ### 4. Make Predictions
 
 ```bash
-python inference/predict.py --model models/checkpoints/best_model.pt --config configs/your_config.yaml --input your_sequences.fna
+python inference/predict.py \
+    --model models/checkpoints/final_model.pt \
+    --config configs/m4_mps_longer.yaml \
+    --input test_sequences.fna
 ```
 
 ## Configuration
 
-The system is driven by YAML configuration files that specify:
+The system uses YAML configuration files that specify:
 
 - **Model architecture**: Layers, attention heads, sequence length
-- **Sliding windows**: Window size and stride for long gene coverage
-- **Data processing**: Validation, caching, augmentation settings
-- **Training parameters**: Batch size, learning rate, optimization settings
+- **Sliding windows**: Window size and stride for long sequence coverage
+- **Data processing**: Validation and caching settings
+- **Training parameters**: Batch size, learning rate, optimization
 
 Example configuration:
 ```yaml
@@ -78,98 +81,134 @@ model:
   n_heads: 6
 
 data:
-  sequences_path: "data/sequences.fna"
-  tsv_annotations_path: "data/annotations.tsv"
+  sequences_path: "data/gene_contexts.fna"
+  tsv_annotations_path: "data/gene_annotations.tsv"
   use_sliding_windows: true
   window_size: 12288
   stride: 6144  # 50% overlap
+  validate_normalization: true
+
+training:
+  batch_size: 4
+  learning_rate: 1e-4
+  accumulate_grad_batches: 16
 ```
 
 ## Model Architecture
 
-The transformer architecture is specifically designed for biological pattern recognition:
+The transformer architecture is designed for biological pattern recognition:
 
 - **4 layers**: Hierarchical learning from local motifs to gene architecture
-- **6 attention heads**: Capture diverse biological patterns (splice sites, codons, boundaries)
+- **6 attention heads**: Capture diverse biological patterns 
 - **12k sequence length**: Optimal balance of gene coverage and memory usage
 
-For detailed model design decisions, see `notes/symbiodinium-model-design.txt`.
+For detailed design decisions, see `notes/symbiodinium-model-design.txt`.
+
+## Data Pipeline
+
+CHOP uses a two-stage data pipeline:
+
+### 1. Preprocessing Stage
+```bash
+scripts/preprocess_gene_data.py
+```
+- **Input**: Raw genomic FASTA + GFF annotations
+- **Output**: Normalized gene contexts + adjusted annotations
+- **Features**: Strand normalization, coordinate adjustment, codon validation
+
+### 2. Training Stage
+```bash
+training/train.py
+```
+- **Input**: Preprocessed gene contexts + annotations
+- **Features**: Data validation, sliding windows, caching
 
 ## Data Format
 
-CHOP uses a standardized TSV format for annotations:
+Gene context sequences use FASTA format with gene IDs as sequence names:
+```
+>gene_id_1
+ATGAAATAAG...
+>gene_id_2
+ATGCCCGGGTAG...
+```
 
+Annotations use TSV format:
 | Column | Description | Example |
 |--------|-------------|---------|
-| sequence_id | FASTA sequence identifier | LSRX01000005.1 |
-| gene_id | Unique gene identifier | rna-gnl\|WGS:LSRX\|Smic502_mrna |
-| gene_start | Gene start position (0-based) | 491426 |
-| gene_end | Gene end position | 625329 |
-| exon_start | Exon start position (0-based) | 491426 |
-| exon_end | Exon end position | 492092 |
-| strand | Strand orientation | + |
+| sequence_id | Gene identifier | gene_id_1 |
+| gene_id | Gene identifier | gene_id_1 |
+| gene_start | Gene start (0-based) | 2000 |
+| gene_end | Gene end | 2009 |
+| exon_start | Exon start (0-based) | 2000 |
+| exon_end | Exon end | 2009 |
+| strand | Always '+' (normalized) | + |
 
 ## Testing
 
-Run the regression test suite:
+Run the test suite:
 
 ```bash
 python tests/run_tests.py
 ```
 
 This validates:
-- GFF→TSV conversion accuracy
-- Sliding window annotation mapping
-- Gene ID tracking for overlapping genes
-- Data validation and error handling
+- GFF parsing and conversion
+- Gene context extraction with strand normalization
+- Coordinate transformations
+- Data loader validation
+- End-to-end preprocessing pipeline
+
+## Scripts
+
+### Core Scripts
+- `scripts/preprocess_gene_data.py` - Main preprocessing pipeline
+- `scripts/gff_to_tsv.py` - GFF format conversion utilities
+- `training/train.py` - Model training
+- `inference/predict.py` - Gene prediction
+
+### Training Scripts
+- `train_cpu_only.py` - CPU-only training wrapper
+- `train_mps.py` - Apple Silicon MPS training wrapper
 
 ## Advanced Usage
 
-### Custom Data Augmentation
-Enable data augmentation in your config:
-```yaml
-data:
-  augmentation:
-    enable: true
-    reverse_complement_prob: 0.5
-    masking_prob: 0.1
-    max_mask_length: 50
-```
-
 ### Memory Management
-For systems with different RAM:
+For different system configurations:
 ```yaml
-optimization:
-  max_memory_usage_gb: 19  # Adjust for your system
-  gradient_checkpointing: true
-  empty_cache_frequency: 50
+training:
+  batch_size: 2          # Reduce for less RAM
+  accumulate_grad_batches: 32  # Maintain effective batch size
+  
+data:
+  max_sequence_length: 8192    # Reduce for memory constraints
+  window_size: 8192
+  pin_memory: false      # Disable for MPS training
 ```
 
-### Custom Validation
-Adjust validation thresholds:
+### Biological Constraints
+CHOP enforces biological accuracy:
 ```yaml
-data:
-  validate_sequences: true
-  min_gene_coverage: 0.5  # Minimum gene coverage in windows
+loss:
+  enforce_start_stop_codons: true  # Penalize invalid start/stop codons
 ```
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Memory errors**: Reduce `max_seq_length` or `batch_size` in config
-**No annotations found**: Ensure sequence IDs in FASTA match TSV `sequence_id` column
-**Poor predictions**: Verify TSV format and gene structure validation
-**Slow loading**: Enable caching with `use_cache: true`
+**Memory errors**: Reduce `max_seq_length` or `batch_size`
+**Data loading errors**: Ensure preprocessing completed successfully
+**Poor predictions**: Verify gene context extraction and validation
+**Training instability**: Increase `accumulate_grad_batches` for stable gradients
 
 ### Getting Help
 
 1. Check `notes/cursor-context.txt` for project overview
-2. Review `notes/symbiodinium-model-design.txt` for architecture decisions
-3. Run `python scripts/example_data_loading.py` for usage examples
-4. Examine test cases in `tests/` for implementation details
-
+2. Review `notes/symbiodinium-model-design.txt` for architecture decisions  
+3. Examine test cases in `tests/` for implementation examples
+4. Run preprocessing with `--help` for parameter details
 
 ---
 
-**Note**: This system was specifically optimized for Symbiodinium microadriaticum genome data but can be adapted for other organisms with complex gene structures.
+**Note**: CHOP has been optimized for complex gene structures but can be adapted for various organisms by adjusting the preprocessing parameters.
