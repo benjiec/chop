@@ -39,6 +39,15 @@ python scripts/gff_to_tsv.py input.gff output.tsv --verbose
 
 This creates a TSV file with columns: `sequence_id, gene_id, gene_start, gene_end, exon_start, exon_end, strand`
 
+# Convert genomic fasta with contigs to gene context
+
+```bash
+python scripts/extract_gene_contexts.py data/input_genomic.fna data/output.tsv data/output.fna
+```
+
+Now the output.tsv and output.fna are files to be used in the configuration yaml.
+
+
 ### 3. Train Model
 
 ```bash
