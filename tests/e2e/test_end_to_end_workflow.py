@@ -241,14 +241,14 @@ class EndToEndWorkflowTest(unittest.TestCase):
         self.assertTrue(hasattr(self.__class__, 'trained_model'), "Step 4 must complete first")
         
         # Run inference using subprocess
-        output_file = self.results_dir / "predictions.json"
+        output_dir = self.results_dir
         
         cmd = [
             sys.executable, str(project_root / "inference" / "predict.py"),
             "--model", self.__class__.trained_model,
             "--config", self.__class__.test_config,
             "--input", self.__class__.original_fasta,
-            "--output", str(output_file)
+            "--output", str(output_dir)
         ]
         
         print(f"  Running: {' '.join(cmd)}")
@@ -261,13 +261,14 @@ class EndToEndWorkflowTest(unittest.TestCase):
             self.fail("Inference failed")
         
         # Verify predictions were generated
-        self.assertTrue(output_file.exists(), "Predictions file not created")
+        predictions_file = output_dir / "all_predictions.json"
+        self.assertTrue(predictions_file.exists(), "Predictions file not created")
         
         print(f"  ✓ Inference completed")
-        print(f"  ✓ Predictions saved: {output_file}")
+        print(f"  ✓ Predictions saved: {predictions_file}")
         
         # Store predictions path
-        self.__class__.predictions_file = str(output_file)
+        self.__class__.predictions_file = str(predictions_file)
     
     def test_step_6_validate_predictions(self):
         """Step 6: Validate predictions against original annotations."""

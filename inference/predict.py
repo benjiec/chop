@@ -228,10 +228,18 @@ class GenePredictorInference:
         
         for item_list in [results['exons'], results['introns'], results['coding_regions']]:
             for item in item_list:
-                original_start = item[0]
-                original_end = item[1]
-                item[0] = sequence_length - original_end
-                item[1] = sequence_length - original_start
+                if isinstance(item, dict):
+                    # Handle dictionary format
+                    original_start = item['start']
+                    original_end = item['end']
+                    item['start'] = sequence_length - original_end
+                    item['end'] = sequence_length - original_start
+                else:
+                    # Handle tuple/list format
+                    original_start = item[0]
+                    original_end = item[1]
+                    item[0] = sequence_length - original_end
+                    item[1] = sequence_length - original_start
     
     def _combine_strand_results(self, forward_results: Dict, reverse_results: Dict) -> Dict:
         """Combine predictions from both strands."""
@@ -243,11 +251,14 @@ class GenePredictorInference:
             'coding_regions': forward_results['coding_regions'] + reverse_results['coding_regions']
         }
         
-        # Sort all predictions by start position
+        # Sort all predictions by start position - handle both dict and tuple formats
+        def get_start(x):
+            return x['start'] if isinstance(x, dict) else x[0]
+        
         combined_results['genes'].sort(key=lambda x: x['start'])
-        combined_results['exons'].sort(key=lambda x: x[0])
-        combined_results['introns'].sort(key=lambda x: x[0])
-        combined_results['coding_regions'].sort(key=lambda x: x[0])
+        combined_results['exons'].sort(key=get_start)
+        combined_results['introns'].sort(key=get_start)
+        combined_results['coding_regions'].sort(key=get_start)
         
         # Apply deduplication to handle overlapping predictions from both strands
         combined_results = self._deduplicate_predictions(combined_results)
@@ -264,23 +275,32 @@ class GenePredictorInference:
             if not regions:
                 return []
             
-            # Sort by start position
-            regions = sorted(regions, key=lambda x: x[0])
+            # Sort by start position - handle both dict and tuple formats
+            def get_start(x):
+                return x['start'] if isinstance(x, dict) else x[0]
+            
+            def get_end(x):
+                return x['end'] if isinstance(x, dict) else x[1]
+            
+            regions = sorted(regions, key=get_start)
             deduplicated = [regions[0]]
             
             for current in regions[1:]:
                 prev = deduplicated[-1]
                 
                 # Calculate overlap
-                overlap_start = max(prev[0], current[0])
-                overlap_end = min(prev[1], current[1])
+                prev_start, prev_end = get_start(prev), get_end(prev)
+                current_start, current_end = get_start(current), get_end(current)
+                
+                overlap_start = max(prev_start, current_start)
+                overlap_end = min(prev_end, current_end)
                 overlap_len = max(0, overlap_end - overlap_start)
                 
-                current_len = current[1] - current[0]
-                prev_len = prev[1] - prev[0]
+                current_len = current_end - current_start
+                prev_len = prev_end - prev_start
                 
                 # If overlap is significant, keep the longer region
-                if overlap_len > overlap_threshold * min(current_len, prev_len):
+                if prev_len > 0 and current_len > 0 and overlap_len > overlap_threshold * min(current_len, prev_len):
                     if current_len > prev_len:
                         deduplicated[-1] = current
                 else:
