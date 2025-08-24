@@ -31,8 +31,8 @@ def run_simple_e2e_test():
         fixtures_dir = Path(temp_dir) / "fixtures"
         fasta_file, gff_file = generate_test_fixture(
             output_dir=str(fixtures_dir),
-            num_contigs=2,  # Smaller for quick test
-            contig_length=6000
+            num_contigs=3,  # Smaller for quick test
+            contig_length=25000  # Still substantial for testing
         )
         print(f"   Generated: {Path(fasta_file).name}, {Path(gff_file).name}")
         

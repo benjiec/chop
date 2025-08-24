@@ -27,11 +27,12 @@ from Bio import SeqIO
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+# Add current directory to path for local imports
+sys.path.insert(0, str(Path(__file__).parent))
 
-from .generate_test_fixture import generate_test_fixture
-from scripts.preprocess_gene_data import main as preprocess_main
-from training.train import main as train_main
-from inference.predict import main as predict_main, load_model_and_config
+from generate_test_fixture import generate_test_fixture
+# Subprocess calls used instead of direct imports
+# All components use subprocess calls for better isolation
 from utils.constants import GeneBoundaryClass, ExonIntronClass
 
 
@@ -111,21 +112,27 @@ class EndToEndWorkflowTest(unittest.TestCase):
         processed_fasta = self.processed_dir / "gene_contexts.fna"
         processed_tsv = self.processed_dir / "annotations.tsv"
         
-        # Create temporary args for preprocessing
-        import argparse
-        args = argparse.Namespace(
-            fasta=self.__class__.original_fasta,
-            gff=self.__class__.original_gff,
-            output_fasta=str(processed_fasta),
-            output_tsv=str(processed_tsv),
-            flanking_bp=2000,
-            min_gene_length=150,  # Smaller for test data
-            verbose=True
-        )
+        # Run preprocessing using subprocess
+        cmd = [
+            sys.executable, str(project_root / "scripts" / "preprocess_gene_data.py"),
+            "--fasta", self.__class__.original_fasta,
+            "--gff", self.__class__.original_gff,
+            "--output-fasta", str(processed_fasta),
+            "--output-tsv", str(processed_tsv),
+            "--flanking-bp", "2000",
+            "--validate-codons"
+        ]
         
-        # Run preprocessing
-        result = preprocess_main(args)
-        self.assertEqual(result, 0, "Preprocessing should succeed")
+        print(f"  Running: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(project_root))
+        
+        if result.returncode != 0:
+            print(f"Preprocessing failed with return code {result.returncode}")
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            self.fail("Preprocessing failed")
+        
+        self.assertEqual(result.returncode, 0, "Preprocessing should succeed")
         
         # Verify output files
         self.assertTrue(processed_fasta.exists(), "Processed FASTA not created")
@@ -172,7 +179,7 @@ class EndToEndWorkflowTest(unittest.TestCase):
         config['evaluation']['output_dir'] = str(self.results_dir)
         
         # Create test-specific config
-        test_config_path = self.test_dir / "test_config.yaml"
+        test_config_path = Path(self.test_dir) / "test_config.yaml"
         with open(test_config_path, 'w') as f:
             yaml.dump(config, f)
         
