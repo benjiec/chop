@@ -24,7 +24,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.gene_predictor import GenePredictor, create_model
 from utils.dna_processor import DNATokenizer, BiologicalFeatureExtractor
 from utils.constants import (
-    GeneBoundaryClass, ExonIntronClass, SpliceSiteClass, DEFAULT_THRESHOLD
+    GeneBoundaryClass, ExonIntronClass, DEFAULT_THRESHOLD
 )
 
 
@@ -73,7 +73,18 @@ class GenePredictorInference:
         return model
     
     def predict_sequence(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
-        """Make predictions on a single DNA sequence."""
+        """Make predictions for a single DNA sequence using sliding windows for long sequences."""
+        max_length = self.config['model']['max_seq_length']
+        
+        # If sequence is short enough, predict directly
+        if len(sequence) <= max_length:
+            return self._predict_single_window(sequence, threshold)
+        
+        # For long sequences, use sliding windows
+        return self._predict_sliding_windows(sequence, threshold)
+    
+    def _predict_single_window(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
+        """Make predictions for a single window/short sequence."""
         # Tokenize sequence
         tokens = self.tokenizer.tokenize(sequence)
         
@@ -99,7 +110,142 @@ class GenePredictorInference:
             predictions = self.model.predict_genes(tokens, threshold)
         
         # Process predictions
-        results = self._process_predictions(predictions, sequence)
+        results = self._process_predictions(predictions, sequence[:max_length])
+        
+        return results
+    
+    def _predict_sliding_windows(self, sequence: str, threshold: float = DEFAULT_THRESHOLD) -> Dict:
+        """Make predictions using sliding windows for long sequences."""
+        max_length = self.config['model']['max_seq_length']
+        
+        # Get sliding window parameters from config
+        inference_config = self.config.get('inference', {})
+        window_size = inference_config.get('window_size', max_length)
+        stride = inference_config.get('stride', window_size // 2)
+        
+        print(f"  Using sliding windows: {window_size}bp windows, {stride}bp stride")
+        
+        # Initialize results
+        combined_results = {
+            'sequence_length': len(sequence),
+            'genes': [],
+            'exons': [],
+            'introns': [],
+            'coding_regions': []
+        }
+        
+        # Process sequence in sliding windows
+        num_windows = 0
+        for start in range(0, len(sequence) - window_size + 1, stride):
+            end = min(start + window_size, len(sequence))
+            window_sequence = sequence[start:end]
+            
+            # Predict on this window
+            window_results = self._predict_single_window(window_sequence, threshold)
+            
+            # Adjust coordinates to global sequence positions
+            self._adjust_coordinates(window_results, start)
+            
+            # Merge results
+            self._merge_window_results(combined_results, window_results)
+            
+            num_windows += 1
+            if num_windows % 100 == 0:
+                print(f"    Processed {num_windows} windows...")
+        
+        print(f"  Processed {num_windows} total windows")
+        
+        # Post-process to remove overlapping predictions
+        combined_results = self._deduplicate_predictions(combined_results)
+        
+        return combined_results
+    
+    def _adjust_coordinates(self, results: Dict, offset: int):
+        """Adjust all coordinates in results by the given offset."""
+        for gene in results['genes']:
+            gene['start'] += offset
+            gene['end'] += offset
+        
+        for item_list in [results['exons'], results['introns'], results['coding_regions']]:
+            for item in item_list:
+                item[0] += offset  # start
+                item[1] += offset  # end
+    
+    def _merge_window_results(self, combined_results: Dict, window_results: Dict):
+        """Merge window results into combined results."""
+        combined_results['genes'].extend(window_results['genes'])
+        combined_results['exons'].extend(window_results['exons'])
+        combined_results['introns'].extend(window_results['introns']) 
+        combined_results['coding_regions'].extend(window_results['coding_regions'])
+    
+    def _deduplicate_predictions(self, results: Dict) -> Dict:
+        """Remove overlapping predictions from sliding window results."""
+        # Simple deduplication - remove overlapping regions
+        # This is a basic implementation; could be made more sophisticated
+        
+        def deduplicate_regions(regions, overlap_threshold=0.5):
+            """Remove overlapping regions."""
+            if not regions:
+                return []
+            
+            # Sort by start position
+            regions = sorted(regions, key=lambda x: x[0])
+            deduplicated = [regions[0]]
+            
+            for current in regions[1:]:
+                prev = deduplicated[-1]
+                
+                # Calculate overlap
+                overlap_start = max(prev[0], current[0])
+                overlap_end = min(prev[1], current[1])
+                overlap_len = max(0, overlap_end - overlap_start)
+                
+                current_len = current[1] - current[0]
+                prev_len = prev[1] - prev[0]
+                
+                # If overlap is significant, keep the longer region
+                if overlap_len > overlap_threshold * min(current_len, prev_len):
+                    if current_len > prev_len:
+                        deduplicated[-1] = current
+                else:
+                    deduplicated.append(current)
+            
+            return deduplicated
+        
+        def deduplicate_genes(genes, overlap_threshold=0.5):
+            """Remove overlapping genes."""
+            if not genes:
+                return []
+            
+            # Sort by start position
+            genes = sorted(genes, key=lambda x: x['start'])
+            deduplicated = [genes[0]]
+            
+            for current in genes[1:]:
+                prev = deduplicated[-1]
+                
+                # Calculate overlap
+                overlap_start = max(prev['start'], current['start'])
+                overlap_end = min(prev['end'], current['end'])
+                overlap_len = max(0, overlap_end - overlap_start)
+                
+                current_len = current['end'] - current['start']
+                prev_len = prev['end'] - prev['start']
+                
+                # If overlap is significant, keep the longer gene
+                if overlap_len > overlap_threshold * min(current_len, prev_len):
+                    if current_len > prev_len:
+                        deduplicated[-1] = current
+                else:
+                    deduplicated.append(current)
+            
+            return deduplicated
+        
+        # Deduplicate each type of prediction
+        results['genes'] = deduplicate_genes(results['genes'])
+        results['exons'] = deduplicate_regions(results['exons'])
+        results['introns'] = deduplicate_regions(results['introns'])
+        results['coding_regions'] = deduplicate_regions(results['coding_regions'])
         
         return results
     
@@ -111,14 +257,12 @@ class GenePredictorInference:
             'genes': [],
             'exons': [],
             'introns': [],
-            'splice_sites': [],
             'coding_regions': []
         }
         
         # Extract predictions
         gene_boundaries = predictions['gene_boundaries'][0].cpu().numpy()
         exon_intron = predictions['exon_intron'][0].cpu().numpy()
-        splice_sites = predictions['splice_sites'][0].cpu().numpy()
         coding_potential = predictions['coding_potential'][0].cpu().numpy()
         
         # Find gene boundaries
@@ -146,14 +290,8 @@ class GenePredictorInference:
         results['exons'] = self._group_consecutive_positions(exon_positions)
         results['introns'] = self._group_consecutive_positions(intron_positions)
         
-        # Find splice sites
-        donor_sites = np.where(splice_sites[:, SpliceSiteClass.DONOR] > 0.5)[0]
-        acceptor_sites = np.where(splice_sites[:, SpliceSiteClass.ACCEPTOR] > 0.5)[0]
-        
-        results['splice_sites'] = {
-            'donor_sites': donor_sites.tolist(),
-            'acceptor_sites': acceptor_sites.tolist()
-        }
+        # Note: Splice sites are now inferred from exon/intron boundaries
+        # rather than predicted directly
         
         # Find coding regions
         coding_positions = np.where(coding_potential > 0.5)[0]
@@ -254,22 +392,18 @@ class GenePredictorInference:
         axes[1].legend()
         
         # Plot 3: Splice sites
-        axes[2].set_title('Splice Sites')
-        axes[2].set_ylabel('Type')
+        axes[2].set_title('Coding Potential')
+        axes[2].set_ylabel('Probability')
         
-        splice_sites = predictions.get('splice_sites', {})
-        donor_sites = splice_sites.get('donor_sites', [])
-        acceptor_sites = splice_sites.get('acceptor_sites', [])
+        # Show coding potential instead of splice sites
+        coding_regions = predictions.get('coding_regions', [])
+        for region in coding_regions:
+            start, end = region
+            axes[2].axvspan(start, end, alpha=0.3, color='green', label='Coding')
         
-        if donor_sites:
-            axes[2].vlines(donor_sites, 0.8, 1.2, color='purple', 
-                          label='Donor', alpha=0.7)
-        if acceptor_sites:
-            axes[2].vlines(acceptor_sites, 0.8, 1.2, color='brown', 
-                          label='Acceptor', alpha=0.7)
-        
-        axes[2].set_ylim(0, 2)
-        axes[2].legend()
+        axes[2].set_ylim(0, 1)
+        if coding_regions:
+            axes[2].legend()
         
         # Plot 4: Coding potential
         axes[3].set_title('Coding Potential')
