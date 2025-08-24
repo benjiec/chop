@@ -1,0 +1,1 @@
+source chop_env/bin/activate && python tests/unit/run_tests.py

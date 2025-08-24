@@ -1,0 +1,106 @@
+# End-to-end test configuration for synthetic data
+# Optimized for fast training on small synthetic genomic sequences
+
+model:
+  vocab_size: 5
+  d_model: 64           # Smaller model for faster training
+  n_layers: 2           # Fewer layers for speed
+  n_heads: 4            # Fewer heads but still diverse
+  max_seq_length: 8192  # 8k - sufficient for test sequences
+  dropout: 0.1
+
+loss:
+  gene_weight: 1.0
+  exon_weight: 1.5      # Emphasize exon detection
+  splice_weight: 0.0    # Let model discover splice patterns
+  coding_weight: 1.0
+  constraint_weight: 0.1
+  enforce_start_stop_codons: true
+
+training:
+  batch_size: 2         # Small batch for test data
+  max_epochs: 10        # Quick training for testing
+  learning_rate: 1e-3   # Higher LR for faster convergence
+  weight_decay: 0.01
+  gradient_clip_val: 1.0
+  patience: 5           # Early stopping for efficiency
+  accumulate_grad_batches: 2  # Effective batch size of 4
+  num_workers: 2        # Reduced for test environment
+  checkpoint_dir: "tests/models/checkpoints"
+
+data:
+  # Test data paths - will be set by test script
+  sequences_path: "tests/fixtures/test_gene_contexts.fna"
+  tsv_annotations_path: "tests/fixtures/test_annotations.tsv"
+  validate_normalization: true
+  max_sequence_length: 8192
+  window_size: 8192     # Single window for test sequences
+  stride: 4096          # 50% overlap
+  use_sliding_windows: false  # Disable for simple testing
+  min_gene_coverage: 0.3      # Lower threshold for test data
+  use_cache: false      # Disable caching for tests
+  cache_dir: "tests/cache"
+  pin_memory: false
+  augmentation:
+    enable: false       # Disable augmentation for deterministic testing
+
+inference:
+  enable_sliding_windows: false  # Simplified inference
+  window_size: 8192
+  stride: 4096
+  overlap_threshold: 0.5
+  consensus_method: "weighted"
+  boundary_smoothing: true
+  gene_reconstruction: true
+  max_reconstruction_windows: 4
+
+postprocessing:
+  enable: true
+  min_gene_length: 150          # Smaller for test data
+  min_exon_length: 3            # Minimal exon size
+  max_intron_length: 2000       # Smaller for test data
+  gene_boundary_smoothing: 3
+  remove_isolated_predictions: true
+  enforce_gene_structure: true
+  splice_site_validation: false
+
+logging:
+  use_wandb: false              # No external logging for tests
+  project_name: "gene-prediction-test"
+  run_name: "e2e-test"
+  log_every_n_steps: 10
+  val_check_interval: 1.0
+
+hardware:
+  accelerator: "cpu"            # Use CPU for reproducible testing
+  devices: 1
+  precision: 32
+
+evaluation:
+  metrics: ["accuracy", "precision", "recall", "f1"]
+  save_predictions: true
+  output_dir: "tests/results"
+  evaluate_gene_reconstruction: false  # Simplified for testing
+  evaluate_sliding_windows: false
+
+optimization:
+  gradient_checkpointing: false  # Disable for faster testing
+  mixed_precision: false
+  dataloader_pin_memory: false
+  empty_cache_frequency: 10
+  max_memory_usage_gb: 4        # Conservative for testing
+
+targets:
+  include_splice_sites: false
+  gene_boundaries: true
+  exon_intron: true
+  coding_potential: true
+
+# Test-specific settings
+test:
+  deterministic: true           # Ensure reproducible results
+  seed: 42                      # Fixed random seed
+  fast_dev_run: false          # Set to true for very quick testing
+  limit_train_batches: 1.0     # Use all data
+  limit_val_batches: 1.0       # Use all data
+  overfit_batches: 0           # Normal training

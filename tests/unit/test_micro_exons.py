@@ -15,7 +15,7 @@ import csv
 import torch
 
 # Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 from utils.dna_processor import DNADataset, load_tsv_annotations
 from utils.constants import TSV_COLUMNS, ExonIntronClass, UNKNOWN_GENE_ID
 

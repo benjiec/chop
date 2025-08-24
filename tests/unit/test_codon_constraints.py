@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 # Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from utils.dna_processor import validate_start_stop_codons_from_exons, reverse_complement
 from models.gene_predictor import BiologicalLoss

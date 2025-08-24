@@ -18,7 +18,7 @@ import os
 import subprocess
 
 # Add the project root to Python path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from scripts.preprocess_gene_data import (

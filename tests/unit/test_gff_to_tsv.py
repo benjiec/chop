@@ -14,7 +14,7 @@ from pathlib import Path
 import csv
 
 # Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 from scripts.gff_to_tsv import GFFToTSVConverter
 from utils.constants import TSV_COLUMNS
 
