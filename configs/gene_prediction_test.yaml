@@ -8,11 +8,11 @@ model:
   n_layers: 3                # Fewer layers for testing
   n_heads: 4                 # 4 heads work with d_model=120
   dropout: 0.1               # Dropout rate
-  max_seq_length: 4096       # Reduced sequence length for testing
+  max_seq_length: 2500       # Further reduced sequence length for faster testing
 
 # Training configuration
 training:
-  max_epochs: 5              # Slightly more for 100 genes
+  max_epochs: 2              # Fewer epochs for faster testing
   batch_size: 2              # Smaller batch size
   accumulate_grad_batches: 1 # No gradient accumulation
   learning_rate: 1e-3        # Higher learning rate for faster convergence

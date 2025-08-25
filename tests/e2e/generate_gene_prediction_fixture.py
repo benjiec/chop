@@ -265,8 +265,8 @@ def create_synthetic_contig(contig_id: str, contig_length: int,
     for i in range(genes_per_contig):
         gene_id = f"{contig_id}_gene_{i+1:03d}"
         
-        # Target gene length (1.5-2.5kb including UTRs, averaging 2kb)
-        target_gene_length = random.randint(1500, 2500)
+        # Target gene length (~1kb including UTRs, ranging 800-1200bp)
+        target_gene_length = random.randint(800, 1200)
         
         # Create gene
         gene = create_synthetic_gene(gene_id, target_gene_length)
@@ -316,8 +316,8 @@ def generate_gene_prediction_fixture(output_dir: Path, num_contigs: int = 5,
     gff_file = output_dir / "gene_prediction_test.gff"
     
     genes_per_contig = total_genes // num_contigs
-    # Calculate contig length based on gene size: ~2kb per gene + 50% spacing
-    contig_length = max(50000, genes_per_contig * 3000)  # At least 50kb, or 3kb per gene
+    # Calculate contig length based on gene size: ~1kb per gene + 1kb intergenic spacing
+    contig_length = max(25000, genes_per_contig * 2000)  # At least 25kb, or 2kb per gene
     
     all_genes = []
     

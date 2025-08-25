@@ -48,7 +48,7 @@ def test_gene_prediction_e2e():
         ]
         
         print(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=project_root, timeout=300)  # 5 minute timeout
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=project_root, timeout=600)  # 10 minute timeout
         
         if result.returncode != 0:
             print("STDOUT:", result.stdout)

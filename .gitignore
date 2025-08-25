@@ -5,3 +5,4 @@ results
 chop_env
 models/checkpoints
 cache
+.*.swp
