@@ -408,12 +408,12 @@ class GenePredictorInference:
             if pos == end + 1:
                 end = pos
             else:
-                regions.append({'start': start, 'end': end, 'length': end - start + 1})
+                regions.append({'start': start, 'end': end + 1, 'length': end - start + 1})
                 start = pos
                 end = pos
         
         # Add the last region
-        regions.append({'start': start, 'end': end, 'length': end - start + 1})
+        regions.append({'start': start, 'end': end + 1, 'length': end - start + 1})
         
         return regions
     

@@ -5,11 +5,24 @@ This module defines all the class indices and other constants used throughout
 the gene prediction pipeline to avoid magic numbers and ensure consistency.
 """
 
-# Gene boundary class indices
+# Gene boundary class indices (original multi-stage approach)
 class GeneBoundaryClass:
     NO_GENE = 0
     START = 1
     END = 2
+
+# Gene prediction: Gene boundary detection class indices
+class GenePredictionClass:
+    INTERGENIC = 0
+    UTR5 = 1
+    START = 2
+    GENE_BODY = 3
+    STOP = 4
+    UTR3 = 5
+
+# UTR size constants for gene prediction
+UTR5_SIZE = 500  # 5' UTR length in base pairs
+UTR3_SIZE = 500  # 3' UTR length in base pairs
 
 # Exon/intron class indices  
 class ExonIntronClass:
