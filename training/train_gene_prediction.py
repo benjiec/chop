@@ -11,7 +11,7 @@ import sys
 import argparse
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 
 import torch
 import torch.nn as nn
@@ -30,6 +30,7 @@ from models.gene_predictor import DNAEmbedding
 from utils.gene_prediction_processor import (
     GenePredictionTargetGenerator, encode_dna_sequence, load_gene_contexts_gene_prediction
 )
+from utils.dna_processor import load_tsv_annotations
 from utils.constants import GenePredictionClass, DNA_VOCAB
 
 
@@ -155,7 +156,7 @@ class GenePredictionLoss(nn.Module):
 class GenePredictionDataset(torch.utils.data.Dataset):
     """Dataset for gene prediction training."""
     
-    def __init__(self, fasta_file: Path, gff_file: Path, max_seq_length: int = 4096):
+    def __init__(self, fasta_file: Path, tsv_file: Path, max_seq_length: int = 4096):
         self.max_seq_length = max_seq_length
         self.target_generator = GenePredictionTargetGenerator()
         
@@ -163,6 +164,49 @@ class GenePredictionDataset(torch.utils.data.Dataset):
         self.sequences = {}
         self.genes_data = {}
         
+        # Load data
+        self._load_fasta_and_annotations(fasta_file, tsv_file)
+        
+    def _load_genes_from_tsv(self, tsv_file: Path) -> List[Dict]:
+        """Convert TSV annotations to gene list format for target generation."""
+        import pandas as pd
+        from collections import defaultdict
+        
+        df = pd.read_csv(tsv_file, sep='\t')
+        
+        # Group by sequence_id and gene_id to create gene entries
+        genes_list = []
+        gene_groups = df.groupby(['sequence_id', 'gene_id'])
+        
+        for (sequence_id, gene_id), group in gene_groups:
+            # TSV coordinates are 1-based, convert to 0-based for processing
+            gene_start = group['gene_start'].min() - 1  # Convert to 0-based
+            gene_end = group['gene_end'].max()          # End is already exclusive in TSV format
+            strand = group['strand'].iloc[0]
+            
+            # Extract exons (CDS entries)
+            exons = []
+            for _, row in group.iterrows():
+                exon_start = row['exon_start'] - 1  # Convert to 0-based
+                exon_end = row['exon_end']           # End is already exclusive
+                exons.append({'start': exon_start, 'end': exon_end})
+            
+            # Sort exons by start position
+            exons = sorted(exons, key=lambda x: x['start'])
+            
+            genes_list.append({
+                'sequence_id': sequence_id,
+                'gene_id': gene_id,
+                'start': gene_start,
+                'end': gene_end,
+                'strand': strand,
+                'exons': exons
+            })
+        
+        return genes_list
+
+    def _load_fasta_and_annotations(self, fasta_file: Path, tsv_file: Path):
+        """Load FASTA sequences and TSV annotations."""
         # Load FASTA
         with open(fasta_file, 'r') as f:
             current_seq_id = None
@@ -181,9 +225,8 @@ class GenePredictionDataset(torch.utils.data.Dataset):
             if current_seq_id:
                 self.sequences[current_seq_id] = ''.join(current_seq)
         
-        # Load GFF using proper parser that handles CDS entries
-        from scripts.preprocess_gene_data import parse_gff_file
-        genes_list = parse_gff_file(gff_file)
+        # Load TSV annotations (preprocessed gene contexts)
+        genes_list = self._load_genes_from_tsv(tsv_file)
         
         # Group genes by sequence
         for seq_id in self.sequences.keys():
@@ -194,11 +237,11 @@ class GenePredictionDataset(torch.utils.data.Dataset):
         self.windows = []
         for seq_id, sequence in self.sequences.items():
             seq_len = len(sequence)
-            stride = max_seq_length // 4  # 75% overlap for smaller sequences
+            stride = self.max_seq_length // 4  # 75% overlap for smaller sequences
             
             for start in range(0, seq_len, stride):
-                end = min(start + max_seq_length, seq_len)
-                if end - start >= max_seq_length // 4:  # Minimum window size
+                end = min(start + self.max_seq_length, seq_len)
+                if end - start >= self.max_seq_length // 4:  # Minimum window size
                     self.windows.append({
                         'sequence_id': seq_id,
                         'start': start,
@@ -342,13 +385,13 @@ class GenePredictionModule(pl.LightningModule):
         }
 
 
-def create_data_loaders(config: Dict[str, Any], fasta_file: Path, gff_file: Path) -> Tuple[DataLoader, DataLoader]:
+def create_data_loaders(config: Dict[str, Any], fasta_file: Path, tsv_file: Path) -> Tuple[DataLoader, DataLoader]:
     """Create training and validation data loaders."""
     
     # Create dataset
     dataset = GenePredictionDataset(
         fasta_file=fasta_file,
-        gff_file=gff_file,
+        tsv_file=tsv_file,
         max_seq_length=config['model']['max_seq_length']
     )
     
@@ -394,7 +437,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train gene prediction model')
     parser.add_argument('--config', required=True, help='Path to config YAML file')
     parser.add_argument('--fasta', required=True, help='Path to FASTA file')
-    parser.add_argument('--gff', required=True, help='Path to GFF file')
+    parser.add_argument('--tsv', required=True, help='Path to TSV annotation file')
     parser.add_argument('--output-dir', required=True, help='Output directory for model checkpoints')
     
     args = parser.parse_args()
@@ -409,7 +452,7 @@ def main():
     
     # Create data loaders
     train_loader, val_loader, class_weights = create_data_loaders(
-        config, Path(args.fasta), Path(args.gff)
+        config, Path(args.fasta), Path(args.tsv)
     )
     
     print(f"Training samples: {len(train_loader.dataset)}")

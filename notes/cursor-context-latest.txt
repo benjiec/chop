@@ -1,11 +1,39 @@
-**User**
+# Summary
+
+This is a repository to develop a gene prediction program. The final end goal
+is to take a genomic FASTA and a genomic GFF file as input, and predict list of
+protein amino acid sequences.
+
+The strategy we are taking is to develop two NN models. The first model is a
+gene boundary prediction model that predicts gene boundaries, specifically the
+START codon at the start of the first exon and the STOP codon at the end of the
+last exon. The second model is a splicing prediction model that predicts where
+exons are between START and STOP.
+
+We are going to implement this strategy in four stages.
+
+Stage 1: pre-processing of genomic fasta and GFF into a TSV of annotations and
+a fasta of gene context sequences. The TSV of annotations includes gene ID,
+gene start, gene end, exon ID, exon start, and exon end. The coordinates are
+adjusted to the gene context sequences, each is ~2000 bps flanking the START
+and STOP codons. The gene context sequences are also strand normalized and are
+always specified as 5' to 3' + strand sequences.
+
+Stage 2: training of gene boundary prediction model.
+
+Stage 3: training of splicing prediction model.
+
+Stage 4: Convert the gene and splicing prediction results and generate a new
+GFF and an amino acid fasta file.
+
+
+# To Cursor: Development Rules to Follow
 
 Always use chop_env virtual env.
 
-I don't want you to implement anything without a discussion. Your first
-question to me should be "would you like me to propose a solution", rather than
-"would you like me to implement". What would you implement w/o an agreed upon
-approach?
+Don't implement anything without a discussion. First question should be "would
+you like me to propose a solution", rather than "would you like me to
+implement". What would you implement w/o an agreed upon approach?
 
 Don't leave comments that only pertain to an action you took, e.g. to undo
 something. Comments should describe the current state of the code or
@@ -16,96 +44,39 @@ don't use temp directories that will get cleaned up automatically. Put them in
 directories we can access later.
 
 
-**User**
+# Gene boundary prediction model development
 
-Ok, I'd like to change things a bit, and take a different approach. Mainly, I'd
-like to split up the gene prediction from the exon/intron splicing prediction.
-
-1. First pass - gene prediction. We can train a model to predict gene boundaries.
-2. Second pass - within gene boundary, predict splicing sites and exons.
-
-I'd like to build essentially two sets of training code to generate two models.
-The util code can be shared to better use common logic.
-
-For the first pass, we'd need to generate a fixture that actually have patterns
-of gene boundaries. E.g. It would be nice to generate gene boundaries that
-starts with some frequently seen 5' UTR patterns followed by say TATA then ATG.
-And then for 3' boundary a STOP codon (randomly select one of the 3) and some
-common polyA signals e.g. AAUAAA. If you know common 5' UTR or 3' UTR signals
-use them. We just want the data to have a gene pattern that we can train model.
-Then let's put together total of 200 genes across 4-5 genomic sequence contigs,
-with random sequences between each 5' UTR+gene+3' UTR.
+To develop this model, let's first develop an end to end workflow that would
+detect genes using test data. The test data, or fixtures, should be genomic
+sequences with genes that include 5' UTR, START, CDS sequence, STOP, and 3'
+UTR, using common 5' and 3' UTRs (e.g. Kozak, TATA, AAUAAA poly A signals,
+etc).
 
 Let's not worry about overlapping genes. In the future, we can look at
 predictions with less scores and use them to put together overlapping genes
 (and alternative splicing).
 
-For the first model training, we want to indicate for each position if it's 5'
-UTR (say 500 bps (make this a constant for now in constant.py)), part of START,
-part of gene, part of STOP, part of 3' UTR (also 500 bps), or intergenic
-(default). Let's see how this model work. The loss function should be how well
-we can predict START, gene, and STOP, not involving the UTRs.
+We'd like this model to predict 5' UTRs, START, STOP, and 3' UTRs. Each
+position of the genomic sequence should be categorized into those 4 categories
+plus CDS region or intergenic region.
 
+For now, for test fixture, use 500 bps for 5' UTRs and 3' UTRS. Use
+biologically valid START (ATG) and STOP codons (TAA/TAG/TGA).
 
-**Cursor**
+For now, let's use max sequence length of 2500 for training the model. This
+means for the test fixture, let's aim for CDS sequences of 800-1200 bps
+(randomized), and then UTR sequences flanking the CDS sequences. Add random
+intergenic sequences as spacers between the gene sequences, to form genomic
+contig sequences.
 
-Perfect! Let me propose a solution starting with the constants and then the enhanced fixture generator.
+For now, use a small model to make testing quick: 3 layers, 4 heads, model size
+120, batch size 2.
 
-### **✅ What I've Built:**
-
-1. **Updated Constants** (`utils/constants.py`):
-   - Added `GeneBoundaryStage1` with INTERGENIC=0, UTR5=1, START=2, GENE_BODY=3, STOP=4, UTR3=5
-   - Added UTR size constants (500bp each)
-
-2. **Enhanced Fixture Generator** (`tests/e2e/generate_gene_prediction_fixture.py`):
-   - **Realistic UTR patterns**: TATA boxes, Kozak sequences, polyadenylation signals
-   - **Proper gene structure**: 5'UTR → START → CDS → STOP → 3'UTR
-   - **100 genes across 10 contigs** (50kb each)
-   - **Biologically valid**: START (ATG) and STOP codons (TAA/TAG/TGA)
-
-3. **Stage 1 Target Generator** (`utils/gene_prediction_processor.py`):
-   - **Position-wise classification**: Each nucleotide gets one of 6 classes
-   - **Codon-aware**: Properly identifies 3bp START/STOP regions
-   - **Strand handling**: Works with both forward and reverse genes
-
-### **🎯 Key Features:**
-
-- **Realistic patterns**: Generated genes have proper regulatory sequences that the model can learn
-- **Balanced loss**: Focuses training on START, GENE_BODY, STOP (ignores UTR quality)
-- **Class weights**: Handles extreme class imbalance (most positions are INTERGENIC)
-
-### **🔄 Next Steps:**
-
-4. **Gene Prediction Training Pipeline**: Adapt existing training code for Gene Prediction targets
-5. **Gene Prediction Config**: Create configuration file for Gene Prediction model
-6. **Gene Prediction E2E Test**: Test the complete Gene Prediction workflow
-
-**Does this approach look good to you?** Any changes to the UTR patterns, target encoding, or loss function strategy?
-
-
-**Cursor**
-
-Running the tests with
+The following script kicks off an end to end workflow that a) generates test
+fixtures - genomic FASTA and GFF, b) performs pre-processing to generate TSV
+and gene context FASTA, c) trains model, d) predict genes, e) evaluates
+model/prediction quality.
 
 ```
-source chop_env/bin/activate && python tests/e2e/run_gene_prediction_test.py
-```
-
-Using 2 epochs for now so we can run the tests quickly
-
-
-**User***
-
-I requested 100 genes. I think we can make things even smaller. Let's try gene
-size at 1kb (randomized to average around there) for now, intergenic may be 1kb
-(also randomized), and change the max seq length to 2500 bps in the config
-file. Would that make things faster?
-
-
-**Cursor**
-
-Can run the full end to end test using this
-
-```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_end_to_end_workflow.py --quick
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_gene_prediction_workflow.py --quick
 ```

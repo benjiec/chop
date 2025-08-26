@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """
-End-to-end workflow test for gene prediction pipeline.
+Gene prediction workflow test.
 
-This test validates the complete workflow:
-1. Generate synthetic test data
+This test validates the complete gene prediction pipeline:
+1. Generate synthetic test data (FASTA + GFF)
 2. Run preprocessing (FASTA + GFF → gene contexts + TSV)
-3. Train model on preprocessed data
+3. Train gene prediction model on preprocessed data
 4. Run inference on original sequences
-5. Validate that predictions approximate original annotations
+5. Evaluate predictions with comprehensive metrics
 
-The test uses synthetic data to ensure controlled, reproducible testing.
+The test uses synthetic data to ensure controlled, reproducible testing
+and provides detailed evaluation of gene boundary detection performance.
 """
 
 import unittest
 import sys
 import os
-import tempfile
-import shutil
 import subprocess
 import yaml
 import torch
@@ -37,15 +36,15 @@ from generate_test_fixture import generate_test_fixture
 from utils.constants import GeneBoundaryClass, ExonIntronClass
 
 
-class EndToEndWorkflowTest(unittest.TestCase):
+class GenePredictionWorkflowTest(unittest.TestCase):
     """Test the complete gene prediction workflow."""
     
     @classmethod
     def setUpClass(cls):
         """Set up test environment."""
-        # Create temporary directory for all test files
-        cls.test_dir = tempfile.mkdtemp(prefix="chop_e2e_test_")
-        cls.addClassCleanup(lambda: shutil.rmtree(cls.test_dir, ignore_errors=True))
+        # Use persistent directories instead of temporary ones
+        cls.test_dir = project_root / "tests" / "e2e" / "test_run"
+        cls.test_dir.mkdir(exist_ok=True, parents=True)
         
         # Set deterministic behavior
         torch.manual_seed(42)
@@ -58,10 +57,11 @@ class EndToEndWorkflowTest(unittest.TestCase):
     
     def setUp(self):
         """Set up individual test."""
-        self.fixtures_dir = Path(self.test_dir) / "fixtures"
+        # Use persistent, organized directories
+        self.fixtures_dir = project_root / "tests" / "e2e" / "test_fixtures"
         self.processed_dir = Path(self.test_dir) / "processed"
-        self.models_dir = Path(self.test_dir) / "models"
-        self.results_dir = Path(self.test_dir) / "results"
+        self.models_dir = project_root / "tests" / "e2e" / "test_models"
+        self.results_dir = self.models_dir / "predictions"
         
         # Create directories
         for dir_path in [self.fixtures_dir, self.processed_dir, self.models_dir, self.results_dir]:
@@ -71,13 +71,9 @@ class EndToEndWorkflowTest(unittest.TestCase):
         """Step 1: Generate synthetic genomic data."""
         print("Step 1: Generating synthetic test data...")
         
-        # Use persistent fixtures directory instead of temporary
-        persistent_fixtures_dir = project_root / "tests" / "e2e" / "test_fixtures"
-        persistent_fixtures_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Generate test fixture in persistent location
+        # Generate test fixture in persistent fixtures directory
         fasta_file, gff_file = generate_test_fixture(
-            output_dir=str(persistent_fixtures_dir),
+            output_dir=str(self.fixtures_dir),
             num_contigs=3,
             contig_length=7500
         )
@@ -197,19 +193,19 @@ class EndToEndWorkflowTest(unittest.TestCase):
         """Step 4: Train model using gene prediction training script."""
         print("Step 4: Training model...")
         
-        # Ensure step 1 completed (we need original FASTA/GFF, not preprocessed data)
-        self.assertTrue(hasattr(self.__class__, 'original_fasta'), "Step 1 must complete first")
+        # Ensure step 2 completed (we need preprocessed TSV and gene context FASTA)
+        self.assertTrue(hasattr(self.__class__, 'processed_fasta'), "Step 2 must complete first")
+        self.assertTrue(hasattr(self.__class__, 'processed_tsv'), "Step 2 must complete first")
         
-        # Use persistent test models directory instead of temporary
-        models_dir = project_root / "tests" / "e2e" / "test_models"
-        models_dir.mkdir(exist_ok=True, parents=True)
+        # Use persistent models directory
+        models_dir = self.models_dir
         
-        # Train using the gene prediction training script (FASTA + GFF input)
+        # Train using the gene prediction training script (preprocessed FASTA + TSV input)
         cmd = [
             sys.executable, str(project_root / "training" / "train_gene_prediction.py"),
             "--config", str(project_root / "configs" / "gene_prediction_test.yaml"),
-            "--fasta", self.__class__.original_fasta,
-            "--gff", self.__class__.original_gff,
+            "--fasta", self.__class__.processed_fasta,
+            "--tsv", self.__class__.processed_tsv,
             "--output-dir", str(models_dir)
         ]
         
@@ -271,8 +267,7 @@ class EndToEndWorkflowTest(unittest.TestCase):
         self.assertTrue(hasattr(self.__class__, 'trained_model'), "Step 4 must complete first")
         
         # Use persistent results directory
-        results_dir = Path(self.__class__.models_dir) / "predictions"
-        results_dir.mkdir(exist_ok=True, parents=True)
+        results_dir = self.results_dir
         
         # Run inference using the gene prediction inference script
         cmd = [
@@ -545,11 +540,10 @@ class EndToEndWorkflowTest(unittest.TestCase):
         print("RUNNING COMPLETE END-TO-END WORKFLOW TEST")
         print("="*60)
         
-        # Run all steps in sequence (skip preprocessing - we use raw FASTA+GFF)
+        # Run all steps in sequence (restore preprocessing pipeline)
         self.test_step_1_generate_synthetic_data()
-        # Skip step 2 - no preprocessing needed for gene prediction pipeline
-        # Skip step 3 - we use existing config file
-        self.test_step_4_train_model()
+        self.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
+        self.test_step_4_train_model()      # Train on TSV+contexts
         self.test_step_5_run_inference()
         self.test_step_6_validate_predictions()
         
@@ -557,29 +551,30 @@ class EndToEndWorkflowTest(unittest.TestCase):
         print("END-TO-END WORKFLOW TEST COMPLETED SUCCESSFULLY!")
         print("="*60)
         print("\nWorkflow Summary:")
-        print(f"  • Test directory: {self.test_dir}")
-        print(f"  • Persistent fixtures: tests/e2e/test_fixtures/")
+        print(f"  • Test run directory: {self.test_dir}")
+        print(f"  • Persistent fixtures: {self.fixtures_dir}")
+        print(f"  • Processed data: {self.processed_dir}")
         print(f"  • Original data: {self.__class__.original_fasta}")
         print(f"  • Trained model: {self.__class__.trained_model}")
-        print(f"  • Model directory: {self.__class__.models_dir}")
+        print(f"  • Model directory: {self.models_dir}")
         print(f"  • Predictions: {self.__class__.predictions_file}")
         if hasattr(self.__class__, 'evaluation_metrics'):
-            print(f"  • Evaluation metrics: {Path(self.__class__.models_dir) / 'evaluation_metrics.json'}")
+            print(f"  • Evaluation metrics: {self.models_dir / 'evaluation_metrics.json'}")
         print("\n🎉 All components of the gene prediction pipeline are working correctly!")
-        print("📁 Models and fixtures are persisted for reuse and debugging!")
+        print("📁 All artifacts are persisted in organized directories for reuse and debugging!")
 
 
 def run_quick_test():
     """Run a quick version of the test with minimal training."""
     # This function can be used for rapid development testing
-    test = EndToEndWorkflowTest()
+    test = GenePredictionWorkflowTest()
     test.setUpClass()
     test.setUp()
     
     # Run streamlined workflow using persistent directories
     test.test_step_1_generate_synthetic_data()
-    # Skip preprocessing and config creation - use direct gene prediction pipeline
-    test.test_step_4_train_model()
+    test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
+    test.test_step_4_train_model()      # Train on TSV+contexts
     test.test_step_5_run_inference()
     test.test_step_6_validate_predictions()
     
@@ -587,9 +582,10 @@ def run_quick_test():
     print("QUICK E2E TEST COMPLETED!")
     print("="*60)
     print("\nPersistent Artifacts:")
-    print(f"  • Fixtures: tests/e2e/test_fixtures/")
-    print(f"  • Models: {test.__class__.models_dir}")
-    print(f"  • Predictions: {test.__class__.predictions_file}")
+    print(f"  • Fixtures: {test.fixtures_dir}")
+    print(f"  • Processed data: {test.processed_dir}")
+    print(f"  • Models: {test.models_dir}")
+    print(f"  • Predictions: {test.results_dir}")
     print("\n🚀 Quick test completed successfully!")
 
 

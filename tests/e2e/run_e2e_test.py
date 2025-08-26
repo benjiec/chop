@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Convenient runner for end-to-end workflow testing.
+Convenient runner for gene prediction workflow testing.
 
-This script provides an easy way to run the complete end-to-end test
+This script provides an easy way to run the complete gene prediction workflow test
 with various options for different testing scenarios.
 """
 
@@ -72,7 +72,7 @@ Examples:
     
     # Determine the test script path
     project_root = Path(__file__).parent.parent.parent
-    test_script = Path(__file__).parent / "test_end_to_end_workflow.py"
+    test_script = Path(__file__).parent / "test_gene_prediction_workflow.py"
     fixture_script = Path(__file__).parent / "generate_test_fixture.py"
     
     if not test_script.exists():

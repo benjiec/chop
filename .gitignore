@@ -6,5 +6,6 @@ chop_env
 models/checkpoints
 cache
 .*.swp
-test_fixtures
-test_models
+tests/e2e/test_fixtures
+tests/e2e/test_models
+tests/e2e/test_run
