@@ -157,35 +157,30 @@ class SyntheticGene:
         return len(self.cds_sequence)
 
 
-def create_synthetic_contig(contig_id: str, length: int, num_genes: int) -> Tuple[str, List[SyntheticGene]]:
+def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[SyntheticGene]]:
     """
     Create a synthetic genomic contig with specified number of genes.
+    The contig size is determined by the genes and intergenic spacers.
     
     Args:
         contig_id: Identifier for the contig
-        length: Total length of the contig
         num_genes: Number of genes to place in the contig
         
     Returns:
         Tuple of (DNA sequence, list of genes)
     """
-    # Start with random DNA background
-    sequence = list(generate_random_dna(length))
     genes = []
+    current_pos = 0
     
-    # Calculate approximate space per gene
-    space_per_gene = length // (num_genes + 1)  # +1 for spacing
+    # Add initial spacer
+    initial_spacer = random.randint(1000, 3000)
+    current_pos += initial_spacer
     
     for i in range(num_genes):
         gene_id = f"{contig_id}_gene_{i+1:03d}"  # 3 digits for up to 999 genes
         
-        # Position gene with some randomness
-        base_start = (i + 1) * space_per_gene
-        start_pos = base_start + random.randint(-space_per_gene//4, space_per_gene//4)
-        start_pos = max(500, min(start_pos, length - 4000))  # Ensure room for gene
-        
-        # Create gene with random characteristics
-        gene = SyntheticGene(gene_id, start_pos)
+        # Create gene at current position
+        gene = SyntheticGene(gene_id, current_pos)
         
         # Generate 5-6 exons as requested
         num_exons = random.randint(5, 6)
@@ -207,20 +202,33 @@ def create_synthetic_contig(contig_id: str, length: int, num_genes: int) -> Tupl
         # Build the gene structure
         try:
             gene.generate_gene_structure(num_exons, cds_length, intron_lengths)
+            genes.append(gene)
             
-            # Check if gene fits in contig
-            max_available = length - start_pos - 500
-            if gene.get_gene_length() <= max_available:
-                genes.append(gene)
-                
-                # Place the gene sequence into the genomic sequence
-                for pos, base in gene.genomic_sequence.items():
-                    if 0 <= pos < len(sequence):
-                        sequence[pos] = base
+            # Move position to end of this gene
+            current_pos = gene.end
+            
+            # Add intergenic spacer (except after last gene)
+            if i < num_genes - 1:
+                intergenic_spacer = random.randint(500, 2000)
+                current_pos += intergenic_spacer
                 
         except (ValueError, IndexError) as e:
-            # Skip genes that don't fit or have issues
+            # Skip genes that have issues, but don't break the process
+            print(f"Warning: Skipping gene {gene_id} due to generation error: {e}")
             continue
+    
+    # Add final spacer
+    final_spacer = random.randint(1000, 3000)
+    total_length = current_pos + final_spacer
+    
+    # Create the actual DNA sequence
+    sequence = list(generate_random_dna(total_length))
+    
+    # Place all gene sequences into the genomic sequence
+    for gene in genes:
+        for pos, base in gene.genomic_sequence.items():
+            if 0 <= pos < len(sequence):
+                sequence[pos] = base
     
     return ''.join(sequence), genes
 
@@ -253,27 +261,29 @@ def write_gff_file(filename: str, all_genes: Dict[str, List[SyntheticGene]]):
                            f"ID={gene.gene_id}_CDS_{i+1};Parent={gene.gene_id}\n")
 
 
-def generate_test_fixture(output_dir: str, num_contigs: int = 10, contig_length: int = 50000):
-    """Generate complete test fixture with FASTA and GFF files."""
+def generate_test_fixture(output_dir: str, num_contigs: int = 10):
+    """Generate complete test fixture with FASTA and GFF files.
+    
+    Args:
+        output_dir: Directory to write output files
+        num_contigs: Number of contigs to generate
+        
+    Each contig will have 15-25 genes (random). Contig size is automatically 
+    calculated to accommodate the genes with realistic spacing.
+    """
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
     
-    # Generate contigs to accommodate ~200 genes total
     contigs = []
     all_genes = {}
-    target_total_genes = 200
-    genes_per_contig = target_total_genes // num_contigs
     
     for i in range(num_contigs):
         contig_id = f"test_contig_{i+1:02d}"
-        # Distribute genes across contigs
-        if i == num_contigs - 1:
-            # Last contig gets any remaining genes
-            num_genes = target_total_genes - (genes_per_contig * (num_contigs - 1))
-        else:
-            num_genes = genes_per_contig + random.randint(-2, 2)  # Small variation
         
-        sequence, genes = create_synthetic_contig(contig_id, contig_length, num_genes)
+        # Random number of genes per contig (15-25)
+        genes_per_contig = random.randint(15, 25)
+        
+        sequence, genes = create_synthetic_contig(contig_id, genes_per_contig)
         contigs.append((contig_id, sequence))
         all_genes[contig_id] = genes
     
@@ -289,8 +299,14 @@ def generate_test_fixture(output_dir: str, num_contigs: int = 10, contig_length:
     total_exons = sum(len(gene.exons) for genes in all_genes.values() for gene in genes)
     total_cds_length = sum(gene.get_cds_length() for genes in all_genes.values() for gene in genes)
     
+    # Calculate average contig length
+    contig_lengths = [len(seq) for _, seq in contigs]
+    avg_contig_length = sum(contig_lengths) / len(contig_lengths) if contig_lengths else 0
+    total_sequence_length = sum(contig_lengths)
+    
     print(f"Generated test fixture in {output_dir}:")
-    print(f"  - {num_contigs} contigs, ~{contig_length/1000:.0f}kb each")
+    print(f"  - {num_contigs} contigs, average ~{avg_contig_length/1000:.0f}kb each")
+    print(f"  - Total sequence: {total_sequence_length/1000:.0f}kb")
     print(f"  - {total_genes} genes total")
     print(f"  - {total_exons} exons total")
     print(f"  - {total_cds_length} bp total CDS")
@@ -304,12 +320,11 @@ def generate_test_fixture(output_dir: str, num_contigs: int = 10, contig_length:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate synthetic test fixture")
     parser.add_argument("--output-dir", default="tests/fixtures", help="Output directory")
-    parser.add_argument("--num-contigs", type=int, default=10, help="Number of contigs")
-    parser.add_argument("--contig-length", type=int, default=50000, help="Length of each contig")
+    parser.add_argument("--num-contigs", type=int, default=10, help="Number of contigs (each will have 15-25 genes randomly)")
     
     args = parser.parse_args()
     
     # Set random seed for reproducible results
     random.seed(42)
     
-    generate_test_fixture(args.output_dir, args.num_contigs, args.contig_length)
+    generate_test_fixture(args.output_dir, args.num_contigs)

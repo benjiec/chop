@@ -43,7 +43,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
     def setUpClass(cls):
         """Set up test environment."""
         # Use persistent directories instead of temporary ones
-        cls.test_dir = project_root / "tests" / "e2e" / "test_run"
+        cls.test_dir = project_root / "tests" / "gene_prediction" / "test_run"
         cls.test_dir.mkdir(exist_ok=True, parents=True)
         
         # Set deterministic behavior
@@ -58,9 +58,9 @@ class GenePredictionWorkflowTest(unittest.TestCase):
     def setUp(self):
         """Set up individual test."""
         # Use persistent, organized directories
-        self.fixtures_dir = project_root / "tests" / "e2e" / "test_fixtures"
+        self.fixtures_dir = project_root / "tests" / "gene_prediction" / "test_fixtures"
         self.processed_dir = Path(self.test_dir) / "processed"
-        self.models_dir = project_root / "tests" / "e2e" / "test_models"
+        self.models_dir = project_root / "tests" / "gene_prediction" / "test_models"
         self.results_dir = self.models_dir / "predictions"
         
         # Create directories
@@ -74,8 +74,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         # Generate test fixture in persistent fixtures directory
         fasta_file, gff_file = generate_test_fixture(
             output_dir=str(self.fixtures_dir),
-            num_contigs=num_contigs,
-            contig_length=7500
+            num_contigs=num_contigs
         )
         
         # Verify files were created
@@ -84,11 +83,12 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         
         # Verify file contents
         sequences = list(SeqIO.parse(fasta_file, "fasta"))
-        self.assertEqual(len(sequences), 3, "Should have 3 contigs")
+        self.assertEqual(len(sequences), num_contigs, f"Should have {num_contigs} contigs")
         
         for seq in sequences:
-            self.assertGreaterEqual(len(seq.seq), 7000, "Contig should be at least 7kb")
-            self.assertLessEqual(len(seq.seq), 8000, "Contig should be at most 8kb")
+            # Contig size is now determined by genes + spacers, so just verify reasonable size
+            self.assertGreaterEqual(len(seq.seq), 10000, "Contig should be at least 10kb")
+            self.assertLessEqual(len(seq.seq), 200000, "Contig should be reasonable size (< 200kb)")
         
         # Verify GFF has content
         with open(gff_file) as f:
@@ -113,15 +113,14 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         processed_fasta = self.processed_dir / "gene_contexts.fna"
         processed_tsv = self.processed_dir / "annotations.tsv"
         
-        # Run preprocessing using subprocess
+        # Run preprocessing using subprocess (without --validate-codons for synthetic data)
         cmd = [
             sys.executable, str(project_root / "scripts" / "preprocess_gene_data.py"),
             "--fasta", self.__class__.original_fasta,
             "--gff", self.__class__.original_gff,
             "--output-fasta", str(processed_fasta),
             "--output-tsv", str(processed_tsv),
-            "--flanking-bp", "2000",
-            "--validate-codons"
+            "--flanking-bp", "2000"
         ]
         
         print(f"  Running: {' '.join(cmd)}")
@@ -329,9 +328,9 @@ class GenePredictionWorkflowTest(unittest.TestCase):
             print(f"    STOP F1:             {stop_f1:.3f}")
             print(f"    GENE_BODY F1:        {gene_f1:.3f}")
             
-            # Performance thresholds for e2e test
+            # Performance thresholds for gene_prediction test
             if start_f1 > 0.3 and stop_f1 > 0.3 and gene_f1 > 0.5:
-                print(f"\n  ✅ Model performance PASSES e2e test thresholds!")
+                print(f"\n  ✅ Model performance PASSES gene_prediction test thresholds!")
             elif start_f1 > 0.1 and stop_f1 > 0.1 and gene_f1 > 0.3:
                 print(f"\n  ⚠️  Model performance is moderate - may need more training")
             else:

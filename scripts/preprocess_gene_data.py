@@ -312,8 +312,6 @@ def main():
     parser.add_argument('--output-tsv', required=True, help='Output normalized annotation TSV file')
     parser.add_argument('--flanking-bp', type=int, default=2000, 
                        help='Number of flanking base pairs around each gene (default: 2000)')
-    parser.add_argument('--validate-codons', action='store_true', default=True,
-                       help='Validate start/stop codons (default: True)')
     
     args = parser.parse_args()
     

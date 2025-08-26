@@ -90,13 +90,13 @@ model/prediction quality.
 This is the quick version to test code works:
 
 ```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_gene_prediction_workflow.py --quick
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/gene_prediction/test_gene_prediction_workflow.py --quick
 ```
 
 This is the bigger version -- more fixture, bigger models -- to test quality of model
 
 ```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_gene_prediction_workflow.py
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/gene_prediction/test_gene_prediction_workflow.py
 ```
 
 
