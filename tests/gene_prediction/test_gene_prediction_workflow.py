@@ -67,14 +67,14 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         for dir_path in [self.fixtures_dir, self.processed_dir, self.models_dir, self.results_dir]:
             dir_path.mkdir(exist_ok=True, parents=True)
     
-    def test_step_1_generate_synthetic_data(self):
+    def test_step_1_generate_synthetic_data(self, num_contigs=3):
         """Step 1: Generate synthetic genomic data."""
-        print("Step 1: Generating synthetic test data...")
+        print(f"Step 1: Generating synthetic test data ({num_contigs} contigs)...")
         
         # Generate test fixture in persistent fixtures directory
         fasta_file, gff_file = generate_test_fixture(
             output_dir=str(self.fixtures_dir),
-            num_contigs=3,
+            num_contigs=num_contigs,
             contig_length=7500
         )
         
@@ -159,35 +159,9 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         self.__class__.processed_fasta = str(processed_fasta)
         self.__class__.processed_tsv = str(processed_tsv)
     
-    def test_step_3_create_test_config(self):
-        """Step 3: Create and validate test configuration."""
-        print("Step 3: Setting up test configuration...")
-        
-        # Ensure step 2 completed
-        self.assertTrue(hasattr(self.__class__, 'processed_fasta'), "Step 2 must complete first")
-        
-        # Load base config
-        config_path = Path(__file__).parent / "test_e2e_config.yaml"
-        self.assertTrue(config_path.exists(), "Test config template should exist")
-        
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-        
-        # Update paths to use our test data
-        config['data']['sequences_path'] = self.__class__.processed_fasta
-        config['data']['tsv_annotations_path'] = self.__class__.processed_tsv
-        config['training']['checkpoint_dir'] = str(self.models_dir / "checkpoints")
-        config['evaluation']['output_dir'] = str(self.results_dir)
-        
-        # Create test-specific config
-        test_config_path = Path(self.test_dir) / "test_config.yaml"
-        with open(test_config_path, 'w') as f:
-            yaml.dump(config, f)
-        
-        print(f"  ✓ Created test config: {test_config_path}")
-        
-        # Store config path
-        self.__class__.test_config = str(test_config_path)
+    def _get_config_path(self):
+        """Get the standard config path for both modes."""
+        return str(project_root / "configs" / "gene_prediction_test.yaml")
     
     def test_step_4_train_model(self):
         """Step 4: Train model using gene prediction training script."""
@@ -200,10 +174,13 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         # Use persistent models directory
         models_dir = self.models_dir
         
+        # Use standard config for both modes
+        config_path = self._get_config_path()
+        
         # Train using the gene prediction training script (preprocessed FASTA + TSV input)
         cmd = [
             sys.executable, str(project_root / "training" / "train_gene_prediction.py"),
-            "--config", str(project_root / "configs" / "gene_prediction_test.yaml"),
+            "--config", config_path,
             "--fasta", self.__class__.processed_fasta,
             "--tsv", self.__class__.processed_tsv,
             "--output-dir", str(models_dir)
@@ -269,11 +246,14 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         # Use persistent results directory
         results_dir = self.results_dir
         
+        # Use standard config for both modes
+        config_path = self._get_config_path()
+        
         # Run inference using the gene prediction inference script
         cmd = [
             sys.executable, str(project_root / "inference" / "predict_gene_boundaries.py"),
             "--model", self.__class__.trained_model,
-            "--config", str(project_root / "configs" / "gene_prediction_test.yaml"),
+            "--config", config_path,
             "--input", self.__class__.original_fasta,
             "--output", str(results_dir)
         ]
@@ -540,8 +520,8 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         print("RUNNING COMPLETE END-TO-END WORKFLOW TEST")
         print("="*60)
         
-        # Run all steps in sequence (restore preprocessing pipeline)
-        self.test_step_1_generate_synthetic_data()
+        # Run all steps in sequence - full mode uses 5x more contigs (15 instead of 3)
+        self.test_step_1_generate_synthetic_data(num_contigs=15)  # 5x more data
         self.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
         self.test_step_4_train_model()      # Train on TSV+contexts
         self.test_step_5_run_inference()
@@ -555,6 +535,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         print(f"  • Persistent fixtures: {self.fixtures_dir}")
         print(f"  • Processed data: {self.processed_dir}")
         print(f"  • Original data: {self.__class__.original_fasta}")
+        print(f"  • Config used: {self._get_config_path()}")
         print(f"  • Trained model: {self.__class__.trained_model}")
         print(f"  • Model directory: {self.models_dir}")
         print(f"  • Predictions: {self.__class__.predictions_file}")
@@ -571,8 +552,8 @@ def run_quick_test():
     test.setUpClass()
     test.setUp()
     
-    # Run streamlined workflow using persistent directories
-    test.test_step_1_generate_synthetic_data()
+    # Run streamlined workflow using persistent directories - quick mode uses default 3 contigs
+    test.test_step_1_generate_synthetic_data(num_contigs=3)  # Default amount for quick test
     test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
     test.test_step_4_train_model()      # Train on TSV+contexts
     test.test_step_5_run_inference()
