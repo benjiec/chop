@@ -30,7 +30,6 @@ from models.gene_predictor import DNAEmbedding
 from utils.gene_prediction_processor import (
     GenePredictionTargetGenerator, encode_dna_sequence, load_gene_contexts_gene_prediction
 )
-from utils.dna_processor import load_tsv_annotations
 from utils.constants import GenePredictionClass, DNA_VOCAB
 
 

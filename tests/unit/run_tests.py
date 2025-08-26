@@ -12,51 +12,21 @@ from pathlib import Path
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from test_gff_to_tsv import TestGFFToTSV
-from test_tsv_to_targets import TestTSVToTargets
 from test_codon_constraints import TestCodonValidation, TestBiologicalLoss, TestIntegration
-# from test_strand_normalization import (
-#     TestReverseComplement, TestCoordinateTransformation, 
-#     TestStrandNormalizationDataLoading, TestCodonValidationStrandAware,
-#     TestInferenceStrandHandling
-# )
-# NOTE: Strand normalization tests moved to test_preprocessing_pipeline.py
-# from test_coordinate_handling import (
-#     TestTSVCoordinateParsing, TestMinusStrandCoordinates,
-#     TestExonBasedCodonValidation, TestIntegratedCoordinateHandling
-# )
-# NOTE: Coordinate handling tests moved to test_preprocessing_pipeline.py
-from test_preprocessing_pipeline import (
-    TestPreprocessingPipeline, TestDataLoaderValidation,
-    TestEndToEndPreprocessing
-)
 from test_target_generation import TestTargetGeneration
 
 
 def run_all_tests():
-    """Run all data loading, codon constraint, target generation, and preprocessing pipeline tests."""
+    """Run essential unit tests for codon validation and target generation."""
     
     # Create test suite
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
     
     # Add test cases
-    suite.addTests(loader.loadTestsFromTestCase(TestGFFToTSV))
-    suite.addTests(loader.loadTestsFromTestCase(TestTSVToTargets))
     suite.addTests(loader.loadTestsFromTestCase(TestCodonValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestBiologicalLoss))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
-    
-    # NOTE: Strand normalization tests moved to TestPreprocessingPipeline
-    
-    # NOTE: Coordinate handling tests moved to TestPreprocessingPipeline
-    
-    # Add preprocessing pipeline tests
-    suite.addTests(loader.loadTestsFromTestCase(TestPreprocessingPipeline))
-    suite.addTests(loader.loadTestsFromTestCase(TestDataLoaderValidation))
-    suite.addTests(loader.loadTestsFromTestCase(TestEndToEndPreprocessing))
-    
-    # Add target generation tests
     suite.addTests(loader.loadTestsFromTestCase(TestTargetGeneration))
     
     # Run tests

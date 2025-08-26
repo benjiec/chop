@@ -1,4 +1,4 @@
-# Summary
+## Summary
 
 This is a repository to develop a gene prediction program. The final end goal
 is to take a genomic FASTA and a genomic GFF file as input, and predict list of
@@ -27,7 +27,7 @@ Stage 4: Convert the gene and splicing prediction results and generate a new
 GFF and an amino acid fasta file.
 
 
-# To Cursor: Development Rules to Follow
+## To Cursor: Development Rules to Follow
 
 Always use chop_env virtual env.
 
@@ -43,8 +43,18 @@ Because a lot of steps may be compute intensive we want to reuse results, so
 don't use temp directories that will get cleaned up automatically. Put them in
 directories we can access later.
 
+Run unit tests using
 
-# Gene boundary prediction model development
+```
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/unit/run_tests.py
+```
+
+Whenever we are done implement a set of logic and validated that they are what
+we want, we should add unit tests and update the tests/unit/run_tests.py script
+to include the new unit tests.
+
+
+## Gene boundary prediction model development
 
 To develop this model, let's first develop an end to end workflow that would
 detect genes using test data. The test data, or fixtures, should be genomic
@@ -80,3 +90,25 @@ model/prediction quality.
 ```
 cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_gene_prediction_workflow.py --quick
 ```
+
+## Current directory structure
+
+chop/
+├── scripts/
+│   ├── preprocess_gene_data.py    # Stage 1: Preprocessing
+├── training/
+│   └── train_gene_prediction.py    # Stage 2 - Training
+├── inference/
+│   └── predict_gene_boundaries.py  # Stage 2 - Inference
+├── tests/
+│   ├── gene_prediction/                      # E2E test for stage 2
+│   │   ├── test_gene_prediction_workflow.py  # Runner for E2E test for stage 2
+│   │   ├── generate_test_fixture.py          # Generates test data for stage 2
+│   │   ├── test_fixtures/                    # Persistent data
+│   │   ├── test_run/                         # Persistent intermediate files
+│   │   └── test_models/                      # Persistent models
+│   └── unit/                        # Essential unit tests (25 tests)
+├── utils/                          # Minimal utilities
+├── models/                         # Model definitions
+└── configs/
+    └── gene_prediction_test.yaml   # Single config for stage 2 - gene prediction
