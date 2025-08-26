@@ -1,221 +1,82 @@
-# CHOP Gene Prediction - Project Context
+# Summary
 
-## Project Overview
-CHOP (Chromosome Open Prediction) is a transformer-based gene prediction tool that uses attention mechanisms to identify genes, exons, introns, and coding regions in genomic DNA sequences. The system is designed to handle complex gene structures with biological accuracy.
+This is a repository to develop a gene prediction program. The final end goal
+is to take a genomic FASTA and a genomic GFF file as input, and predict list of
+protein amino acid sequences.
 
-## Current Working Setup
+The strategy we are taking is to develop two NN models. The first model is a
+gene boundary prediction model that predicts gene boundaries, specifically the
+START codon at the start of the first exon and the STOP codon at the end of the
+last exon. The second model is a splicing prediction model that predicts where
+exons are between START and STOP.
 
-### Environment
-- **Platform**: M4 MacBook Air with 24GB RAM
-- **Python Environment**: `chop_env` virtual environment
-- **Training Commands**: 
-  - CPU: `python train_cpu_only.py --config [config].yaml`
-  - MPS: `python train_mps.py --config [config].yaml`
-- **Inference Command**: `python inference/predict.py --model [model] --config [config] --input [sequences].fna`
+We are going to implement this strategy in four stages.
 
-### Data Processing Pipeline
-CHOP uses a two-stage data pipeline:
+Stage 1: pre-processing of genomic fasta and GFF into a TSV of annotations and
+a fasta of gene context sequences. The TSV of annotations includes gene ID,
+gene start, gene end, exon ID, exon start, and exon end. The coordinates are
+adjusted to the gene context sequences, each is ~2000 bps flanking the START
+and STOP codons. The gene context sequences are also strand normalized and are
+always specified as 5' to 3' + strand sequences.
 
-1. **Preprocessing Stage** (`scripts/preprocess_gene_data.py`):
-   - Input: Raw genomic FASTA + GFF annotations
-   - Output: Normalized gene contexts + adjusted annotations
-   - Features: Gene context extraction, strand normalization, coordinate adjustment
+Stage 2: training of gene boundary prediction model.
 
-2. **Training Stage** (`training/train.py`):
-   - Input: Preprocessed gene contexts + annotations
-   - Features: Data validation, sliding windows, caching
+Stage 3: training of splicing prediction model.
 
-### Current Optimal Configuration
-**File**: `configs/m4_mps_model7M_layer4_head6_seqlen12k_sliding.yaml`
-- **Model size**: 7M parameters, d_model=256, 4 layers, 6 heads
-- **Sequence length**: 12,288 bp (12k) - optimal memory/coverage tradeoff
-- **Sliding windows**: 6,144 bp stride (50% overlap)
-- **Training**: MPS acceleration with batch_size=4, accumulate_grad_batches=16
+Stage 4: Convert the gene and splicing prediction results and generate a new
+GFF and an amino acid fasta file.
 
-## Model Architecture
 
-### Transformer Design
-- **4 layers**: Hierarchical learning from local motifs to gene architecture
-- **6 attention heads**: Capture diverse biological patterns
-- **12k sequence length**: Balance between gene coverage and memory usage
-- **Parameter count**: 7M parameters for optimal performance/memory tradeoff
+# To Cursor: Development Rules to Follow
 
-### Output Classes
-- **GeneBoundaryClass**: START, GENE_BODY, END, NO_GENE
-- **ExonIntronClass**: EXON, INTRON, INTERGENIC
+Always use chop_env virtual env.
 
-### Biological Constraints
-- **Start codons**: ATG (enforced in loss function)
-- **Stop codons**: TAA, TAG, TGA (enforced in loss function)
-- **Strand normalization**: All genes normalized to + strand during preprocessing
+Don't implement anything without a discussion. First question should be "would
+you like me to propose a solution", rather than "would you like me to
+implement". What would you implement w/o an agreed upon approach?
 
-## File Structure
+Don't leave comments that only pertain to an action you took, e.g. to undo
+something. Comments should describe the current state of the code or
+configuration.
 
-### Core Scripts
+Because a lot of steps may be compute intensive we want to reuse results, so
+don't use temp directories that will get cleaned up automatically. Put them in
+directories we can access later.
+
+
+# Gene boundary prediction model development
+
+To develop this model, let's first develop an end to end workflow that would
+detect genes using test data. The test data, or fixtures, should be genomic
+sequences with genes that include 5' UTR, START, CDS sequence, STOP, and 3'
+UTR, using common 5' and 3' UTRs (e.g. Kozak, TATA, AAUAAA poly A signals,
+etc).
+
+Let's not worry about overlapping genes. In the future, we can look at
+predictions with less scores and use them to put together overlapping genes
+(and alternative splicing).
+
+We'd like this model to predict 5' UTRs, START, STOP, and 3' UTRs. Each
+position of the genomic sequence should be categorized into those 4 categories
+plus CDS region or intergenic region.
+
+For now, for test fixture, use 500 bps for 5' UTRs and 3' UTRS. Use
+biologically valid START (ATG) and STOP codons (TAA/TAG/TGA).
+
+For now, let's use max sequence length of 2500 for training the model. This
+means for the test fixture, let's aim for CDS sequences of 800-1200 bps
+(randomized), and then UTR sequences flanking the CDS sequences. Add random
+intergenic sequences as spacers between the gene sequences, to form genomic
+contig sequences.
+
+For now, use a small model to make testing quick: 3 layers, 4 heads, model size
+120, batch size 2.
+
+The following script kicks off an end to end workflow that a) generates test
+fixtures - genomic FASTA and GFF, b) performs pre-processing to generate TSV
+and gene context FASTA, c) trains model, d) predict genes, e) evaluates
+model/prediction quality.
+
 ```
-scripts/
-├── preprocess_gene_data.py    # Main preprocessing pipeline
-├── gff_to_tsv.py             # GFF format utilities
-└── run-tests                 # Test runner
-
-training/
-└── train.py                  # Model training logic
-
-inference/
-└── predict.py                # Gene prediction with sliding windows
-
-models/
-└── gene_predictor.py         # Transformer model + biological loss
-
-utils/
-├── dna_processor.py          # Data loading and processing
-└── constants.py              # Symbolic constants
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_gene_prediction_workflow.py --quick
 ```
-
-### Configuration Files
-```
-configs/
-├── m4_cpu_model7M_layer4_head6_seqlen12k_sliding.yaml    # CPU training
-└── m4_mps_model7M_layer4_head6_seqlen12k_sliding.yaml    # MPS training
-```
-
-### Data Flow
-```
-Raw Data (FASTA + GFF)
-    ↓ preprocess_gene_data.py
-Gene Contexts + Annotations (FASTA + TSV)
-    ↓ training/train.py
-Trained Model
-    ↓ inference/predict.py
-Gene Predictions
-```
-
-## Data Formats
-
-### Input Data
-- **Genomic FASTA**: Raw genomic sequences with sequence IDs
-- **GFF annotations**: Gene and exon annotations with Parent relationships
-
-### Preprocessed Data
-- **Gene context FASTA**: Sequences named by gene ID (gene ± 2kb contexts)
-- **Annotation TSV**: Coordinates adjusted to gene context coordinate system
-
-### TSV Columns
-| Column | Description | Notes |
-|--------|-------------|-------|
-| sequence_id | Gene identifier | Always matches FASTA sequence name |
-| gene_id | Gene identifier | Same as sequence_id |
-| gene_start | Gene start (0-based) | Adjusted to context coordinates |
-| gene_end | Gene end | Adjusted to context coordinates |
-| exon_start | Exon start (0-based) | Adjusted to context coordinates |
-| exon_end | Exon end | Adjusted to context coordinates |
-| strand | Strand | Always '+' (normalized) |
-
-## Key Technical Features
-
-### Preprocessing Pipeline
-- **Gene context extraction**: Extract gene ± 2kb flanking regions
-- **Strand normalization**: Convert all - strand genes to + strand with coordinate adjustment
-- **Coordinate transformation**: Adjust all coordinates to gene context coordinate system
-- **Biological validation**: Filter genes without valid start/stop codons
-- **Exon-based codon checking**: Validate start/stop codons from actual exon boundaries
-
-### Training Features
-- **Sliding windows**: Process long sequences with overlapping windows
-- **Data validation**: Ensure preprocessed data integrity
-- **Biological constraints**: Enforce start/stop codon requirements in loss function
-- **Memory optimization**: Efficient processing for 24GB RAM systems
-- **MPS acceleration**: Native Apple Silicon GPU support
-
-### Inference Features
-- **Bi-directional prediction**: Predict on both forward and reverse complement
-- **Sliding window reconstruction**: Seamlessly process long genomic sequences
-- **Gene boundary detection**: Identify complete gene structures
-
-## Testing
-
-### Test Coverage
-- **Preprocessing pipeline**: Complete workflow validation
-- **Data loading**: Validation and error handling
-- **GFF conversion**: Format parsing and accuracy
-- **Codon constraints**: Biological validation logic
-- **End-to-end**: Full pipeline integration
-
-### Test Files
-```
-tests/
-├── test_preprocessing_pipeline.py  # Main preprocessing tests
-├── test_gff_to_tsv.py              # GFF parsing tests
-├── test_tsv_to_targets.py          # Target generation tests
-├── test_codon_constraints.py       # Biological validation tests
-└── run_tests.py                    # Test runner
-```
-
-## Memory and Performance
-
-### System Requirements
-- **RAM**: 24GB recommended for full model training
-- **GPU**: Apple Silicon MPS support for acceleration
-- **Storage**: ~1GB for model checkpoints, variable for data
-
-### Performance Optimizations
-- **Gradient accumulation**: Effective batch size scaling
-- **Caching**: Faster repeated data loading
-- **Pin memory**: Disabled for MPS compatibility
-- **Sliding windows**: Efficient long sequence processing
-
-## Biological Accuracy
-
-### Validation Features
-- **Start codon enforcement**: All genes must start with ATG
-- **Stop codon enforcement**: All genes must end with TAA/TAG/TGA
-- **Exon boundary checking**: Validate codons from actual exon sequences
-- **Strand consistency**: All data normalized to + strand orientation
-- **Coordinate integrity**: Ensure proper coordinate transformations
-
-### Data Quality
-- **Automatic filtering**: Remove genes with invalid biological features
-- **Validation reporting**: Clear statistics on data quality
-- **Error handling**: Graceful handling of malformed input data
-
-## Current Status
-
-### Working Features
-- ✅ Complete preprocessing pipeline
-- ✅ Model training with biological constraints
-- ✅ MPS acceleration support
-- ✅ Sliding window inference
-- ✅ Comprehensive testing suite
-- ✅ Data validation and quality control
-
-### Next Steps
-- Model training on preprocessed data
-- Performance evaluation and optimization
-- Species-specific model adaptation
-
-## Usage Examples
-
-### Data Preprocessing
-```bash
-python scripts/preprocess_gene_data.py \
-    --fasta raw_genome.fna \
-    --gff annotations.gff \
-    --output-fasta gene_contexts.fna \
-    --output-tsv gene_annotations.tsv \
-    --flanking-bp 2000
-```
-
-### Model Training
-```bash
-python train_mps.py --config configs/m4_mps_model7M_layer4_head6_seqlen12k_sliding.yaml
-```
-
-### Gene Prediction
-```bash
-python inference/predict.py \
-    --model models/checkpoints/final_model.pt \
-    --config configs/m4_mps_longer.yaml \
-    --input test_sequences.fna
-```
-
-This context provides a complete overview of the current CHOP system architecture and usage.
