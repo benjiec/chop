@@ -181,41 +181,13 @@ class GenePredictionDataset(torch.utils.data.Dataset):
             if current_seq_id:
                 self.sequences[current_seq_id] = ''.join(current_seq)
         
-        # Load GFF and convert to genes DataFrame
-        genes_list = []
-        with open(gff_file, 'r') as f:
-            for line in f:
-                if line.startswith('#') or not line.strip():
-                    continue
-                
-                parts = line.strip().split('\t')
-                if len(parts) >= 9 and parts[2] == 'gene':
-                    seq_id = parts[0]
-                    start = int(parts[3]) - 1  # Convert to 0-based
-                    end = int(parts[4]) - 1    # Convert to 0-based
-                    strand = parts[6]
-                    
-                    # Extract gene ID from attributes
-                    attrs = parts[8]
-                    gene_id = None
-                    for attr in attrs.split(';'):
-                        if attr.startswith('ID='):
-                            gene_id = attr[3:]
-                            break
-                    
-                    if gene_id:
-                        genes_list.append({
-                            'sequence_id': seq_id,
-                            'gene_id': gene_id,
-                            'gene_start': start,
-                            'gene_end': end,
-                            'strand': strand
-                        })
+        # Load GFF using proper parser that handles CDS entries
+        from scripts.preprocess_gene_data import parse_gff_file
+        genes_list = parse_gff_file(gff_file)
         
         # Group genes by sequence
-        genes_df = pd.DataFrame(genes_list)
         for seq_id in self.sequences.keys():
-            seq_genes = genes_df[genes_df['sequence_id'] == seq_id]
+            seq_genes = [gene for gene in genes_list if gene['sequence_id'] == seq_id]
             self.genes_data[seq_id] = seq_genes
         
         # Create windows for training
@@ -241,29 +213,42 @@ class GenePredictionDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         window = self.windows[idx]
         sequence = window['sequence']
-        genes_df = window['genes']
+        genes_list = window['genes']
         window_start = window['start']
         
         # Adjust gene coordinates to window coordinates
         adjusted_genes = []
-        for _, gene in genes_df.iterrows():
-            gene_start = max(0, gene['gene_start'] - window_start)
-            gene_end = min(len(sequence) - 1, gene['gene_end'] - window_start)
+        for gene in genes_list:
+            gene_start = max(0, gene['start'] - window_start)
+            gene_end = min(len(sequence) - 1, gene['end'] - window_start)
             
             # Only include genes that overlap with window
             if gene_start < len(sequence) and gene_end >= 0:
-                adjusted_genes.append({
-                    'sequence_id': gene['sequence_id'],
-                    'gene_id': gene['gene_id'],
-                    'gene_start': gene_start,
-                    'gene_end': gene_end,
-                    'strand': gene['strand']
-                })
-        
-        adjusted_genes_df = pd.DataFrame(adjusted_genes)
+                # Adjust exon coordinates to window coordinates
+                adjusted_exons = []
+                for exon in gene.get('exons', []):
+                    exon_start = max(0, exon['start'] - window_start)
+                    exon_end = min(len(sequence) - 1, exon['end'] - window_start)
+                    
+                    # Only include exons that overlap with window
+                    if exon_start < len(sequence) and exon_end >= 0:
+                        adjusted_exons.append({
+                            'start': exon_start,
+                            'end': exon_end
+                        })
+                
+                if adjusted_exons:  # Only include genes with exons in the window
+                    adjusted_genes.append({
+                        'sequence_id': gene['sequence_id'],
+                        'gene_id': gene['gene_id'],
+                        'start': gene_start,
+                        'end': gene_end,
+                        'strand': gene['strand'],
+                        'exons': adjusted_exons
+                    })
         
         # Generate targets
-        targets = self.target_generator.generate_targets(sequence, adjusted_genes_df)
+        targets = self.target_generator.generate_targets(sequence, adjusted_genes)
         
         # Encode sequence
         encoded_seq = encode_dna_sequence(sequence)

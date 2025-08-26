@@ -66,7 +66,7 @@ def parse_gff_file(gff_path: str) -> List[Dict]:
                 try:
                     sequence_id = parts[0]
                     start = int(parts[3]) - 1  # Convert to 0-based
-                    end = int(parts[4])
+                    end = int(parts[4])        # Convert to 0-based exclusive (Python slice style)
                     strand = parts[6]
                     attributes = parts[8]
                     

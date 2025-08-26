@@ -30,10 +30,11 @@ from test_preprocessing_pipeline import (
     TestPreprocessingPipeline, TestDataLoaderValidation,
     TestEndToEndPreprocessing
 )
+from test_target_generation import TestTargetGeneration
 
 
 def run_all_tests():
-    """Run all data loading, codon constraint, strand normalization, coordinate handling, and preprocessing pipeline tests."""
+    """Run all data loading, codon constraint, target generation, and preprocessing pipeline tests."""
     
     # Create test suite
     loader = unittest.TestLoader()
@@ -54,6 +55,9 @@ def run_all_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestPreprocessingPipeline))
     suite.addTests(loader.loadTestsFromTestCase(TestDataLoaderValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestEndToEndPreprocessing))
+    
+    # Add target generation tests
+    suite.addTests(loader.loadTestsFromTestCase(TestTargetGeneration))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

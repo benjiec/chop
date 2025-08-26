@@ -49,12 +49,12 @@ class TestPreprocessingPipeline(unittest.TestCase):
             sequence = (
                 "A" * 1000 +           # 0-999: upstream
                 "ATGAAATAA" +          # 1000-1008: + strand gene (ATG...TAA)
-                "T" * 2000 +           # 1009-3008: intergenic
-                "TTATTTCAT" +          # 3009-3017: - strand gene (will be ATG...TAA when RC)
-                "G" * 3000 +           # 3018-6017: intergenic  
-                "ATGCCCGGGTAGCCCTAA" + # 6018-6035: + strand multi-exon gene (ATG...TAA)
+                "T" * 2001 +           # 1009-3009: intergenic (extra base to fix coordinates)
+                "TTATTTCAT" +          # 3010-3018: - strand gene (will be ATG...TAA when RC)
+                "G" * 2999 +           # 3019-6017: intergenic  
+                "ATGCCCGGGCCCCCCTAA" + # 6018-6035: + strand multi-exon gene (ATG...TAA)
                 "C" * 3000             # 6036-9035: downstream
-            )  # Total: 9036bp
+            )  # Total: 9037bp
             # Break into lines of 80 characters
             for i in range(0, len(sequence), 80):
                 f.write(sequence[i:i+80] + "\n")
@@ -66,10 +66,10 @@ class TestPreprocessingPipeline(unittest.TestCase):
             # Plus strand single-exon gene (ATG...TAA)
             f.write("SEQ1\ttest\tCDS\t1001\t1009\t.\t+\t0\tParent=gene1\n")
             # Minus strand single-exon gene (will be ATG...TAA when RC)  
-            f.write("SEQ1\ttest\tCDS\t3010\t3018\t.\t-\t0\tParent=gene2\n")
-            # Plus strand multi-exon gene (ATG...GGG in first exon, TAA in second exon)
-            f.write("SEQ1\ttest\tCDS\t6019\t6027\t.\t+\t0\tParent=gene3\n")  # First exon: ATG...GGG
-            f.write("SEQ1\ttest\tCDS\t6028\t6036\t.\t+\t0\tParent=gene3\n")  # Second exon: TAG...TAA
+            f.write("SEQ1\ttest\tCDS\t3011\t3019\t.\t-\t0\tParent=gene2\n")
+            # Plus strand multi-exon gene (ATG...CCC in first exon, CCC...TAA in second exon)
+            f.write("SEQ1\ttest\tCDS\t6019\t6027\t.\t+\t0\tParent=gene3\n")  # First exon: ATG...CCC
+            f.write("SEQ1\ttest\tCDS\t6028\t6036\t.\t+\t0\tParent=gene3\n")  # Second exon: CCC...TAA
     
     def tearDown(self):
         """Clean up test files."""
@@ -87,15 +87,15 @@ class TestPreprocessingPipeline(unittest.TestCase):
         gene1 = next(g for g in genes if g['gene_id'] == 'gene1')
         self.assertEqual(gene1['sequence_id'], 'SEQ1')
         self.assertEqual(gene1['start'], 1000)  # 0-based conversion
-        self.assertEqual(gene1['end'], 1009)
+        self.assertEqual(gene1['end'], 1009)  # GFF 1009 -> 0-based exclusive 1009
         self.assertEqual(gene1['strand'], '+')
         self.assertEqual(len(gene1['exons']), 1)
         
         # Check gene2 (- strand, single exon)
         gene2 = next(g for g in genes if g['gene_id'] == 'gene2')
         self.assertEqual(gene2['sequence_id'], 'SEQ1')
-        self.assertEqual(gene2['start'], 3009)  # 0-based conversion
-        self.assertEqual(gene2['end'], 3018)
+        self.assertEqual(gene2['start'], 3010)  # GFF 3011 -> 0-based 3010  # 0-based conversion
+        self.assertEqual(gene2['end'], 3019)  # GFF 3019 -> 0-based exclusive 3019
         self.assertEqual(gene2['strand'], '-')
         self.assertEqual(len(gene2['exons']), 1)
         
@@ -103,7 +103,7 @@ class TestPreprocessingPipeline(unittest.TestCase):
         gene3 = next(g for g in genes if g['gene_id'] == 'gene3')
         self.assertEqual(gene3['sequence_id'], 'SEQ1')
         self.assertEqual(gene3['start'], 6018)  # 0-based conversion
-        self.assertEqual(gene3['end'], 6036)
+        self.assertEqual(gene3['end'], 6036)  # GFF 6036 -> 0-based exclusive 6036
         self.assertEqual(gene3['strand'], '+')
         self.assertEqual(len(gene3['exons']), 2)
     

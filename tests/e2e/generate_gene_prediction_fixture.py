@@ -170,48 +170,42 @@ def generate_3utr_with_patterns(target_length: int = UTR3_SIZE) -> str:
 
 
 def generate_coding_sequence(target_length: int) -> str:
-    """Generate a coding sequence with START and STOP codons."""
-    # Ensure length is multiple of 3
-    cds_length = (target_length // 3) * 3
-    if cds_length < 6:  # Need at least START + STOP
-        cds_length = 6
+    """Generate a simple coding sequence with START and STOP codons."""
+    if target_length < 6:  # Need at least ATG + XXX + STOP
+        target_length = 6
     
     # Start with ATG
-    sequence = ["ATG"]
-    remaining_codons = (cds_length // 3) - 2  # -2 for START and STOP
+    sequence = "ATG"
     
-    # Generate random codons (avoiding stop codons)
-    valid_codons = []
-    for base1 in 'ATGC':
-        for base2 in 'ATGC':
-            for base3 in 'ATGC':
-                codon = base1 + base2 + base3
-                if codon not in ['TAA', 'TAG', 'TGA']:  # Not stop codons
-                    valid_codons.append(codon)
+    # Add random sequence in the middle  
+    middle_length = target_length - 6  # -3 for ATG, -3 for stop
+    if middle_length > 0:
+        middle_seq = ''.join(random.choices('ATGC', k=middle_length))
+        sequence += middle_seq
     
-    # Add random codons
-    for _ in range(remaining_codons):
-        sequence.append(random.choice(valid_codons))
-    
-    # End with stop codon
+    # End with a stop codon
     stop_codon = random.choice(['TAA', 'TAG', 'TGA'])
-    sequence.append(stop_codon)
+    sequence += stop_codon
     
-    return ''.join(sequence)
+    # DEBUG: Check if we generated valid START/STOP
+    if sequence[:3] != 'ATG':
+        print(f"⚠️  WARNING: generate_coding_sequence created invalid START: '{sequence[:3]}'")
+    if sequence[-3:] not in ['TAA', 'TAG', 'TGA']:
+        print(f"⚠️  WARNING: generate_coding_sequence created invalid STOP: '{sequence[-3:]}'")
+    
+    return sequence
 
 
-def create_synthetic_gene(gene_id: str, target_length: int) -> SyntheticGene:
+def create_synthetic_gene(gene_id: str, target_cds_length: int) -> SyntheticGene:
     """Create a synthetic gene with realistic UTR patterns for gene prediction."""
     
     # Calculate component lengths
     utr5_len = UTR5_SIZE
     utr3_len = UTR3_SIZE
-    cds_len = target_length - utr5_len - utr3_len
+    cds_len = target_cds_length  # target_length now refers to CDS only
     
     if cds_len < 6:  # Minimum for START + STOP
         cds_len = 6
-        # Adjust total length
-        target_length = utr5_len + cds_len + utr3_len
     
     # Generate sequences
     utr5_seq = generate_5utr_with_patterns(utr5_len)
@@ -226,10 +220,22 @@ def create_synthetic_gene(gene_id: str, target_length: int) -> SyntheticGene:
     utr5_end = utr5_len - 1
     start_codon_pos = utr5_len  # Position of ATG
     cds_start = utr5_len
-    cds_end = utr5_len + cds_len - 1
+    cds_end = utr5_len + cds_len - 1  # Inclusive end position
     stop_codon_pos = utr5_len + cds_len - 3  # Position of stop codon
     utr3_start = utr5_len + cds_len
     utr3_end = utr5_len + cds_len + utr3_len - 1
+    
+    # DEBUG: Check CDS extraction from full sequence
+    extracted_cds = full_sequence[cds_start:cds_end+1]
+    if extracted_cds != cds_seq:
+        print(f"⚠️  WARNING: {gene_id} CDS extraction mismatch!")
+        print(f"    Expected: '{cds_seq[:10]}...{cds_seq[-10:]}'")
+        print(f"    Extracted: '{extracted_cds[:10]}...{extracted_cds[-10:]}'")
+    
+    if cds_seq[:3] != 'ATG':
+        print(f"⚠️  WARNING: {gene_id} has invalid START: '{cds_seq[:3]}'")
+    if cds_seq[-3:] not in ['TAA', 'TAG', 'TGA']:
+        print(f"⚠️  WARNING: {gene_id} has invalid STOP: '{cds_seq[-3:]}'")
     
     return SyntheticGene(
         gene_id=gene_id,
@@ -251,58 +257,73 @@ def create_synthetic_gene(gene_id: str, target_length: int) -> SyntheticGene:
     )
 
 
-def create_synthetic_contig(contig_id: str, contig_length: int, 
+def create_synthetic_contig(contig_id: str, estimated_length: int, 
                           genes_per_contig: int) -> Tuple[str, List[SyntheticGene]]:
     """Create a synthetic contig with multiple genes for gene prediction."""
     
+    sequences = []
     genes = []
-    contig_sequence = ['N'] * contig_length
+    current_position = 0
     
-    # Generate genes with reasonable spacing
-    available_space = contig_length
-    gene_spacing = available_space // (genes_per_contig + 1)  # +1 for end spacing
+    # Start with intergenic spacer
+    spacer_length = random.randint(500, 1500)  # Random intergenic region
+    spacer_seq = generate_random_dna(spacer_length)
+    sequences.append(spacer_seq)
+    current_position += spacer_length
     
-    for i in range(genes_per_contig):
-        gene_id = f"{contig_id}_gene_{i+1:03d}"
+    gene_count = 0
+    while current_position < estimated_length and gene_count < genes_per_contig:
+        gene_count += 1
+        gene_id = f"{contig_id}_gene_{gene_count:03d}"
         
-        # Target gene length (~1kb including UTRs, ranging 800-1200bp)
-        target_gene_length = random.randint(800, 1200)
+        # Create gene with random CDS length
+        target_cds_length = random.randint(800, 1200)
+        gene = create_synthetic_gene(gene_id, target_cds_length)
         
-        # Create gene
-        gene = create_synthetic_gene(gene_id, target_gene_length)
+        # Set gene coordinates
+        gene = gene._replace(
+            start_pos=current_position,
+            end_pos=current_position + len(gene.full_sequence) - 1
+        )
         
-        # Position gene in contig
-        start_pos = (i + 1) * gene_spacing - len(gene.full_sequence) // 2
-        start_pos = max(0, min(start_pos, contig_length - len(gene.full_sequence)))
-        end_pos = start_pos + len(gene.full_sequence) - 1
+        # DEBUG: Check gene placement in sequences array
+        print(f"DEBUG: {gene_id} placement:")
+        print(f"  current_position: {current_position}")
+        print(f"  gene.cds_start: {gene.cds_start} (relative)")
+        print(f"  gene.cds_end: {gene.cds_end} (relative)")
+        print(f"  gene.cds_seq: '{gene.cds_seq[:10]}...{gene.cds_seq[-10:]}'")
         
-        # Check for overlap with existing genes
-        overlaps = False
-        for existing_gene in genes:
-            if not (end_pos < existing_gene.start_pos or start_pos > existing_gene.end_pos):
-                overlaps = True
-                break
+        # Add gene sequence
+        sequences.append(gene.full_sequence)
+        genes.append(gene)
+        current_position += len(gene.full_sequence)
         
-        if not overlaps and end_pos < contig_length:
-            # Update gene coordinates
-            gene = gene._replace(start_pos=start_pos, end_pos=end_pos)
-            
-            # Insert gene sequence into contig
-            for j, base in enumerate(gene.full_sequence):
-                if start_pos + j < contig_length:
-                    contig_sequence[start_pos + j] = base
-            
-            genes.append(gene)
+        # DEBUG: Build temp contig and check coordinates
+        temp_contig = ''.join(sequences)
+        cds_global_start = gene.start_pos + gene.cds_start
+        cds_global_end = gene.start_pos + gene.cds_end
+        
+        if cds_global_end < len(temp_contig):
+            extracted_cds = temp_contig[cds_global_start:cds_global_end+1]
+            print(f"  temp_contig length: {len(temp_contig)}")
+            print(f"  CDS global coords: {cds_global_start}-{cds_global_end}")
+            print(f"  extracted CDS: '{extracted_cds[:10]}...{extracted_cds[-10:]}'")
+            print(f"  CDS match: {gene.cds_seq == extracted_cds}")
+            if gene.cds_seq != extracted_cds:
+                print(f"  ❌ CDS MISMATCH in sequences array!")
+            print()
+        
+        # Add spacer after gene (unless we're at the end)
+        if current_position < estimated_length:
+            spacer_length = random.randint(500, 1500)
+            spacer_seq = generate_random_dna(spacer_length)
+            sequences.append(spacer_seq)
+            current_position += spacer_length
     
-    # Fill remaining N's with random sequence
-    final_sequence = []
-    for base in contig_sequence:
-        if base == 'N':
-            final_sequence.append(random.choice(['A', 'T', 'G', 'C']))
-        else:
-            final_sequence.append(base)
+    # Combine all sequences
+    final_sequence = ''.join(sequences)
     
-    return ''.join(final_sequence), genes
+    return final_sequence, genes
 
 
 def generate_gene_prediction_fixture(output_dir: Path, num_contigs: int = 5, 
@@ -316,8 +337,8 @@ def generate_gene_prediction_fixture(output_dir: Path, num_contigs: int = 5,
     gff_file = output_dir / "gene_prediction_test.gff"
     
     genes_per_contig = total_genes // num_contigs
-    # Calculate contig length based on gene size: ~1kb per gene + 1kb intergenic spacing
-    contig_length = max(25000, genes_per_contig * 2000)  # At least 25kb, or 2kb per gene
+    # Calculate contig length: each gene ~2kb + spacers ~1kb = 3kb per gene
+    contig_length = max(30000, genes_per_contig * 3000)  # At least 30kb, or 3kb per gene
     
     all_genes = []
     
@@ -344,6 +365,22 @@ def generate_gene_prediction_fixture(output_dir: Path, num_contigs: int = 5,
                 )
                 all_genes.append((contig_id, gene_with_contig))
     
+    # Read back the FASTA to check CDS sequences in GFF writing
+    contig_sequences = {}
+    with open(fasta_file, 'r') as f:
+        current_contig = None
+        current_seq = []
+        for line in f:
+            if line.startswith('>'):
+                if current_contig:
+                    contig_sequences[current_contig] = ''.join(current_seq).upper()
+                current_contig = line[1:].strip()
+                current_seq = []
+            else:
+                current_seq.append(line.strip())
+        if current_contig:
+            contig_sequences[current_contig] = ''.join(current_seq).upper()
+    
     # Write GFF file
     with open(gff_file, 'w') as f:
         f.write("##gff-version 3\n")
@@ -359,6 +396,31 @@ def generate_gene_prediction_fixture(output_dir: Path, num_contigs: int = 5,
             # CDS feature (just the coding part, not UTRs)
             cds_start = gene.start_pos + gene.cds_start + 1
             cds_end = gene.start_pos + gene.cds_end + 1
+            
+            # DEBUG: Extract actual CDS using GFF coordinates and compare
+            if contig_id in contig_sequences:
+                contig_seq = contig_sequences[contig_id]
+                # Convert GFF coordinates to 0-based for extraction
+                extract_start = cds_start - 1
+                extract_end = cds_end
+                
+                if extract_end <= len(contig_seq):
+                    extracted_cds = contig_seq[extract_start:extract_end]
+                    
+                    # Compare stored vs extracted
+                    if gene.cds_seq != extracted_cds:
+                        print(f"⚠️  WARNING: {gene.gene_id} CDS MISMATCH!")
+                        print(f"    Stored:    '{gene.cds_seq[:10]}...{gene.cds_seq[-10:]}' ({len(gene.cds_seq)}bp)")
+                        print(f"    Extracted: '{extracted_cds[:10]}...{extracted_cds[-10:]}' ({len(extracted_cds)}bp)")
+                    
+                    # Check extracted sequence START/STOP
+                    if extracted_cds[:3] != 'ATG':
+                        print(f"⚠️  WARNING: {gene.gene_id} extracted CDS has invalid START: '{extracted_cds[:3]}'")
+                    if extracted_cds[-3:] not in ['TAA', 'TAG', 'TGA']:
+                        print(f"⚠️  WARNING: {gene.gene_id} extracted CDS has invalid STOP: '{extracted_cds[-3:]}'")
+                else:
+                    print(f"⚠️  WARNING: {gene.gene_id} coordinates {cds_start}-{cds_end} exceed contig length {len(contig_seq)}")
+            
             f.write(f"{contig_id}\tsynthetic\tCDS\t{cds_start}\t{cds_end}\t.\t+\t0\t"
                    f"ID={gene.gene_id}_CDS;Parent={gene.gene_id}\n")
     

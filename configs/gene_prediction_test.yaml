@@ -37,8 +37,3 @@ logging:
 # Model output configuration
 output:
   num_gene_boundary_classes: 6  # INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
-
-# Loss configuration
-loss:
-  focus_on_gene_regions: true   # Focus loss on START, GENE_BODY, STOP
-  utr_weight_reduction: 0.1     # Reduce weight of UTR and INTERGENIC classes

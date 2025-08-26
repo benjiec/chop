@@ -20,56 +20,16 @@ class GenePredictionTargetGenerator:
     def __init__(self):
         self.gene_boundary_classes = GenePredictionClass
     
-    def _find_start_stop_codons(self, sequence: str, gene_start: int, gene_end: int, 
-                               strand: str) -> Tuple[Optional[int], Optional[int]]:
-        """Find START and STOP codon positions within a gene."""
-        gene_seq = sequence[gene_start:gene_end+1]
-        
-        if strand == '-':
-            # For reverse strand, complement and reverse
-            complement = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 'N': 'N'}
-            gene_seq = ''.join(complement.get(base, 'N') for base in gene_seq[::-1])
-        
-        start_codon_pos = None
-        stop_codon_pos = None
-        
-        # Find START codon (ATG)
-        for i in range(len(gene_seq) - 2):
-            if gene_seq[i:i+3] == 'ATG':
-                if strand == '+':
-                    start_codon_pos = gene_start + i
-                else:
-                    start_codon_pos = gene_end - i - 2
-                break
-        
-        # Find STOP codon (TAA, TAG, TGA) - search from START if found
-        start_search = 0
-        if start_codon_pos is not None:
-            if strand == '+':
-                start_search = start_codon_pos - gene_start + 3  # Start after ATG
-            else:
-                start_search = gene_end - start_codon_pos + 3
-        
-        stop_codons = ['TAA', 'TAG', 'TGA']
-        for i in range(start_search, len(gene_seq) - 2, 3):  # Check in-frame
-            codon = gene_seq[i:i+3]
-            if codon in stop_codons:
-                if strand == '+':
-                    stop_codon_pos = gene_start + i
-                else:
-                    stop_codon_pos = gene_end - i - 2
-                break
-        
-        return start_codon_pos, stop_codon_pos
-    
-    def generate_targets(self, sequence: str, genes_df: pd.DataFrame) -> np.ndarray:
+
+    def generate_targets(self, sequence: str, genes_list: List[Dict]) -> np.ndarray:
         """
         Generate targets for gene boundary detection.
         
         Args:
             sequence: DNA sequence string
-            genes_df: DataFrame with columns ['sequence_id', 'gene_id', 'gene_start', 
-                     'gene_end', 'strand'] where coordinates are 0-based
+            genes_list: List of gene dictionaries with keys:
+                       ['sequence_id', 'gene_id', 'start', 'end', 'strand', 'exons']
+                       where 'exons' is a list of {'start': int, 'end': int} dicts
         
         Returns:
             targets: Array of shape (seq_len,) with GenePredictionClass class indices
@@ -77,88 +37,94 @@ class GenePredictionTargetGenerator:
         seq_len = len(sequence)
         targets = np.full(seq_len, self.gene_boundary_classes.INTERGENIC, dtype=np.int32)
         
-        for _, gene in genes_df.iterrows():
-            gene_start = int(gene['gene_start'])
-            gene_end = int(gene['gene_end'])
+        for gene in genes_list:
+            gene_start = int(gene['start'])
+            gene_end = int(gene['end'])
             strand = gene['strand']
+            exons = gene.get('exons', [])
             
-            # Skip genes that are out of bounds
-            if gene_start >= seq_len or gene_end >= seq_len or gene_start < 0:
+            # Skip genes that are out of bounds or have no exons
+            if gene_start >= seq_len or gene_end >= seq_len or gene_start < 0 or not exons:
                 continue
             
-            # Find START and STOP codons
-            start_codon_pos, stop_codon_pos = self._find_start_stop_codons(
-                sequence, gene_start, gene_end, strand
-            )
+            # Sort exons by start position
+            sorted_exons = sorted(exons, key=lambda x: x['start'])
             
-            if start_codon_pos is None or stop_codon_pos is None:
-                # Skip genes without proper START/STOP codons
-                continue
-            
-            # Determine UTR boundaries based on fixed sizes
             if strand == '+':
-                # 5' UTR: gene_start to start_codon_pos
+                # Forward strand: first exon contains START, last exon contains STOP
+                first_exon = sorted_exons[0]
+                last_exon = sorted_exons[-1]
+                
+                # 5' UTR: gene_start to first_exon_start
                 utr5_start = gene_start
-                utr5_end = start_codon_pos - 1
+                utr5_end = first_exon['start'] - 1
                 
-                # CDS: start_codon_pos to stop_codon_pos + 2 (inclusive of stop)
-                cds_start = start_codon_pos
-                cds_end = stop_codon_pos + 2
+                # START codon: first 3 bp of first exon
+                start_codon_start = first_exon['start']
+                start_codon_end = min(first_exon['start'] + 2, first_exon['end'] - 1, seq_len - 1)
                 
-                # 3' UTR: after stop codon to gene_end
-                utr3_start = cds_end + 1
+                # STOP codon: last 3 bp of last exon
+                stop_codon_start = max(last_exon['end'] - 3, last_exon['start'])
+                stop_codon_end = last_exon['end'] - 1
+                
+                # 3' UTR: last_exon_end to gene_end
+                utr3_start = last_exon['end']
                 utr3_end = gene_end
                 
-                # START codon positions (3 bp)
-                start_positions = list(range(start_codon_pos, 
-                                          min(start_codon_pos + 3, seq_len)))
-                
-                # STOP codon positions (3 bp)
-                stop_positions = list(range(stop_codon_pos, 
-                                         min(stop_codon_pos + 3, seq_len)))
-                
             else:  # strand == '-'
-                # For reverse strand, coordinates are still in forward direction
-                # but biological 5'/3' are flipped
+                # Reverse strand: biologically, first exon (5' end) is the last in coordinate order
+                # and last exon (3' end) is the first in coordinate order
+                first_exon = sorted_exons[-1]  # Last by coordinate = first biologically
+                last_exon = sorted_exons[0]   # First by coordinate = last biologically
+                
+                # 3' UTR: gene_start to first biological exon (last by coordinate)
                 utr3_start = gene_start
-                utr3_end = stop_codon_pos - 1
+                utr3_end = last_exon['start'] - 1
                 
-                cds_start = stop_codon_pos
-                cds_end = start_codon_pos + 2
+                # START codon: first 3 bp of first biological exon (last by coordinate)
+                start_codon_start = max(first_exon['end'] - 3, first_exon['start'])
+                start_codon_end = first_exon['end'] - 1
                 
-                utr5_start = cds_end + 1
+                # STOP codon: last 3 bp of last biological exon (first by coordinate)
+                stop_codon_start = last_exon['start']
+                stop_codon_end = min(last_exon['start'] + 2, last_exon['end'] - 1, seq_len - 1)
+                
+                # 5' UTR: last biological exon to gene_end
+                utr5_start = first_exon['end']
                 utr5_end = gene_end
-                
-                # For reverse strand, START and STOP are biologically reversed
-                start_positions = list(range(start_codon_pos, 
-                                          min(start_codon_pos + 3, seq_len)))
-                stop_positions = list(range(stop_codon_pos, 
-                                         min(stop_codon_pos + 3, seq_len)))
             
             # Assign targets (ensure within bounds)
             # 5' UTR
-            for pos in range(max(0, utr5_start), min(seq_len, utr5_end + 1)):
-                targets[pos] = self.gene_boundary_classes.UTR5
-            
-            # START codon
-            for pos in start_positions:
-                if 0 <= pos < seq_len:
-                    targets[pos] = self.gene_boundary_classes.START
-            
-            # Gene body (CDS excluding START and STOP)
-            gene_body_start = max(0, cds_start + 3)  # After START
-            gene_body_end = min(seq_len, cds_end - 2)  # Before STOP
-            for pos in range(gene_body_start, gene_body_end):
-                targets[pos] = self.gene_boundary_classes.GENE_BODY
-            
-            # STOP codon
-            for pos in stop_positions:
-                if 0 <= pos < seq_len:
-                    targets[pos] = self.gene_boundary_classes.STOP
+            if utr5_start <= utr5_end:
+                for pos in range(max(0, utr5_start), min(seq_len, utr5_end + 1)):
+                    targets[pos] = self.gene_boundary_classes.UTR5
             
             # 3' UTR
-            for pos in range(max(0, utr3_start), min(seq_len, utr3_end + 1)):
-                targets[pos] = self.gene_boundary_classes.UTR3
+            if utr3_start <= utr3_end:
+                for pos in range(max(0, utr3_start), min(seq_len, utr3_end + 1)):
+                    targets[pos] = self.gene_boundary_classes.UTR3
+            
+            # Process all exons
+            for exon in sorted_exons:
+                exon_start = max(0, exon['start'])
+                exon_end = min(seq_len, exon['end'])
+                
+                if exon_start >= exon_end:
+                    continue
+                
+                # Mark all exon positions as GENE_BODY initially
+                for pos in range(exon_start, exon_end):
+                    targets[pos] = self.gene_boundary_classes.GENE_BODY
+            
+            # Override with START codon positions
+            if start_codon_start >= 0 and start_codon_end < seq_len:
+                for pos in range(start_codon_start, min(start_codon_end + 1, seq_len)):
+                    targets[pos] = self.gene_boundary_classes.START
+            
+            # Override with STOP codon positions
+            if stop_codon_start >= 0 and stop_codon_end < seq_len:
+                for pos in range(stop_codon_start, min(stop_codon_end + 1, seq_len)):
+                    targets[pos] = self.gene_boundary_classes.STOP
         
         return targets
     
@@ -167,19 +133,10 @@ class GenePredictionTargetGenerator:
         unique, counts = np.unique(targets, return_counts=True)
         total = len(targets)
         
-        # Calculate inverse frequency weights
+        # Calculate inverse frequency weights - all classes treated equally
         weights = {}
         for class_idx, count in zip(unique, counts):
             weights[class_idx] = total / (len(unique) * count)
-        
-        # Focus on START, GENE_BODY, STOP as requested
-        # Reduce weight of UTRs and INTERGENIC
-        if self.gene_boundary_classes.UTR5 in weights:
-            weights[self.gene_boundary_classes.UTR5] *= 0.1
-        if self.gene_boundary_classes.UTR3 in weights:
-            weights[self.gene_boundary_classes.UTR3] *= 0.1
-        if self.gene_boundary_classes.INTERGENIC in weights:
-            weights[self.gene_boundary_classes.INTERGENIC] *= 0.1
         
         return weights
 

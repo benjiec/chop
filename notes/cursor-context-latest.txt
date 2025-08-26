@@ -7,6 +7,10 @@ question to me should be "would you like me to propose a solution", rather than
 "would you like me to implement". What would you implement w/o an agreed upon
 approach?
 
+Don't leave comments that only pertain to an action you took, e.g. to undo
+something. Comments should describe the current state of the code or
+configuration.
+
 
 **User**
 
@@ -57,7 +61,6 @@ Perfect! Let me propose a solution starting with the constants and then the enha
 
 3. **Stage 1 Target Generator** (`utils/gene_prediction_processor.py`):
    - **Position-wise classification**: Each nucleotide gets one of 6 classes
-   - **START/GENE_BODY/STOP focus**: Reduced weights for UTRs and intergenic
    - **Codon-aware**: Properly identifies 3bp START/STOP regions
    - **Strand handling**: Works with both forward and reverse genes
 
