@@ -11,6 +11,10 @@ Don't leave comments that only pertain to an action you took, e.g. to undo
 something. Comments should describe the current state of the code or
 configuration.
 
+Because a lot of steps may be compute intensive we want to reuse results, so
+don't use temp directories that will get cleaned up automatically. Put them in
+directories we can access later.
+
 
 **User**
 
@@ -100,27 +104,8 @@ file. Would that make things faster?
 
 **Cursor**
 
-What we accomplished:
-✅ Complete Gene Prediction Pipeline: Built end-to-end training and inference for gene boundary detection
-✅ New Prediction Script: Created predict_gene_boundaries.py specifically for the GenePredictionModel
-✅ Persistent Test Infrastructure: Models and fixtures now save to tests/e2e/ directories instead of temp files
-✅ Working Predictions: The model successfully processes sequences and makes gene boundary predictions
+Can run the full end to end test using this
 
-Key Results:
-Training: 2 epochs, validation loss improved from 0.864 → 0.834
-Model Architecture: 6-class gene boundary prediction (INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3)
-Inference: Successfully processed 10 contigs using sliding windows (2500bp windows, 1250bp stride)
-Predictions: Found 34,764 potential gene regions with average confidence of 0.735
-
-Technical Improvements:
-Faster Testing: No need to retrain models - they're saved persistently
-Sliding Windows: Handles long sequences efficiently with overlapping windows
-Device Support: Auto-detects and uses MPS (Apple Silicon GPU acceleration)
-Clean Architecture: Separate model for gene prediction vs. original exon/intron model
-
-Next Steps Available:
-Fine-tune the prediction threshold and post-processing
-Add visualization of gene boundary predictions
-Implement the second-pass model for exon/intron prediction within genes
-Evaluate prediction accuracy against known gene annotations
-The gene prediction foundation is solid and ready for the next phase! 🚀
+```
+cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/e2e/test_end_to_end_workflow.py --quick
+```
