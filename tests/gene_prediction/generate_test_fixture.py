@@ -13,6 +13,11 @@ from typing import List, Tuple, Dict
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+from realistic_utr_sequences import (
+    insert_5utr_elements_near_start,
+    insert_3utr_elements_near_stop, 
+    insert_regulatory_elements_in_intergenic
+)
 
 
 def generate_random_dna(length: int) -> str:
@@ -230,6 +235,37 @@ def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[S
         for pos, base in gene.genomic_sequence.items():
             if 0 <= pos < len(sequence):
                 sequence[pos] = base
+    
+    # Insert realistic UTR elements near gene boundaries
+    for gene in genes:
+        if gene.exons:
+            # Find START and STOP positions
+            first_exon_start = gene.exons[0][0]
+            last_exon_end = gene.exons[-1][1]
+            
+            # Insert 5' UTR elements upstream of START codon
+            insert_5utr_elements_near_start(sequence, first_exon_start)
+            
+            # Insert 3' UTR elements downstream of STOP codon  
+            insert_3utr_elements_near_stop(sequence, last_exon_end)
+    
+    # Insert regulatory elements in intergenic spacers
+    prev_gene_end = 0
+    for i, gene in enumerate(genes):
+        if i > 0:  # Not the first gene
+            # Insert elements in intergenic space between previous gene and this gene
+            intergenic_start = prev_gene_end
+            intergenic_end = gene.start
+            insert_regulatory_elements_in_intergenic(sequence, intergenic_start, intergenic_end)
+        prev_gene_end = gene.end
+    
+    # Also insert elements in initial and final spacers
+    if genes:
+        # Initial spacer (before first gene)
+        insert_regulatory_elements_in_intergenic(sequence, 0, genes[0].start)
+        
+        # Final spacer (after last gene)
+        insert_regulatory_elements_in_intergenic(sequence, genes[-1].end, total_length)
     
     return ''.join(sequence), genes
 
