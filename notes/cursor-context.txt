@@ -62,6 +62,13 @@ sequences with genes that include 5' UTR, START, CDS sequence, STOP, and 3'
 UTR, using common 5' and 3' UTRs (e.g. Kozak, TATA, AAUAAA poly A signals,
 etc).
 
+From GFF and annotations - we are marking 500 bps upstream of the START codon
+(first codon in the first CDS of a gene) as 5' UTR, and 500 bps downstream of
+the STOP codon (last codon in the last CDS of a gene) as 3' UTR. We are
+essentially ignoring the gene annotations in the GFF, and just inferring UTRs,
+START, and STOP from the CDS/exons annotations. This is because gene
+annotations in GFFs may contain UTRs or may not and is not consistent.
+
 Let's not worry about overlapping genes. In the future, we can look at
 predictions with less scores and use them to put together overlapping genes
 (and alternative splicing).
