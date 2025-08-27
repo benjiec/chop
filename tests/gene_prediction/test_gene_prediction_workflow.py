@@ -76,7 +76,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
     def test_step_1_generate_synthetic_data(self, num_contigs=3):
         """Step 1: Generate synthetic genomic data."""
         print(f"Step 1: Generating synthetic test data ({num_contigs} contigs)...")
-        
+       
         # Generate test fixture in persistent fixtures directory
         fasta_file, gff_file = generate_test_fixture(
             output_dir=str(self.fixtures_dir),
@@ -91,23 +91,116 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         sequences = list(SeqIO.parse(fasta_file, "fasta"))
         self.assertEqual(len(sequences), num_contigs, f"Should have {num_contigs} contigs")
         
+        # Load sequences into a dictionary for validation
+        seq_dict = {seq.id: str(seq.seq) for seq in sequences}
+        
         for seq in sequences:
             # Contig size is now determined by genes + spacers, so just verify reasonable size
             self.assertGreaterEqual(len(seq.seq), 10000, "Contig should be at least 10kb")
             self.assertLessEqual(len(seq.seq), 200000, "Contig should be reasonable size (< 200kb)")
         
+        # Parse GFF and validate gene structure
+        gene_annotations = self._parse_gff_annotations(gff_file)
+        
         # Verify GFF has content
-        with open(gff_file) as f:
-            lines = [line for line in f if not line.startswith('#') and line.strip()]
-            self.assertGreater(len(lines), 0, "GFF should have annotations")
+        self.assertGreater(len(gene_annotations), 0, "GFF should have annotations")
+        
+        # Comprehensive validation of gene structure
+        total_genes = 0
+        total_cds = 0
+        
+        for seq_id, annotations in gene_annotations.items():
+            if seq_id not in seq_dict:
+                continue
+                
+            sequence = seq_dict[seq_id]
+            genes = [ann for ann in annotations if ann['type'] == 'gene']
+            cds_features = [ann for ann in annotations if ann['type'] == 'CDS']
+            
+            total_genes += len(genes)
+            total_cds += len(cds_features)
+            
+            # Validate each gene
+            for gene in genes:
+                gene_cds = [cds for cds in cds_features 
+                           if gene['start'] <= cds['start'] < cds['end'] <= gene['end']]
+                
+                if not gene_cds:
+                    continue  # Skip genes without CDS
+                
+                # Sort CDS by start position
+                gene_cds.sort(key=lambda x: x['start'])
+                
+                # Validate non-overlapping exons
+                for i in range(len(gene_cds) - 1):
+                    current_end = gene_cds[i]['end']
+                    next_start = gene_cds[i + 1]['start']
+                    self.assertLess(current_end, next_start, 
+                                  f"Overlapping CDS in gene {gene.get('attributes', {}).get('ID', 'unknown')}: "
+                                  f"CDS {i} ends at {current_end}, CDS {i+1} starts at {next_start}")
+                
+                # Validate START codon (first 3 bp of first CDS)
+                first_cds = gene_cds[0]
+                start_codon = sequence[first_cds['start']:first_cds['start'] + 3]
+                self.assertEqual(start_codon, 'ATG', 
+                               f"First CDS should start with ATG, got '{start_codon}' "
+                               f"in gene {gene.get('attributes', {}).get('ID', 'unknown')}")
+                
+                # Validate STOP codon (last 3 bp of last CDS)
+                last_cds = gene_cds[-1]
+                stop_codon = sequence[last_cds['end'] - 3:last_cds['end']]
+                valid_stop_codons = {'TAA', 'TAG', 'TGA'}
+                self.assertIn(stop_codon, valid_stop_codons,
+                             f"Last CDS should end with stop codon (TAA/TAG/TGA), got '{stop_codon}' "
+                             f"in gene {gene.get('attributes', {}).get('ID', 'unknown')}")
         
         print(f"  ✓ Generated {len(sequences)} contigs")
-        print(f"  ✓ Generated {len(lines)} GFF annotations")
+        print(f"  ✓ Generated {total_genes} genes with {total_cds} CDS features")
+        print(f"  ✓ Validated START/STOP codons and non-overlapping exons")
         
         # Store file paths for next steps
         self.__class__.original_fasta = fasta_file
         self.__class__.original_gff = gff_file
     
+    def _parse_gff_annotations(self, gff_file: str) -> Dict[str, List[Dict]]:
+        """Parse GFF file into structured annotation data."""
+        annotations = defaultdict(list)
+        
+        with open(gff_file, 'r') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                    
+                parts = line.strip().split('\t')
+                if len(parts) < 9:
+                    continue
+                
+                seq_id = parts[0]
+                feature_type = parts[2]
+                start = int(parts[3]) - 1  # Convert to 0-based
+                end = int(parts[4])        # Keep as 1-based exclusive
+                strand = parts[6]
+                attributes_str = parts[8]
+                
+                # Parse attributes
+                attributes = {}
+                for attr in attributes_str.split(';'):
+                    if '=' in attr:
+                        key, value = attr.split('=', 1)
+                        attributes[key] = value
+                
+                annotation = {
+                    'type': feature_type,
+                    'start': start,
+                    'end': end,
+                    'strand': strand,
+                    'attributes': attributes
+                }
+                
+                annotations[seq_id].append(annotation)
+        
+        return dict(annotations)
+
     def test_step_2_preprocess_data(self):
         """Step 2: Run preprocessing pipeline."""
         print("Step 2: Running preprocessing pipeline...")
@@ -148,17 +241,90 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         contexts = list(SeqIO.parse(processed_fasta, "fasta"))
         self.assertGreater(len(contexts), 0, "Should have gene contexts")
         
-        # Check TSV format
-        with open(processed_tsv) as f:
-            header = f.readline().strip()
-            expected_cols = ['sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand']
-            self.assertEqual(header.split('\t'), expected_cols, "TSV header incorrect")
+        # Load original data for comparison
+        original_sequences = {seq.id: str(seq.seq) for seq in SeqIO.parse(self.__class__.original_fasta, "fasta")}
+        original_annotations = self._parse_gff_annotations(self.__class__.original_gff)
+        
+        # Check TSV format and load data
+        import pandas as pd
+        annotations_df = pd.read_csv(processed_tsv, sep='\t')
+        expected_cols = ['sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand']
+        self.assertEqual(list(annotations_df.columns), expected_cols, "TSV header incorrect")
+        self.assertGreater(len(annotations_df), 0, "TSV should have data")
+        
+        # Validate gene counts match between original and processed
+        original_gene_count = 0
+        for seq_id, annotations in original_annotations.items():
+            original_gene_count += len([ann for ann in annotations if ann['type'] == 'gene'])
+        
+        processed_gene_count = annotations_df['gene_id'].nunique()
+        self.assertEqual(processed_gene_count, original_gene_count, 
+                        f"Gene count mismatch: original {original_gene_count}, processed {processed_gene_count}")
+        
+        # Validate CDS/exon counts match
+        original_cds_count = 0
+        for seq_id, annotations in original_annotations.items():
+            original_cds_count += len([ann for ann in annotations if ann['type'] == 'CDS'])
+        
+        processed_cds_count = len(annotations_df)
+        self.assertEqual(processed_cds_count, original_cds_count,
+                        f"CDS count mismatch: original {original_cds_count}, processed {processed_cds_count}")
+        
+        # Validate coordinate translation and sequence verification
+        contexts_dict = {seq.id: str(seq.seq) for seq in contexts}
+        validation_count = 0
+        
+        for _, row in annotations_df.iterrows():
+            gene_id = row['gene_id']
+            context_seq = contexts_dict.get(gene_id)
             
-            data_lines = [line for line in f if line.strip()]
-            self.assertGreater(len(data_lines), 0, "TSV should have data")
+            if context_seq is None:
+                continue
+                
+            # Find original sequence and coordinates
+            orig_seq_id = gene_id.split('_gene_')[0]  # Extract original sequence ID
+            if orig_seq_id not in original_sequences:
+                continue
+                
+            original_seq = original_sequences[orig_seq_id]
+            
+            # Get original CDS coordinates (1-based from GFF)
+            orig_exon_start = None
+            orig_exon_end = None
+            
+            for annotation in original_annotations.get(orig_seq_id, []):
+                if (annotation['type'] == 'CDS' and 
+                    annotation['start'] + 1 == row['exon_start'] and  # Convert to 1-based
+                    annotation['end'] == row['exon_end']):
+                    orig_exon_start = annotation['start']  # 0-based
+                    orig_exon_end = annotation['end']      # 1-based exclusive
+                    break
+            
+            if orig_exon_start is None:
+                continue
+                
+            # Extract sequences and compare
+            original_exon_seq = original_seq[orig_exon_start:orig_exon_end]
+            
+            # Convert processed coordinates to 0-based for extraction
+            processed_exon_start = row['exon_start'] - 1  # Convert to 0-based
+            processed_exon_end = row['exon_end']           # Keep as 1-based exclusive
+            processed_exon_seq = context_seq[processed_exon_start:processed_exon_end]
+            
+            self.assertEqual(original_exon_seq, processed_exon_seq,
+                           f"Sequence mismatch for {gene_id} exon {row['exon_start']}-{row['exon_end']}: "
+                           f"original='{original_exon_seq}', processed='{processed_exon_seq}'")
+            
+            validation_count += 1
+            
+            # Limit validation for performance (check first 20 exons)
+            if validation_count >= 20:
+                break
         
         print(f"  ✓ Generated {len(contexts)} gene contexts")
-        print(f"  ✓ Generated {len(data_lines)} annotation rows")
+        print(f"  ✓ Generated {len(annotations_df)} annotation rows")
+        print(f"  ✓ Validated {original_gene_count} genes and {original_cds_count} CDS features")
+        print(f"  ✓ Verified coordinate translation and sequences for {validation_count} exons")
         
         # Store paths for next steps
         self.__class__.processed_fasta = str(processed_fasta)
@@ -168,9 +334,9 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         """Get the standard config path for both modes."""
         return str(project_root / "configs" / "gene_prediction_test.yaml")
     
-    def test_step_4_train_model(self):
-        """Step 4: Train model using gene prediction training script."""
-        print("Step 4: Training model...")
+    def test_step_3_train_model(self):
+        """Step 3: Train model using gene prediction training script."""
+        print("Step 3: Training model...")
         
         # Ensure step 2 completed (we need preprocessed TSV and gene context FASTA)
         self.assertTrue(hasattr(self.__class__, 'processed_fasta'), "Step 2 must complete first")
@@ -241,12 +407,12 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         self.__class__.trained_model = str(model_path)
         self.__class__.models_dir = str(models_dir)
     
-    def test_step_5_run_inference(self):
-        """Step 5: Run inference on original sequences."""
-        print("Step 5: Running inference...")
+    def test_step_4_run_inference(self):
+        """Step 4: Run inference on original sequences."""
+        print("Step 4: Running inference...")
         
-        # Ensure step 4 completed
-        self.assertTrue(hasattr(self.__class__, 'trained_model'), "Step 4 must complete first")
+        # Ensure step 3 completed
+        self.assertTrue(hasattr(self.__class__, 'trained_model'), "Step 3 must complete first")
         
         # Use persistent results directory
         results_dir = self.results_dir
@@ -282,12 +448,12 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         # Store predictions path
         self.__class__.predictions_file = str(predictions_file)
     
-    def test_step_6_validate_predictions(self):
-        """Step 6: Validate predictions with sensitivity, specificity, precision, recall."""
-        print("Step 6: Analyzing predictions with comprehensive metrics...")
+    def test_step_5_validate_predictions(self):
+        """Step 5: Validate predictions with sensitivity, specificity, precision, recall."""
+        print("Step 5: Analyzing predictions with comprehensive metrics...")
         
-        # Ensure step 5 completed
-        self.assertTrue(hasattr(self.__class__, 'predictions_file'), "Step 5 must complete first")
+        # Ensure step 4 completed
+        self.assertTrue(hasattr(self.__class__, 'predictions_file'), "Step 4 must complete first")
         
         # Load predictions and ground truth
         try:
@@ -519,36 +685,41 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         
         return true_array
     
-    def test_complete_workflow(self):
-        """Run the complete end-to-end workflow."""
-        print("\n" + "="*60)
-        print("RUNNING COMPLETE END-TO-END WORKFLOW TEST")
-        print("="*60)
-        
-        # Run all steps in sequence - full mode uses 5x more contigs (15 instead of 3)
-        self.test_step_1_generate_synthetic_data(num_contigs=15)  # 5x more data
-        self.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
-        self.test_step_4_train_model()      # Train on TSV+contexts
-        self.test_step_5_run_inference()
-        self.test_step_6_validate_predictions()
-        
-        print("\n" + "="*60)
-        print("END-TO-END WORKFLOW TEST COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        print("\nWorkflow Summary:")
-        print(f"  • Run ID: {self.__class__.run_id}")
-        print(f"  • Test run directory: {self.test_dir}")
-        print(f"  • Persistent fixtures: {self.fixtures_dir}")
-        print(f"  • Processed data: {self.processed_dir}")
-        print(f"  • Original data: {self.__class__.original_fasta}")
-        print(f"  • Config used: {self._get_config_path()}")
-        print(f"  • Trained model: {self.__class__.trained_model}")
-        print(f"  • Model directory: {self.models_dir}")
-        print(f"  • Predictions: {self.__class__.predictions_file}")
-        if hasattr(self.__class__, 'evaluation_metrics'):
-            print(f"  • Evaluation metrics: {self.models_dir / 'evaluation_metrics.json'}")
-        print(f"\n🎉 All components of the gene prediction pipeline are working correctly!")
-        print(f"📁 All artifacts are persisted for run {self.__class__.run_id} - reusable for debugging and continuation!")
+
+def run_full_workflow():
+    """Run the complete end-to-end workflow with larger scale."""
+    test = GenePredictionWorkflowTest()
+    test.setUpClass()
+    test.setUp()
+    
+    print("\n" + "="*60)
+    print("RUNNING COMPLETE END-TO-END WORKFLOW")
+    print("="*60)
+    
+    # Run all steps in sequence - full mode uses 5x more contigs (15 instead of 3)
+    test.test_step_1_generate_synthetic_data(num_contigs=15)  # 5x more data
+    test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
+    test.test_step_3_train_model()      # Train on TSV+contexts
+    test.test_step_4_run_inference()
+    test.test_step_5_validate_predictions()
+    
+    print("\n" + "="*60)
+    print("END-TO-END WORKFLOW COMPLETED SUCCESSFULLY!")
+    print("="*60)
+    print("\nWorkflow Summary:")
+    print(f"  • Run ID: {test.__class__.run_id}")
+    print(f"  • Test run directory: {test.test_dir}")
+    print(f"  • Persistent fixtures: {test.fixtures_dir}")
+    print(f"  • Processed data: {test.processed_dir}")
+    print(f"  • Original data: {test.__class__.original_fasta}")
+    print(f"  • Config used: {test._get_config_path()}")
+    print(f"  • Trained model: {test.__class__.trained_model}")
+    print(f"  • Model directory: {test.models_dir}")
+    print(f"  • Predictions: {test.__class__.predictions_file}")
+    if hasattr(test.__class__, 'evaluation_metrics'):
+        print(f"  • Evaluation metrics: {test.models_dir / 'evaluation_metrics.json'}")
+    print(f"\n🎉 All components of the gene prediction pipeline are working correctly!")
+    print(f"📁 All artifacts are persisted for run {test.__class__.run_id} - reusable for debugging and continuation!")
 
 
 def run_quick_test():
@@ -563,9 +734,9 @@ def run_quick_test():
     # Run streamlined workflow using persistent directories - quick mode uses default 3 contigs
     test.test_step_1_generate_synthetic_data(num_contigs=3)  # Default amount for quick test
     test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
-    test.test_step_4_train_model()      # Train on TSV+contexts
-    test.test_step_5_run_inference()
-    test.test_step_6_validate_predictions()
+    test.test_step_3_train_model()      # Train on TSV+contexts
+    test.test_step_4_run_inference()
+    test.test_step_5_validate_predictions()
     
     print("\n" + "="*60)
     print("QUICK E2E TEST COMPLETED!")
@@ -591,8 +762,5 @@ if __name__ == "__main__":
     if args.quick:
         run_quick_test()
     else:
-        # Run full test suite
-        if args.verbose:
-            unittest.main(argv=[''], verbosity=2, exit=False)
-        else:
-            unittest.main(argv=[''], exit=False)
+        # Run complete workflow (not unittest)
+        run_full_workflow()

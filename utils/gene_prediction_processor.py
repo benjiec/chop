@@ -25,6 +25,9 @@ class GenePredictionTargetGenerator:
         """
         Generate targets for gene boundary detection.
         
+        Assumes 500bp UTR regions instead of relying on gene annotation boundaries.
+        This is suitable for real-world GFF files that often only annotate CDS regions.
+        
         Args:
             sequence: DNA sequence string
             genes_list: List of gene dictionaries with keys:
@@ -37,61 +40,64 @@ class GenePredictionTargetGenerator:
         seq_len = len(sequence)
         targets = np.full(seq_len, self.gene_boundary_classes.INTERGENIC, dtype=np.int32)
         
+        # Import UTR sizes from constants
+        from .constants import UTR5_SIZE, UTR3_SIZE
+        
         for gene in genes_list:
-            gene_start = int(gene['start'])
-            gene_end = int(gene['end'])
             strand = gene['strand']
             exons = gene.get('exons', [])
             
-            # Skip genes that are out of bounds or have no exons
-            if gene_start >= seq_len or gene_end >= seq_len or gene_start < 0 or not exons:
+            # Skip genes with no exons
+            if not exons:
                 continue
             
             # Sort exons by start position
             sorted_exons = sorted(exons, key=lambda x: x['start'])
             
+            # Find the actual CDS boundaries (ignore gene_start/gene_end annotations)
+            first_cds = sorted_exons[0]
+            last_cds = sorted_exons[-1]
+            
             if strand == '+':
-                # Forward strand: first exon contains START, last exon contains STOP
-                first_exon = sorted_exons[0]
-                last_exon = sorted_exons[-1]
+                # Forward strand: first CDS contains START, last CDS contains STOP
+                cds_start = first_cds['start']  # First base of START codon
+                cds_end = last_cds['end']       # Last base of STOP codon + 1
                 
-                # 5' UTR: gene_start to first_exon_start
-                utr5_start = gene_start
-                utr5_end = first_exon['start'] - 1
+                # Assume 500bp UTR regions upstream and downstream of CDS
+                utr5_start = max(0, cds_start - UTR5_SIZE)
+                utr5_end = cds_start - 1
                 
-                # START codon: first 3 bp of first exon
-                start_codon_start = first_exon['start']
-                start_codon_end = min(first_exon['start'] + 2, first_exon['end'] - 1, seq_len - 1)
+                utr3_start = cds_end
+                utr3_end = min(seq_len - 1, cds_end + UTR3_SIZE - 1)
                 
-                # STOP codon: last 3 bp of last exon
-                stop_codon_start = max(last_exon['end'] - 3, last_exon['start'])
-                stop_codon_end = last_exon['end'] - 1
+                # START codon: first 3 bp of first CDS
+                start_codon_start = cds_start
+                start_codon_end = min(cds_start + 2, last_cds['end'] - 1, seq_len - 1)
                 
-                # 3' UTR: last_exon_end to gene_end
-                utr3_start = last_exon['end']
-                utr3_end = gene_end
+                # STOP codon: last 3 bp of last CDS
+                stop_codon_start = max(cds_end - 3, first_cds['start'])
+                stop_codon_end = cds_end - 1
                 
             else:  # strand == '-'
-                # Reverse strand: biologically, first exon (5' end) is the last in coordinate order
-                # and last exon (3' end) is the first in coordinate order
-                first_exon = sorted_exons[-1]  # Last by coordinate = first biologically
-                last_exon = sorted_exons[0]   # First by coordinate = last biologically
+                # Reverse strand: coordinates stay the same, but biological roles reverse
+                cds_start = first_cds['start']  # Biologically this is the 3' end (STOP)
+                cds_end = last_cds['end']       # Biologically this is the 5' end (START)
                 
-                # 3' UTR: gene_start to first biological exon (last by coordinate)
-                utr3_start = gene_start
-                utr3_end = last_exon['start'] - 1
+                # 3' UTR is upstream of the CDS in genomic coordinates
+                utr3_start = max(0, cds_start - UTR3_SIZE)
+                utr3_end = cds_start - 1
                 
-                # START codon: first 3 bp of first biological exon (last by coordinate)
-                start_codon_start = max(first_exon['end'] - 3, first_exon['start'])
-                start_codon_end = first_exon['end'] - 1
+                # 5' UTR is downstream of the CDS in genomic coordinates  
+                utr5_start = cds_end
+                utr5_end = min(seq_len - 1, cds_end + UTR5_SIZE - 1)
                 
-                # STOP codon: last 3 bp of last biological exon (first by coordinate)
-                stop_codon_start = last_exon['start']
-                stop_codon_end = min(last_exon['start'] + 2, last_exon['end'] - 1, seq_len - 1)
+                # START codon: last 3 bp of last CDS (biologically 5' end)
+                start_codon_start = max(cds_end - 3, first_cds['start'])
+                start_codon_end = cds_end - 1
                 
-                # 5' UTR: last biological exon to gene_end
-                utr5_start = first_exon['end']
-                utr5_end = gene_end
+                # STOP codon: first 3 bp of first CDS (biologically 3' end)
+                stop_codon_start = cds_start
+                stop_codon_end = min(cds_start + 2, last_cds['end'] - 1, seq_len - 1)
             
             # Assign targets (ensure within bounds)
             # 5' UTR
