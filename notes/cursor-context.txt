@@ -89,22 +89,24 @@ contig sequences.
 For now, use a small model to make testing quick: 3 layers, 4 heads, model size
 120, batch size 2.
 
-The following script kicks off an end to end workflow that a) generates test
+The following commands kick off an end to end workflow that a) generates test
 fixtures - genomic FASTA and GFF, b) performs pre-processing to generate TSV
 and gene context FASTA, c) trains model, d) predict genes, e) evaluates
 model/prediction quality.
 
-This is the quick version to test code works:
+First, activate the virtual environment
 
 ```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/gene_prediction/test_gene_prediction_workflow.py --quick
+cd /Users/benjie/git/chop && source chop_env/bin/activate
 ```
 
-This is the bigger version -- more fixture, bigger models -- to test quality of model
+Then here are the options
 
-```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/gene_prediction/test_gene_prediction_workflow.py
-```
+   - Standard:
+     python tests/gene_prediction/test_gene_prediction_workflow.py
+
+   - Quick test:
+     python tests/gene_prediction/test_gene_prediction_workflow.py --quick
 
 
 ## Current directory structure

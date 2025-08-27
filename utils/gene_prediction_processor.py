@@ -134,15 +134,53 @@ class GenePredictionTargetGenerator:
         
         return targets
     
-    def get_class_weights(self, targets: np.ndarray) -> Dict[int, float]:
-        """Calculate class weights for balanced training."""
+    def get_class_weights(self, targets: np.ndarray, max_weight_ratio: float = 50.0) -> Dict[int, float]:
+        """
+        Calculate class weights for balanced training with capping to prevent extreme values.
+        
+        Args:
+            targets: Target array
+            max_weight_ratio: Maximum ratio between highest and lowest weight (default: 50)
+        
+        Returns:
+            Dictionary of class weights
+        """
         unique, counts = np.unique(targets, return_counts=True)
         total = len(targets)
         
-        # Calculate inverse frequency weights - all classes treated equally
+        # Calculate inverse frequency weights
+        raw_weights = {}
+        for class_idx, count in zip(unique, counts):
+            raw_weights[class_idx] = total / (len(unique) * count)
+        
+        # Cap extreme weights to prevent training instability
+        min_weight = min(raw_weights.values())
+        max_allowed_weight = min_weight * max_weight_ratio
+        
+        weights = {}
+        for class_idx, weight in raw_weights.items():
+            weights[class_idx] = min(weight, max_allowed_weight)
+        
+        return weights
+    
+    def get_class_weights_sqrt(self, targets: np.ndarray) -> Dict[int, float]:
+        """
+        Calculate square-root scaled class weights - less aggressive than inverse frequency.
+        This provides balance while avoiding extreme weights.
+        """
+        unique, counts = np.unique(targets, return_counts=True)
+        total = len(targets)
+        
         weights = {}
         for class_idx, count in zip(unique, counts):
-            weights[class_idx] = total / (len(unique) * count)
+            # Use square root of inverse frequency for less aggressive weighting
+            frequency = count / total
+            weights[class_idx] = 1.0 / np.sqrt(frequency)
+        
+        # Normalize so minimum weight is 1.0
+        min_weight = min(weights.values())
+        for class_idx in weights:
+            weights[class_idx] /= min_weight
         
         return weights
 

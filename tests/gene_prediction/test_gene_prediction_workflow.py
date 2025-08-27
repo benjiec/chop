@@ -331,8 +331,9 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         self.__class__.processed_tsv = str(processed_tsv)
     
     def _get_config_path(self):
-        """Get the standard config path for both modes."""
-        return str(project_root / "configs" / "gene_prediction_test.yaml")
+        """Get the config path, allowing override via class attribute."""
+        config_name = getattr(self.__class__, 'config_name', 'gene_prediction_capped_weights.yaml')
+        return str(project_root / "configs" / config_name)
     
     def test_step_3_train_model(self):
         """Step 3: Train model using gene prediction training script."""
@@ -358,13 +359,17 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         ]
         
         print(f"  Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(project_root))
+        print("  Training progress:")
+        print("  " + "-" * 50)
+        
+        # Run without capturing output so we can see training progress
+        result = subprocess.run(cmd, cwd=str(project_root))
+        
+        print("  " + "-" * 50)
         
         # Check if training succeeded
         if result.returncode != 0:
             print(f"Training failed with return code {result.returncode}")
-            print(f"STDOUT: {result.stdout}")
-            print(f"STDERR: {result.stderr}")
             self.fail("Model training failed")
         
         # Verify model checkpoint was created in persistent directory
@@ -430,12 +435,16 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         ]
         
         print(f"  Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(project_root))
+        print("  Inference progress:")
+        print("  " + "-" * 30)
+        
+        # Run without capturing output so we can see inference progress
+        result = subprocess.run(cmd, cwd=str(project_root))
+        
+        print("  " + "-" * 30)
         
         if result.returncode != 0:
             print(f"Inference failed with return code {result.returncode}")
-            print(f"STDOUT: {result.stdout}")
-            print(f"STDERR: {result.stderr}")
             self.fail("Inference failed")
         
         # Verify predictions were generated
@@ -686,9 +695,10 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         return true_array
     
 
-def run_full_workflow():
+def run_full_workflow(config_name='gene_prediction_capped_weights.yaml'):
     """Run the complete end-to-end workflow with larger scale."""
     test = GenePredictionWorkflowTest()
+    test.__class__.config_name = config_name
     test.setUpClass()
     test.setUp()
     
@@ -722,10 +732,11 @@ def run_full_workflow():
     print(f"📁 All artifacts are persisted for run {test.__class__.run_id} - reusable for debugging and continuation!")
 
 
-def run_quick_test():
+def run_quick_test(config_name='gene_prediction_capped_weights.yaml'):
     """Run a quick version of the test with minimal training."""
     # This function can be used for rapid development testing
     test = GenePredictionWorkflowTest()
+    test.__class__.config_name = config_name
     test.setUpClass()
     test.setUp()
     
@@ -756,11 +767,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run end-to-end workflow test")
     parser.add_argument("--quick", action="store_true", help="Run quick test with minimal training")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    parser.add_argument("--config", choices=['original', 'capped', 'focal'], default='capped',
+                       help="Training configuration: 'original' (extreme weights), 'capped' (50x max), 'focal' (focal loss)")
     
     args = parser.parse_args()
     
+    # Map config choices to filenames
+    config_map = {
+        'original': 'gene_prediction_test.yaml',
+        'capped': 'gene_prediction_capped_weights.yaml', 
+        'focal': 'gene_prediction_focal_loss.yaml'
+    }
+    
+    config_name = config_map[args.config]
+    print(f"Using configuration: {config_name}")
+    
     if args.quick:
-        run_quick_test()
+        run_quick_test(config_name)
     else:
         # Run complete workflow (not unittest)
-        run_full_workflow()
+        run_full_workflow(config_name)

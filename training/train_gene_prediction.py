@@ -100,22 +100,76 @@ class GenePredictionModel(nn.Module):
         }
 
 
-class GenePredictionLoss(nn.Module):
-    """Loss function for gene prediction with class weighting."""
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for addressing class imbalance.
     
-    def __init__(self, class_weights: Optional[Dict[int, float]] = None):
+    Focal Loss is designed to address class imbalance by down-weighting 
+    easy examples and focusing on hard examples.
+    """
+    
+    def __init__(self, alpha: Optional[torch.Tensor] = None, gamma: float = 2.0, reduction: str = 'mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+    
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            inputs: (N, C) where C = number of classes
+            targets: (N) where each value is 0 <= targets[i] <= C-1
+        """
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = (1 - pt) ** self.gamma * ce_loss
+        
+        if self.alpha is not None:
+            if self.alpha.device != targets.device:
+                self.alpha = self.alpha.to(targets.device)
+            alpha_t = self.alpha[targets]
+            focal_loss = alpha_t * focal_loss
+        
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+class GenePredictionLoss(nn.Module):
+    """Loss function for gene prediction with class weighting or focal loss."""
+    
+    def __init__(self, class_weights: Optional[Dict[int, float]] = None, 
+                 use_focal_loss: bool = False, focal_alpha: float = 1.0, focal_gamma: float = 2.0):
         super().__init__()
         self.class_weights = class_weights
+        self.use_focal_loss = use_focal_loss
         
-        if class_weights:
-            # Convert to tensor for CrossEntropyLoss
-            weights = torch.zeros(6)
-            for class_idx, weight in class_weights.items():
-                if 0 <= class_idx < 6:
-                    weights[class_idx] = weight
-            self.register_buffer('weight_tensor', weights)
-        else:
+        if use_focal_loss:
+            # Set up focal loss
+            alpha = None
+            if class_weights:
+                alpha = torch.zeros(6)
+                for class_idx, weight in class_weights.items():
+                    if 0 <= class_idx < 6:
+                        alpha[class_idx] = weight * focal_alpha
+                alpha = alpha / alpha.sum() * 6  # Normalize
+            
+            self.loss_fn = FocalLoss(alpha=alpha, gamma=focal_gamma, reduction='mean')
             self.weight_tensor = None
+        else:
+            # Set up weighted cross-entropy
+            if class_weights:
+                weights = torch.zeros(6)
+                for class_idx, weight in class_weights.items():
+                    if 0 <= class_idx < 6:
+                        weights[class_idx] = weight
+                self.register_buffer('weight_tensor', weights)
+            else:
+                self.weight_tensor = None
+            self.loss_fn = None
     
     def forward(self, predictions: Dict[str, torch.Tensor], 
                 targets: Dict[str, torch.Tensor]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
@@ -132,17 +186,20 @@ class GenePredictionLoss(nn.Module):
         pred_boundaries = predictions['gene_boundaries']  # (batch, seq_len, 6)
         true_boundaries = targets['gene_boundaries']      # (batch, seq_len)
         
-        # Reshape for CrossEntropyLoss
+        # Reshape for loss computation
         pred_boundaries = pred_boundaries.view(-1, 6)     # (batch*seq_len, 6)
         true_boundaries = true_boundaries.view(-1)        # (batch*seq_len,)
         
-        # Compute loss
-        boundary_loss = F.cross_entropy(
-            pred_boundaries, 
-            true_boundaries.long(),
-            weight=self.weight_tensor,
-            reduction='mean'
-        )
+        # Compute loss based on loss type
+        if self.use_focal_loss:
+            boundary_loss = self.loss_fn(pred_boundaries, true_boundaries.long())
+        else:
+            boundary_loss = F.cross_entropy(
+                pred_boundaries, 
+                true_boundaries.long(),
+                weight=self.weight_tensor,
+                reduction='mean'
+            )
         
         loss_dict = {
             'gene_boundary_loss': boundary_loss,
@@ -315,6 +372,9 @@ class GenePredictionModule(pl.LightningModule):
         # Create model
         self.model = GenePredictionModel(config['model'])
         
+        # Store loss configuration
+        self.loss_config = config.get('loss', {})
+        
         # Create loss function (will set class weights after seeing data)
         self.loss_fn = GenePredictionLoss()
         
@@ -327,7 +387,16 @@ class GenePredictionModule(pl.LightningModule):
     
     def set_class_weights(self, class_weights: Dict[int, float]):
         """Set class weights for loss function."""
-        self.loss_fn = GenePredictionLoss(class_weights)
+        use_focal_loss = self.loss_config.get('use_focal_loss', False)
+        focal_alpha = self.loss_config.get('focal_alpha', 1.0)
+        focal_gamma = self.loss_config.get('focal_gamma', 2.0)
+        
+        self.loss_fn = GenePredictionLoss(
+            class_weights=class_weights,
+            use_focal_loss=use_focal_loss,
+            focal_alpha=focal_alpha,
+            focal_gamma=focal_gamma
+        )
     
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         return self.model(x)
@@ -402,7 +471,17 @@ def create_data_loaders(config: Dict[str, Any], fasta_file: Path, tsv_file: Path
     
     all_targets = np.concatenate(all_targets)
     target_generator = GenePredictionTargetGenerator()
-    class_weights = target_generator.get_class_weights(all_targets)
+    
+    # Choose class weighting strategy based on configuration
+    weight_strategy = config.get('loss', {}).get('weight_strategy', 'capped')
+    if weight_strategy == 'sqrt':
+        class_weights = target_generator.get_class_weights_sqrt(all_targets)
+    elif weight_strategy == 'capped':
+        max_ratio = config.get('loss', {}).get('max_weight_ratio', 50.0)
+        class_weights = target_generator.get_class_weights(all_targets, max_ratio)
+    else:
+        # Original uncapped weights (not recommended)
+        class_weights = target_generator.get_class_weights(all_targets, max_weight_ratio=float('inf'))
     
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -433,6 +512,14 @@ def create_data_loaders(config: Dict[str, Any], fasta_file: Path, tsv_file: Path
 
 
 def main():
+    # Set environment variables to ensure progress bars show up
+    import os
+    os.environ.setdefault('TERM', 'xterm')
+    if 'COLUMNS' not in os.environ:
+        os.environ['COLUMNS'] = '80'
+    if 'LINES' not in os.environ:
+        os.environ['LINES'] = '24'
+    
     parser = argparse.ArgumentParser(description='Train gene prediction model')
     parser.add_argument('--config', required=True, help='Path to config YAML file')
     parser.add_argument('--fasta', required=True, help='Path to FASTA file')
@@ -456,11 +543,22 @@ def main():
     
     print(f"Training samples: {len(train_loader.dataset)}")
     print(f"Validation samples: {len(val_loader.dataset)}")
+    print(f"Training batches: {len(train_loader)}")
+    print(f"Validation batches: {len(val_loader)}")
     print(f"Class weights: {class_weights}")
     
     # Create model
     model = GenePredictionModule(config)
     model.set_class_weights(class_weights)
+    
+    print(f"Model configuration:")
+    print(f"  - Model size: {config['model']['d_model']}")
+    print(f"  - Layers: {config['model']['n_layers']}")
+    print(f"  - Heads: {config['model']['n_heads']}")
+    print(f"  - Max epochs: {config['training']['max_epochs']}")
+    print(f"  - Learning rate: {model.learning_rate}")
+    print(f"  - Loss strategy: {model.loss_config}")
+    print("Starting training...")
     
     # Setup callbacks
     callbacks = [
@@ -504,7 +602,10 @@ def main():
         logger=logger,
         enable_checkpointing=True,
         enable_progress_bar=True,
-        log_every_n_steps=50
+        log_every_n_steps=10,  # More frequent logging
+        enable_model_summary=True,
+        reload_dataloaders_every_n_epochs=0,
+        num_sanity_val_steps=2  # Quick validation check before training
     )
     
     # Train model
