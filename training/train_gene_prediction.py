@@ -33,6 +33,117 @@ from utils.gene_prediction_processor import (
 from utils.constants import GenePredictionClass, DNA_VOCAB
 
 
+def save_training_targets(dataset, targets_dir: Path):
+    """Save training targets to files for debugging and validation."""
+    import json
+    from collections import Counter
+    
+    print(f"Saving training targets to {targets_dir}")
+    
+    class_names = {
+        GenePredictionClass.INTERGENIC: 'INTERGENIC',
+        GenePredictionClass.UTR5: 'UTR5',
+        GenePredictionClass.START: 'START',
+        GenePredictionClass.GENE_BODY: 'GENE_BODY',
+        GenePredictionClass.STOP: 'STOP',
+        GenePredictionClass.UTR3: 'UTR3'
+    }
+    
+    # Save summary statistics
+    total_counts = Counter()
+    window_summaries = []
+    
+    # Process first 20 windows for detailed inspection
+    num_windows_to_save = min(20, len(dataset))
+    
+    for i in range(num_windows_to_save):
+        sequence_tensor, targets_tensor = dataset[i]
+        targets = targets_tensor.numpy()
+        
+        window = dataset.windows[i]
+        seq_id = window['sequence_id']
+        window_start = window['start']
+        window_end = window['end']
+        
+        # Count classes in this window
+        counts = Counter(targets)
+        
+        # Create window summary
+        window_summary = {
+            'window_index': i,
+            'sequence_id': seq_id,
+            'window_start': window_start,
+            'window_end': window_end,
+            'window_length': len(targets),
+            'class_distribution': {}
+        }
+        
+        for class_idx, count in counts.items():
+            class_name = class_names.get(class_idx, f"UNKNOWN_{class_idx}")
+            percentage = (count / len(targets)) * 100
+            window_summary['class_distribution'][class_name] = {
+                'count': int(count),
+                'percentage': round(percentage, 2)
+            }
+            total_counts[class_idx] += count
+        
+        # Find non-intergenic positions
+        non_intergenic_positions = []
+        for pos in range(len(targets)):
+            if targets[pos] != GenePredictionClass.INTERGENIC:
+                non_intergenic_positions.append({
+                    'position': pos,
+                    'class': class_names.get(targets[pos], f"UNKNOWN_{targets[pos]}")
+                })
+        
+        window_summary['non_intergenic_positions'] = non_intergenic_positions[:50]  # First 50
+        window_summary['total_non_intergenic'] = len(non_intergenic_positions)
+        
+        window_summaries.append(window_summary)
+        
+        # Save detailed targets for first 5 windows
+        if i < 5:
+            detailed_targets = {
+                'window_index': i,
+                'sequence_id': seq_id,
+                'window_start': window_start,
+                'window_end': window_end,
+                'targets': [class_names.get(t, f"UNKNOWN_{t}") for t in targets.tolist()]
+            }
+            
+            with open(targets_dir / f"window_{i:02d}_detailed_targets.json", 'w') as f:
+                json.dump(detailed_targets, f, indent=2)
+    
+    # Save overall summary
+    total_bases = sum(total_counts.values())
+    overall_summary = {
+        'dataset_info': {
+            'total_windows': len(dataset),
+            'windows_analyzed': num_windows_to_save,
+            'total_bases_analyzed': int(total_bases)
+        },
+        'overall_class_distribution': {},
+        'window_summaries': window_summaries
+    }
+    
+    for class_idx, count in total_counts.items():
+        class_name = class_names.get(class_idx, f"UNKNOWN_{class_idx}")
+        percentage = (count / total_bases) * 100 if total_bases > 0 else 0
+        overall_summary['overall_class_distribution'][class_name] = {
+            'count': int(count),
+            'percentage': round(percentage, 2)
+        }
+    
+    # Save summary file
+    with open(targets_dir / "training_targets_summary.json", 'w') as f:
+        json.dump(overall_summary, f, indent=2)
+    
+    print(f"  ✓ Saved training targets summary and {num_windows_to_save} window details")
+    print(f"  ✓ Overall class distribution:")
+    for class_name, stats in overall_summary['overall_class_distribution'].items():
+        print(f"    {class_name}: {stats['count']} ({stats['percentage']:.2f}%)")
+
+
 class GenePredictionModel(nn.Module):
     """Transformer model for gene boundary prediction."""
     
@@ -462,6 +573,14 @@ def create_data_loaders(config: Dict[str, Any], fasta_file: Path, tsv_file: Path
         tsv_file=tsv_file,
         max_seq_length=config['model']['max_seq_length']
     )
+    
+    # Save training targets for debugging (optional)
+    debug_save_targets = config.get('debug', {}).get('save_targets', True)
+    if debug_save_targets:
+        # Save to the same directory as the processed data
+        targets_dir = fasta_file.parent / "training_targets"
+        targets_dir.mkdir(exist_ok=True)
+        save_training_targets(dataset, targets_dir)
     
     # Calculate class weights from dataset
     all_targets = []

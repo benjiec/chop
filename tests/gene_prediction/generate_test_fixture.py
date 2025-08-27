@@ -173,9 +173,9 @@ def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[S
     current_pos = 0
     
     # Add initial spacer
-    initial_spacer = random.randint(1000, 3000)
+    initial_spacer = random.randint(300, 800)
     current_pos += initial_spacer
-    
+   
     for i in range(num_genes):
         gene_id = f"{contig_id}_gene_{i+1:03d}"  # 3 digits for up to 999 genes
         
@@ -183,22 +183,23 @@ def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[S
         gene = SyntheticGene(gene_id, current_pos)
         
         # Generate 5-6 exons as requested
-        num_exons = random.randint(5, 6)
-        
+        num_exons = random.randint(3, 6)
+
         # Generate CDS length (multiple of 3, realistic gene sizes)
-        cds_length = random.randint(300, 2400)  # 100-800 codons (300-2400 bp)
+        cds_length = random.randint(150, 1000)
+
+        if random.random() < 0.1:  # 10% chance very large gene
+            cds_length = random.randint(1500, 4500)
+            num_exons *= 2
+
         cds_length = (cds_length // 3) * 3  # Ensure multiple of 3
         
         # Generate variable intron lengths (realistic distribution)
         intron_lengths = []
         for j in range(num_exons - 1):
-            # Realistic intron sizes: mostly small, some large
-            if random.random() < 0.7:  # 70% small introns
-                intron_len = random.randint(50, 200)
-            else:  # 30% larger introns
-                intron_len = random.randint(200, 1500)
+            intron_len = random.randint(60, 200)
             intron_lengths.append(intron_len)
-        
+
         # Build the gene structure
         try:
             gene.generate_gene_structure(num_exons, cds_length, intron_lengths)
@@ -209,7 +210,7 @@ def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[S
             
             # Add intergenic spacer (except after last gene)
             if i < num_genes - 1:
-                intergenic_spacer = random.randint(500, 2000)
+                intergenic_spacer = random.randint(1000, 1500)
                 current_pos += intergenic_spacer
                 
         except (ValueError, IndexError) as e:
@@ -218,7 +219,7 @@ def create_synthetic_contig(contig_id: str, num_genes: int) -> Tuple[str, List[S
             continue
     
     # Add final spacer
-    final_spacer = random.randint(1000, 3000)
+    final_spacer = random.randint(300, 800)
     total_length = current_pos + final_spacer
     
     # Create the actual DNA sequence

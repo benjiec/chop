@@ -26,7 +26,7 @@ data:
   
 # Hardware configuration
 hardware:
-  accelerator: "cpu"         # Use CPU for testing
+  accelerator: "auto"        # Use auto detection (will use MPS on Apple Silicon)
   devices: 1                 # Number of devices
 
 # Logging configuration
@@ -37,3 +37,7 @@ logging:
 # Model output configuration
 output:
   num_gene_boundary_classes: 6  # INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
+
+# Debug configuration
+debug:
+  save_targets: true           # Save training targets for validation and debugging

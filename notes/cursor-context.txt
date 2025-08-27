@@ -81,13 +81,10 @@ For now, for test fixture, use 500 bps for 5' UTRs and 3' UTRS. Use
 biologically valid START (ATG) and STOP codons (TAA/TAG/TGA).
 
 For now, let's use max sequence length of 2500 for training the model. This
-means for the test fixture, let's aim for CDS sequences of 800-1200 bps
-(randomized), and then UTR sequences flanking the CDS sequences. Add random
-intergenic sequences as spacers between the gene sequences, to form genomic
-contig sequences.
-
-For now, use a small model to make testing quick: 3 layers, 4 heads, model size
-120, batch size 2.
+means for the test fixture, we are aiming to get gene length (exons and
+introns) to be within 1200 bp or so, so we can add 1000 bps of UTRs to fit the
+2500 bp sequence length. 10% of the test fixtures are long genes, so we can
+test using sliding window to detect longer genes.
 
 The following commands kick off an end to end workflow that a) generates test
 fixtures - genomic FASTA and GFF, b) performs pre-processing to generate TSV
@@ -100,13 +97,17 @@ First, activate the virtual environment
 cd /Users/benjie/git/chop && source chop_env/bin/activate
 ```
 
-Then here are the options
+Then run the workflow:
 
-   - Standard:
-     python tests/gene_prediction/test_gene_prediction_workflow.py
-
-   - Quick test:
-     python tests/gene_prediction/test_gene_prediction_workflow.py --quick
+```
+python tests/gene_prediction/test_gene_prediction_workflow.py
+```
+     
+Options:
+   --config capped (default): Use capped class weights (50x max ratio)
+   --config conservative: Use very conservative weights (10x max ratio) 
+   --config focal: Use focal loss for class imbalance
+   --config original: Use original extreme weights (for comparison)
 
 
 ## Current directory structure

@@ -209,10 +209,11 @@ def extract_gene_contexts_with_normalization(
                 continue
             
             # Create normalized sequence record
+            # Note: Use empty description to ensure FASTA header only contains the gene_id
             seq_record = SeqRecord(
                 seq=context_sequence,
                 id=gene_id,
-                description=f"Gene context for {gene_id} (strand normalized)"
+                description=""  # Empty description ensures header is just ">gene_id"
             )
             normalized_sequences.append(seq_record)
             

@@ -261,6 +261,19 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         self.assertEqual(processed_gene_count, original_gene_count, 
                         f"Gene count mismatch: original {original_gene_count}, processed {processed_gene_count}")
         
+        # CRITICAL TEST: Validate FASTA sequence IDs match TSV sequence IDs
+        fasta_sequence_ids = set(seq.id for seq in contexts)
+        tsv_sequence_ids = set(annotations_df['sequence_id'].unique())
+        
+        self.assertEqual(fasta_sequence_ids, tsv_sequence_ids,
+                        f"FASTA sequence IDs don't match TSV sequence IDs!\n"
+                        f"  FASTA IDs: {sorted(fasta_sequence_ids)}\n"
+                        f"  TSV IDs: {sorted(tsv_sequence_ids)}\n"
+                        f"  Missing in FASTA: {tsv_sequence_ids - fasta_sequence_ids}\n"
+                        f"  Missing in TSV: {fasta_sequence_ids - tsv_sequence_ids}")
+        
+        print(f"  ✓ Verified FASTA and TSV sequence IDs match ({len(fasta_sequence_ids)} sequences)")
+        
         # Validate CDS/exon counts match
         original_cds_count = 0
         for seq_id, annotations in original_annotations.items():
@@ -696,7 +709,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
     
 
 def run_full_workflow(config_name='gene_prediction_capped_weights.yaml'):
-    """Run the complete end-to-end workflow with larger scale."""
+    """Run the complete end-to-end workflow."""
     test = GenePredictionWorkflowTest()
     test.__class__.config_name = config_name
     test.setUpClass()
@@ -706,8 +719,8 @@ def run_full_workflow(config_name='gene_prediction_capped_weights.yaml'):
     print("RUNNING COMPLETE END-TO-END WORKFLOW")
     print("="*60)
     
-    # Run all steps in sequence - full mode uses 5x more contigs (15 instead of 3)
-    test.test_step_1_generate_synthetic_data(num_contigs=15)  # 5x more data
+    # Run all steps in sequence with full dataset size
+    test.test_step_1_generate_synthetic_data(num_contigs=15)  # Full dataset for proper training
     test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
     test.test_step_3_train_model()      # Train on TSV+contexts
     test.test_step_4_run_inference()
@@ -732,43 +745,15 @@ def run_full_workflow(config_name='gene_prediction_capped_weights.yaml'):
     print(f"📁 All artifacts are persisted for run {test.__class__.run_id} - reusable for debugging and continuation!")
 
 
-def run_quick_test(config_name='gene_prediction_capped_weights.yaml'):
-    """Run a quick version of the test with minimal training."""
-    # This function can be used for rapid development testing
-    test = GenePredictionWorkflowTest()
-    test.__class__.config_name = config_name
-    test.setUpClass()
-    test.setUp()
-    
-    print(f"Quick test fixtures dir: {test.fixtures_dir}")
-    
-    # Run streamlined workflow using persistent directories - quick mode uses default 3 contigs
-    test.test_step_1_generate_synthetic_data(num_contigs=3)  # Default amount for quick test
-    test.test_step_2_preprocess_data()  # Convert GFF+FASTA to TSV+contexts
-    test.test_step_3_train_model()      # Train on TSV+contexts
-    test.test_step_4_run_inference()
-    test.test_step_5_validate_predictions()
-    
-    print("\n" + "="*60)
-    print("QUICK E2E TEST COMPLETED!")
-    print("="*60)
-    print("\nPersistent Artifacts:")
-    print(f"  • Run ID: {test.run_id}")
-    print(f"  • Fixtures: {test.fixtures_dir}")
-    print(f"  • Processed data: {test.processed_dir}")
-    print(f"  • Models: {test.models_dir}")
-    print(f"  • Predictions: {test.results_dir}")
-    print(f"\n🚀 Quick test completed successfully for run {test.run_id}!")
-
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run end-to-end workflow test")
-    parser.add_argument("--quick", action="store_true", help="Run quick test with minimal training")
+
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--config", choices=['original', 'capped', 'focal'], default='capped',
-                       help="Training configuration: 'original' (extreme weights), 'capped' (50x max), 'focal' (focal loss)")
+    parser.add_argument("--config", choices=['original', 'capped', 'focal', 'conservative'], default='capped',
+                       help="Training configuration: 'original' (extreme weights), 'capped' (50x max), 'focal' (focal loss), 'conservative' (10x max)")
     
     args = parser.parse_args()
     
@@ -776,14 +761,12 @@ if __name__ == "__main__":
     config_map = {
         'original': 'gene_prediction_test.yaml',
         'capped': 'gene_prediction_capped_weights.yaml', 
-        'focal': 'gene_prediction_focal_loss.yaml'
+        'focal': 'gene_prediction_focal_loss.yaml',
+        'conservative': 'gene_prediction_conservative.yaml'
     }
     
     config_name = config_map[args.config]
     print(f"Using configuration: {config_name}")
     
-    if args.quick:
-        run_quick_test(config_name)
-    else:
-        # Run complete workflow (not unittest)
-        run_full_workflow(config_name)
+    # Run complete workflow
+    run_full_workflow(config_name)
