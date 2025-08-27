@@ -113,9 +113,11 @@ chop/
 │   ├── gene_prediction/                      # E2E test for stage 2
 │   │   ├── test_gene_prediction_workflow.py  # Runner for E2E test for stage 2
 │   │   ├── generate_test_fixture.py          # Generates test data for stage 2
-│   │   ├── test_fixtures/                    # Persistent data
-│   │   ├── test_run/                         # Persistent intermediate files
-│   │   └── test_models/                      # Persistent models
+│   │   ├── test_run_20241126_143052/     # Complete isolation per run
+│   │   │   ├── fixtures/                 # Generated test data
+│   │   │   ├── processed/                # Preprocessed data  
+│   │   │   ├── models/                   # Trained models & checkpoints
+│   │   │   └── predictions/              # Model predictions & results
 │   └── unit/                        # Essential unit tests (25 tests)
 ├── utils/                          # Minimal utilities
 ├── models/                         # Model definitions

@@ -42,8 +42,13 @@ class GenePredictionWorkflowTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test environment."""
-        # Use persistent directories instead of temporary ones
-        cls.test_dir = project_root / "tests" / "gene_prediction" / "test_run"
+        # Create unique run ID for this test execution
+        import datetime
+        run_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        cls.run_id = run_id
+        
+        # Use persistent directories with unique run ID
+        cls.test_dir = project_root / "tests" / "gene_prediction" / f"test_run_{run_id}"
         cls.test_dir.mkdir(exist_ok=True, parents=True)
         
         # Set deterministic behavior
@@ -53,15 +58,16 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         random.seed(42)
         np.random.seed(42)
         
+        print(f"Test run ID: {run_id}")
         print(f"Test directory: {cls.test_dir}")
     
     def setUp(self):
         """Set up individual test."""
-        # Use persistent, organized directories
-        self.fixtures_dir = project_root / "tests" / "gene_prediction" / "test_fixtures"
+        # Use test run directory for all artifacts to ensure complete isolation
+        self.fixtures_dir = Path(self.test_dir) / "fixtures"
         self.processed_dir = Path(self.test_dir) / "processed"
-        self.models_dir = project_root / "tests" / "gene_prediction" / "test_models"
-        self.results_dir = self.models_dir / "predictions"
+        self.models_dir = Path(self.test_dir) / "models"
+        self.results_dir = Path(self.test_dir) / "predictions"
         
         # Create directories
         for dir_path in [self.fixtures_dir, self.processed_dir, self.models_dir, self.results_dir]:
@@ -530,6 +536,7 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         print("END-TO-END WORKFLOW TEST COMPLETED SUCCESSFULLY!")
         print("="*60)
         print("\nWorkflow Summary:")
+        print(f"  • Run ID: {self.__class__.run_id}")
         print(f"  • Test run directory: {self.test_dir}")
         print(f"  • Persistent fixtures: {self.fixtures_dir}")
         print(f"  • Processed data: {self.processed_dir}")
@@ -540,8 +547,8 @@ class GenePredictionWorkflowTest(unittest.TestCase):
         print(f"  • Predictions: {self.__class__.predictions_file}")
         if hasattr(self.__class__, 'evaluation_metrics'):
             print(f"  • Evaluation metrics: {self.models_dir / 'evaluation_metrics.json'}")
-        print("\n🎉 All components of the gene prediction pipeline are working correctly!")
-        print("📁 All artifacts are persisted in organized directories for reuse and debugging!")
+        print(f"\n🎉 All components of the gene prediction pipeline are working correctly!")
+        print(f"📁 All artifacts are persisted for run {self.__class__.run_id} - reusable for debugging and continuation!")
 
 
 def run_quick_test():
@@ -550,6 +557,8 @@ def run_quick_test():
     test = GenePredictionWorkflowTest()
     test.setUpClass()
     test.setUp()
+    
+    print(f"Quick test fixtures dir: {test.fixtures_dir}")
     
     # Run streamlined workflow using persistent directories - quick mode uses default 3 contigs
     test.test_step_1_generate_synthetic_data(num_contigs=3)  # Default amount for quick test
@@ -562,11 +571,12 @@ def run_quick_test():
     print("QUICK E2E TEST COMPLETED!")
     print("="*60)
     print("\nPersistent Artifacts:")
+    print(f"  • Run ID: {test.run_id}")
     print(f"  • Fixtures: {test.fixtures_dir}")
     print(f"  • Processed data: {test.processed_dir}")
     print(f"  • Models: {test.models_dir}")
     print(f"  • Predictions: {test.results_dir}")
-    print("\n🚀 Quick test completed successfully!")
+    print(f"\n🚀 Quick test completed successfully for run {test.run_id}!")
 
 
 if __name__ == "__main__":
