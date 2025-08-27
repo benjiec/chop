@@ -105,7 +105,6 @@ python tests/gene_prediction/test_gene_prediction_workflow.py
      
 Options:
    --config capped (default): Use capped class weights (50x max ratio)
-   --config conservative: Use very conservative weights (10x max ratio) 
    --config focal: Use focal loss for class imbalance
    --config original: Use original extreme weights (for comparison)
 
