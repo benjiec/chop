@@ -166,3 +166,8 @@ is a change I want.
 Remember the purpose of a set of changes - and if that set of changes happen to
 break something, the most important thing is NOT to fix what broke, but to fix
 what broke AND preserve the purpose of the changes.
+
+VERY IMPORTANT - don't change the configuration files and assume the code
+supports the syntax changes in the configuration YAML files. Always check to
+make sure if you add/modify the structure of the configuration YAML files, we
+have code that supports the changes.
