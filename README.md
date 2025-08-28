@@ -171,3 +171,7 @@ VERY IMPORTANT - don't change the configuration files and assume the code
 supports the syntax changes in the configuration YAML files. Always check to
 make sure if you add/modify the structure of the configuration YAML files, we
 have code that supports the changes.
+
+IMPORTANT - do not produce python code to just print statements that you will
+display in rich text in the chat box. Avoid using the terminal to communicate
+messages - only use it to run commands.
