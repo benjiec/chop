@@ -598,6 +598,38 @@ def create_data_loaders(config: Dict[str, Any], fasta_file: Path, tsv_file: Path
     elif weight_strategy == 'capped':
         max_ratio = config.get('loss', {}).get('max_weight_ratio', 50.0)
         class_weights = target_generator.get_class_weights(all_targets, max_ratio)
+    elif weight_strategy == 'custom':
+        # Use custom weights from config
+        custom_weights = config.get('loss', {}).get('custom_weights', {})
+        if not custom_weights:
+            raise ValueError("custom_weights must be specified when using weight_strategy='custom'")
+        
+        # Convert class names to indices
+        class_name_to_idx = {
+            'INTERGENIC': 0,
+            'UTR5': 1, 
+            'START': 2,
+            'GENE_BODY': 3,
+            'STOP': 4,
+            'UTR3': 5
+        }
+        
+        class_weights = {}
+        for class_name, weight in custom_weights.items():
+            if class_name in class_name_to_idx:
+                class_idx = class_name_to_idx[class_name]
+                class_weights[class_idx] = float(weight)
+            else:
+                print(f"Warning: Unknown class name '{class_name}' in custom_weights, ignoring")
+        
+        # Ensure all classes have weights (use 1.0 as default)
+        for class_name, class_idx in class_name_to_idx.items():
+            if class_idx not in class_weights:
+                class_weights[class_idx] = 1.0
+                print(f"Warning: No weight specified for class '{class_name}', using 1.0")
+    elif weight_strategy == 'equal':
+        # Equal weights for all classes (no class weighting)
+        class_weights = {0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 5: 1.0}
     else:
         # Original uncapped weights (not recommended)
         class_weights = target_generator.get_class_weights(all_targets, max_weight_ratio=float('inf'))

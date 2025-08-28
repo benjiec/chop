@@ -26,10 +26,10 @@ loss:
   custom_weights:
     INTERGENIC: 1.0      # Base weight (63.49% of data)
     GENE_BODY: 3.0       # Modest boost (19.15% of data)
-    UTR5: 80.0           # High - signals START quality (7.39% of data, contains Kozak)
-    UTR3: 50.0           # High - signals STOP quality (9.82% of data, contains poly-A)
-    START: 100.0         # High but stable - critical boundary (0.08% of data)
-    STOP: 100.0          # High but stable - critical boundary (0.08% of data)
+    UTR5: 20.0           # Moderate - signals START quality (7.39% of data, contains Kozak)
+    UTR3: 15.0           # Moderate - signals STOP quality (9.82% of data, contains poly-A)
+    START: 20.0          # Moderate - critical boundary (0.08% of data)
+    STOP: 20.0           # Moderate - critical boundary (0.08% of data)
 
 # Data configuration
 data:
