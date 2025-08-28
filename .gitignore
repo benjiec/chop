@@ -6,4 +6,4 @@ chop_env
 models/checkpoints
 cache
 .*.swp
-tests/gene_prediction/test_run_*
+tests/*/*test_run_*
