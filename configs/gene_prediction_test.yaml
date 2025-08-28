@@ -2,19 +2,19 @@
 # This represents the original approach before fixes
 
 model:
-  sequence_length: 2048
+  max_seq_length: 2500
   d_model: 256
-  num_heads: 8
-  num_layers: 6
+  n_heads: 4
+  n_layers: 4
   dropout: 0.1
   vocab_size: 5  # A, T, G, C, N
 
 training:
-  batch_size: 16
-  learning_rate: 0.0001
-  epochs: 15
+  batch_size: 4
+  learning_rate: 5e-4
+  max_epochs: 10
   weight_decay: 0.01
-  warmup_steps: 500
+  early_stopping_patience: 5
 
 # Hardware acceleration
 hardware:

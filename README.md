@@ -27,33 +27,6 @@ Stage 4: Convert the gene and splicing prediction results and generate a new
 GFF and an amino acid fasta file.
 
 
-## To Cursor: Development Rules to Follow
-
-Always use chop_env virtual env.
-
-Don't implement anything without a discussion. First question should be "would
-you like me to propose a solution", rather than "would you like me to
-implement". What would you implement w/o an agreed upon approach?
-
-Don't leave comments that only pertain to an action you took, e.g. to undo
-something. Comments should describe the current state of the code or
-configuration.
-
-Because a lot of steps may be compute intensive we want to reuse results, so
-don't use temp directories that will get cleaned up automatically. Put them in
-directories we can access later.
-
-Run unit tests using
-
-```
-cd /Users/benjie/git/chop && source chop_env/bin/activate && python tests/unit/run_tests.py
-```
-
-Whenever we are done implement a set of logic and validated that they are what
-we want, we should add unit tests and update the tests/unit/run_tests.py script
-to include the new unit tests.
-
-
 ## Gene boundary prediction model development
 
 To develop this model, let's first develop an end to end workflow that would
@@ -147,3 +120,38 @@ chop/
 ├── models/                         # Model definitions
 └── configs/
     └── gene_prediction_test.yaml   # Single config for stage 2 - gene prediction
+
+
+## To Cursor: Development Rules to Follow
+
+Always use chop_env virtual env.
+
+Don't implement anything without a discussion. First question should be "would
+you like me to propose a solution", rather than "would you like me to
+implement". What would you implement w/o an agreed upon approach?
+
+Don't leave comments that only pertain to an action you took, e.g. to undo
+something. Comments should describe the current state of the code or
+configuration.
+
+Because a lot of steps may be compute intensive we want to reuse results, so
+don't use temp directories that will get cleaned up automatically. Put them in
+directories we can access later.
+
+Run unit tests using
+
+```
+cd /Users/benjie/git/chop && scripts/run-unit-tests
+```
+
+Whenever we are done implement a set of logic and validated that they are what
+we want, we should add unit tests and update the tests/unit/run_tests.py script
+to include the new unit tests.
+
+When I ask you a question on why something is the way it is, do not assume I
+want you to change it. Tell me if you want to change something and ask if that
+is a change I want.
+
+Remember the purpose of a set of changes - and if that set of changes happen to
+break something, the most important thing is NOT to fix what broke, but to fix
+what broke AND preserve the purpose of the changes.
