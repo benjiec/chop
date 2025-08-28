@@ -20,7 +20,7 @@ training:
 hardware:
   accelerator: "auto"  # Use MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback
 
-# Loss configuration with boundary pattern emphasis
+# Loss configuration with boundary pattern emphasis (moderate weights)
 loss:
   weight_strategy: "custom"
   custom_weights:
@@ -28,8 +28,8 @@ loss:
     GENE_BODY: 3.0       # Modest boost (19.15% of data)
     UTR5: 80.0           # High - signals START quality (7.39% of data, contains Kozak)
     UTR3: 50.0           # High - signals STOP quality (9.82% of data, contains poly-A)
-    START: 300.0         # Very high - critical boundary (0.08% of data)
-    STOP: 300.0          # Very high - critical boundary (0.08% of data)
+    START: 100.0         # High but stable - critical boundary (0.08% of data)
+    STOP: 100.0          # High but stable - critical boundary (0.08% of data)
 
 # Data configuration
 data:

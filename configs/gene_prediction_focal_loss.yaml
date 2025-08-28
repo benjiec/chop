@@ -20,20 +20,20 @@ training:
 hardware:
   accelerator: "auto"  # Use MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback
 
-# Loss configuration with focal loss + weights
-# The focal loss will use custom_weights as per-class alpha values
+# Loss configuration with MODERATE focal loss + weights
+# Reduces aggressiveness to prevent model from predicting START everywhere
 loss:
   use_focal_loss: true
-  focal_gamma: 3.0
+  focal_gamma: 2.0           # Reduced from 3.0 - less aggressive focusing
   focal_alpha: 1.0           # Scalar multiplier (1.0 = use custom_weights directly)
   weight_strategy: "custom"
   custom_weights:
     INTERGENIC: 1.0          # Low weight - easy to classify
     GENE_BODY: 3.0           # Moderate weight
-    UTR5: 80.0               # High weight - important for START context
-    UTR3: 50.0               # High weight - important for STOP context  
-    START: 300.0             # Very high weight - critical boundary
-    STOP: 300.0              # Very high weight - critical boundary
+    UTR5: 50.0               # Reduced from 80.0 - still important for START context
+    UTR3: 30.0               # Reduced from 50.0 - still important for STOP context  
+    START: 100.0             # Reduced from 300.0 - important but not panic-inducing
+    STOP: 100.0              # Reduced from 300.0 - important but not panic-inducing
 
 # Data configuration
 data:
