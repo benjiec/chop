@@ -4,11 +4,11 @@ This is a repository to develop a gene prediction program. The final end goal
 is to take a genomic FASTA and a genomic GFF file as input, and predict list of
 protein amino acid sequences.
 
-The strategy we are taking is to develop two NN models. The first model is a
-gene boundary prediction model that predicts gene boundaries, specifically the
-START codon at the start of the first exon and the STOP codon at the end of the
-last exon. The second model is a splicing prediction model that predicts where
-exons are between START and STOP.
+The strategy we are taking is to develop two transformer NN models, with
+attentions. The first model is a gene boundary prediction model that predicts
+gene boundaries, specifically the START codon at the start of the first exon
+and the STOP codon at the end of the last exon. The second model is a splicing
+prediction model that predicts where exons are between START and STOP.
 
 We are going to implement this strategy in four stages.
 
@@ -30,10 +30,26 @@ GFF and an amino acid fasta file.
 ## Gene boundary prediction model development
 
 To develop this model, let's first develop an end to end workflow that would
-detect genes using test data. The test data, or fixtures, should be genomic
-sequences with genes that include 5' UTR, START, CDS sequence, STOP, and 3'
-UTR, using common 5' and 3' UTRs (e.g. Kozak, TATA, AAUAAA poly A signals,
-etc).
+detect genes using test data.
+
+### Fixture generation
+
+The test data, or fixtures, should be genomic sequences with genes that include
+5' UTR, START, CDS sequence, STOP, and 3' UTR, using common 5' and 3' UTRs
+(e.g. Kozak, TATA, AAUAAA poly A signals, etc).
+
+For now, for test fixture, leave 500 bps for 5' UTRs and 3' UTRS, and insert 5'
+UTR sequences right before start codon and 3' UTR sequences after stop codon,
+with some chances of mutation. Use biologically valid START (ATG) and STOP
+codons (TAA/TAG/TGA).
+
+For now, let's use max sequence length of 2500 for training the model. This
+means for the test fixture, we are aiming to get gene length (exons and
+introns) to be within 1200 bp or so, so we can add 1000 bps of UTRs to fit the
+2500 bp sequence length. 10% of the test fixtures are long genes, so we can
+test using sliding window to detect longer genes.
+
+### Target generation for training
 
 From GFF and annotations - we are marking 500 bps upstream of the START codon
 (first codon in the first CDS of a gene) as 5' UTR, and 500 bps downstream of
@@ -50,14 +66,7 @@ We'd like this model to predict 5' UTRs, START, STOP, and 3' UTRs. Each
 position of the genomic sequence should be categorized into those 4 categories
 plus CDS region or intergenic region.
 
-For now, for test fixture, use 500 bps for 5' UTRs and 3' UTRS. Use
-biologically valid START (ATG) and STOP codons (TAA/TAG/TGA).
-
-For now, let's use max sequence length of 2500 for training the model. This
-means for the test fixture, we are aiming to get gene length (exons and
-introns) to be within 1200 bp or so, so we can add 1000 bps of UTRs to fit the
-2500 bp sequence length. 10% of the test fixtures are long genes, so we can
-test using sliding window to detect longer genes.
+### Running the end to end workflow
 
 The following commands kick off an end to end workflow that a) generates test
 fixtures - genomic FASTA and GFF, b) performs pre-processing to generate TSV
@@ -75,6 +84,8 @@ Then run the workflow:
 ```
 python tests/gene_prediction/test_gene_prediction_workflow.py
 ```
+
+### Current performance and what we are trying
      
 Options:
    --config capped (default): Use capped class weights (50x max ratio)
