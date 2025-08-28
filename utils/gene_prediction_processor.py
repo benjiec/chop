@@ -110,7 +110,15 @@ class GenePredictionTargetGenerator:
                 for pos in range(max(0, utr3_start), min(seq_len, utr3_end + 1)):
                     targets[pos] = self.gene_boundary_classes.UTR3
             
-            # Process all exons
+            # First, mark the entire gene span (including introns) as GENE_BODY
+            # This ensures introns are not classified as intergenic
+            gene_span_start = max(0, sorted_exons[0]['start'])
+            gene_span_end = min(seq_len, sorted_exons[-1]['end'])
+            
+            for pos in range(gene_span_start, gene_span_end):
+                targets[pos] = self.gene_boundary_classes.GENE_BODY
+            
+            # Process all exons (this will re-mark exons as GENE_BODY, which is fine)
             for exon in sorted_exons:
                 exon_start = max(0, exon['start'])
                 exon_end = min(seq_len, exon['end'])
@@ -118,7 +126,7 @@ class GenePredictionTargetGenerator:
                 if exon_start >= exon_end:
                     continue
                 
-                # Mark all exon positions as GENE_BODY initially
+                # Mark all exon positions as GENE_BODY (redundant but explicit)
                 for pos in range(exon_start, exon_end):
                     targets[pos] = self.gene_boundary_classes.GENE_BODY
             

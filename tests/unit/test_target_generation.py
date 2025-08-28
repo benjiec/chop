@@ -618,6 +618,109 @@ class TestTargetGeneration(unittest.TestCase):
             self.assertTrue(len(set(overlap_targets)) <= 2, 
                            "Overlapping UTR region should have consistent labeling")
 
+    def test_introns_classified_as_gene_body_not_intergenic(self):
+        """
+        CRITICAL TEST: Ensure introns are classified as GENE_BODY, not INTERGENIC.
+        
+        This test prevents a critical regression where introns were misclassified as
+        intergenic regions, which would prevent the model from learning proper gene
+        boundaries in multi-exon genes.
+        """
+        # Create a multi-exon gene with clear introns
+        total_length = 8000
+        sequence = ['A'] * total_length
+        
+        # Define a 3-exon gene with introns between exons
+        exons = [
+            {'start': 2000, 'end': 2301},  # Exon 1: 301bp (2000-2300 inclusive)
+            {'start': 3000, 'end': 3201},  # Exon 2: 201bp (3000-3200 inclusive) 
+            {'start': 4000, 'end': 4501}   # Exon 3: 501bp (4000-4500 inclusive)
+        ]
+        
+        # Introns are:
+        # Intron 1: 2301-2999 (699bp)
+        # Intron 2: 3201-3999 (799bp)
+        
+        # Place START codon in first exon
+        sequence[2000:2003] = ['A', 'T', 'G']
+        
+        # Fill exons with non-stop codons
+        for exon in exons:
+            for i in range(exon['start'] + 3, exon['end'] - 3):
+                sequence[i] = ['G', 'C', 'A'][i % 3]
+        
+        # Place STOP codon in last exon
+        sequence[4498:4501] = ['T', 'A', 'G']
+        
+        sequence = ''.join(sequence)
+        
+        genes = [{
+            'sequence_id': 'test_seq',
+            'gene_id': 'multi_exon_gene',
+            'start': 1500,  # Gene boundaries (ignored by new logic)
+            'end': 5000,    # Gene boundaries (ignored by new logic)
+            'strand': '+',
+            'exons': exons
+        }]
+        
+        targets = self.generator.generate_targets(sequence, genes)
+        
+        # CRITICAL TEST: Check that introns are labeled as GENE_BODY, NOT INTERGENIC
+        
+        # Intron 1: positions 2301-2999
+        intron1_start = 2301
+        intron1_end = 2999
+        intron1_targets = targets[intron1_start:intron1_end + 1]
+        
+        # ALL positions in intron should be GENE_BODY
+        self.assertTrue(np.all(intron1_targets == GenePredictionClass.GENE_BODY),
+                       f"Intron 1 ({intron1_start}-{intron1_end}) should ALL be GENE_BODY, "
+                       f"but found classes: {np.unique(intron1_targets)}")
+        
+        # Intron 2: positions 3201-3999  
+        intron2_start = 3201
+        intron2_end = 3999
+        intron2_targets = targets[intron2_start:intron2_end + 1]
+        
+        # ALL positions in intron should be GENE_BODY
+        self.assertTrue(np.all(intron2_targets == GenePredictionClass.GENE_BODY),
+                       f"Intron 2 ({intron2_start}-{intron2_end}) should ALL be GENE_BODY, "
+                       f"but found classes: {np.unique(intron2_targets)}")
+        
+        # Verify that NO intron positions are classified as INTERGENIC
+        gene_span_start = exons[0]['start'] 
+        gene_span_end = exons[-1]['end']
+        gene_span_targets = targets[gene_span_start:gene_span_end]
+        
+        intergenic_count_in_gene = np.sum(gene_span_targets == GenePredictionClass.INTERGENIC)
+        self.assertEqual(intergenic_count_in_gene, 0,
+                        f"Found {intergenic_count_in_gene} INTERGENIC positions within gene span "
+                        f"({gene_span_start}-{gene_span_end}). Introns should be GENE_BODY!")
+        
+        # Double-check: verify exons are still properly labeled
+        for i, exon in enumerate(exons):
+            exon_targets = targets[exon['start']:exon['end']]
+            valid_exon_classes = {GenePredictionClass.START, GenePredictionClass.GENE_BODY, 
+                                GenePredictionClass.STOP}
+            self.assertTrue(np.all(np.isin(exon_targets, list(valid_exon_classes))),
+                           f"Exon {i+1} should only contain START/GENE_BODY/STOP classes")
+        
+        # Verify true intergenic regions are still properly labeled
+        upstream_intergenic = targets[:gene_span_start - 500]  # Before UTR5
+        downstream_intergenic = targets[gene_span_end + 500:]  # After UTR3
+        
+        if len(upstream_intergenic) > 0:
+            self.assertTrue(np.all(upstream_intergenic == GenePredictionClass.INTERGENIC),
+                           "True intergenic regions upstream should be INTERGENIC")
+        
+        if len(downstream_intergenic) > 0:
+            self.assertTrue(np.all(downstream_intergenic == GenePredictionClass.INTERGENIC),
+                           "True intergenic regions downstream should be INTERGENIC")
+        
+        print(f"✓ CRITICAL TEST PASSED: All introns correctly classified as GENE_BODY")
+        print(f"  Intron 1 ({intron1_start}-{intron1_end}): {len(intron1_targets)} positions as GENE_BODY")
+        print(f"  Intron 2 ({intron2_start}-{intron2_end}): {len(intron2_targets)} positions as GENE_BODY")
+
 
 if __name__ == '__main__':
     unittest.main()
