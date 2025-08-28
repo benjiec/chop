@@ -1,51 +1,55 @@
-# Gene Prediction Model Configuration with Focal Loss
-# Focused on gene boundary detection: INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
+# Gene prediction with focal loss + boundary pattern weights
+# Combines focal loss (gamma=3.0) with class weights to maximize START/STOP detection
 
-# Model architecture - same as capped weights version
 model:
-  vocab_size: 5              # A, C, G, T, N
-  d_model: 256               # Increased model size for better learning
-  n_layers: 4                # More layers for better representation
-  n_heads: 8                 # More attention heads
-  dropout: 0.1               # Dropout rate
-  max_seq_length: 2500       # Sequence length for training
+  sequence_length: 2048
+  d_model: 256
+  num_heads: 8
+  num_layers: 6
+  dropout: 0.1
+  vocab_size: 5  # A, T, G, C, N
 
-# Training configuration
 training:
-  max_epochs: 10             # More epochs for proper learning
-  batch_size: 4              # Reasonable batch size
-  accumulate_grad_batches: 1 # No gradient accumulation
-  learning_rate: 5e-4        # Lower learning rate for stability
-  weight_decay: 0.01         # Weight decay for regularization
-  early_stopping_patience: 5 # Patience for early stopping
-  precision: 32              # Training precision
+  batch_size: 16
+  learning_rate: 0.0001
+  epochs: 15
+  weight_decay: 0.01
+  warmup_steps: 500
 
-# Loss configuration - Using Focal Loss
+# Hardware acceleration
+hardware:
+  accelerator: "auto"  # Use MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback
+
+# Loss configuration with focal loss + weights
 loss:
-  weight_strategy: "sqrt"    # Use sqrt weighting for alpha calculation
-  max_weight_ratio: 50.0     # Cap weights if using capped strategy
-  use_focal_loss: true       # Enable focal loss
-  focal_alpha: 0.25          # Reduced alpha for focal loss (common value)
-  focal_gamma: 2.0           # Standard gamma for focal loss
+  use_focal_loss: true
+  focal_gamma: 3.0           # Higher gamma = more focus on hard examples
+  focal_alpha: [1.0, 3.0, 80.0, 50.0, 300.0, 300.0]  # Per-class weights [INTERGENIC, GENE_BODY, UTR5, UTR3, START, STOP]
+  
+# Alternative: if focal_alpha causes issues, fall back to weight_strategy
+# loss:
+#   use_focal_loss: true
+#   focal_gamma: 3.0
+#   weight_strategy: "custom"
+#   custom_weights:
+#     INTERGENIC: 1.0
+#     GENE_BODY: 3.0
+#     UTR5: 80.0
+#     UTR3: 50.0
+#     START: 300.0
+#     STOP: 300.0
 
 # Data configuration
 data:
-  num_workers: 0             # Number of data loading workers (0 for debugging)
+  window_size: 2048
+  stride: 1024
+  min_gene_length: 100
   
-# Hardware configuration
-hardware:
-  accelerator: "auto"        # Use auto detection (will use MPS on Apple Silicon)
-  devices: 1                 # Number of devices
-
-# Logging configuration
-logging:
-  use_wandb: false           # Disable wandb for testing
-  log_dir: "logs"            # Local logging directory
-
-# Model output configuration
-output:
-  num_gene_boundary_classes: 6  # INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
+# UTR regions (relative to gene boundaries)
+utrs:
+  utr5_size: 500
+  utr3_size: 500
 
 # Debug configuration
 debug:
-  save_targets: true           # Save training targets for validation and debugging
+  save_targets: true

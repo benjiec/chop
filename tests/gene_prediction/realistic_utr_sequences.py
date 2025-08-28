@@ -15,7 +15,7 @@ from typing import List
 
 # Kozak consensus sequences (optimal ribosome binding)
 KOZAK_SEQUENCES = [
-    # Classic Kozak consensus: (gcc)gccRccAUGG
+    # Classic Kozak consensus: (gcc)gccRccAUGG -- when this is inserted the ATG is placed to overlap with the actual ATG in the CDS
     "GCCGCCACCATG",  # Perfect Kozak
     "GCCACCACCATG",  # Strong Kozak
     "GCCGCCATCATG",  # Good Kozak

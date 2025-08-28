@@ -1,51 +1,47 @@
-# Gene Prediction Model Configuration with Capped Class Weights
-# Focused on gene boundary detection: INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
+# Gene prediction with boundary pattern weights - emphasizes complete UTR+START/STOP patterns
+# Based on class distribution: START/STOP (0.08% each), UTR5 (7.39%), UTR3 (9.82%), GENE_BODY (19.15%), INTERGENIC (63.49%)
 
-# Model architecture - slightly larger for better capacity
 model:
-  vocab_size: 5              # A, C, G, T, N
-  d_model: 256               # Increased model size for better learning
-  n_layers: 4                # More layers for better representation
-  n_heads: 8                 # More attention heads
-  dropout: 0.1               # Dropout rate
-  max_seq_length: 2500       # Sequence length for training
+  sequence_length: 2048
+  d_model: 256
+  num_heads: 8
+  num_layers: 6
+  dropout: 0.1
+  vocab_size: 5  # A, T, G, C, N
 
-# Training configuration
 training:
-  max_epochs: 10             # More epochs for proper learning
-  batch_size: 4              # Reasonable batch size
-  accumulate_grad_batches: 1 # No gradient accumulation
-  learning_rate: 5e-4        # Lower learning rate for stability
-  weight_decay: 0.01         # Weight decay for regularization
-  early_stopping_patience: 5 # Patience for early stopping
-  precision: 32              # Training precision
+  batch_size: 16
+  learning_rate: 0.0001
+  epochs: 15
+  weight_decay: 0.01
+  warmup_steps: 500
 
-# Loss configuration - NEW SECTION
+# Hardware acceleration
+hardware:
+  accelerator: "auto"  # Use MPS on Apple Silicon, CUDA on NVIDIA, CPU fallback
+
+# Loss configuration with boundary pattern emphasis
 loss:
-  weight_strategy: "capped"  # Options: "capped", "sqrt", "uncapped"
-  max_weight_ratio: 50.0     # Cap weights to max 50x difference
-  use_focal_loss: false      # Use weighted cross-entropy
-  focal_alpha: 1.0           # Alpha for focal loss (if enabled)
-  focal_gamma: 2.0           # Gamma for focal loss (if enabled)
+  weight_strategy: "custom"
+  custom_weights:
+    INTERGENIC: 1.0      # Base weight (63.49% of data)
+    GENE_BODY: 3.0       # Modest boost (19.15% of data)
+    UTR5: 80.0           # High - signals START quality (7.39% of data, contains Kozak)
+    UTR3: 50.0           # High - signals STOP quality (9.82% of data, contains poly-A)
+    START: 300.0         # Very high - critical boundary (0.08% of data)
+    STOP: 300.0          # Very high - critical boundary (0.08% of data)
 
 # Data configuration
 data:
-  num_workers: 0             # Number of data loading workers (0 for debugging)
+  window_size: 2048
+  stride: 1024
+  min_gene_length: 100
   
-# Hardware configuration
-hardware:
-  accelerator: "auto"        # Use auto detection (will use MPS on Apple Silicon)
-  devices: 1                 # Number of devices
-
-# Logging configuration
-logging:
-  use_wandb: false           # Disable wandb for testing
-  log_dir: "logs"            # Local logging directory
-
-# Model output configuration
-output:
-  num_gene_boundary_classes: 6  # INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3
+# UTR regions (relative to gene boundaries)
+utrs:
+  utr5_size: 500
+  utr3_size: 500
 
 # Debug configuration
 debug:
-  save_targets: true           # Save training targets for validation and debugging
+  save_targets: true
