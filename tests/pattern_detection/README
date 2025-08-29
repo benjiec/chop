@@ -1,20 +1,40 @@
 # Test ATG with uniform background (all Cs)
 python tests/pattern_detection/test_simple_atg_detection.py --background uniform --class-weights
 
-# Test ATG with random sequences as background
-python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights
+# Test ATG with random sequences as background, smaller model
+python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights --d-model 256 --layers 3 --heads 4
 
-# Test ATG with same model as controlled UTR
-python tests/pattern_detection/test_simple_atg_detection.py --d-model 504 --layers 3 --heads 6
+# Test ATG 3-kmer convolution
+# Expecting Sensitivity 100%, Precision 84%, Specificity 92%
+python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights --kmer 3
 
-# Test ATG, with attention mask
-python tests/pattern_detection/test_simple_atg.py --attention-masks "0:1,1:2" --class-weights
+# Test ATG 9-kmer convolution
+# Expecting Sensitivity 100%, Precision 100%, Specificity 100%
+python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights --kmer 9
 
-# Test Controlled UTRs with different model sizes
-python tests/pattern_detection/test_controlled_utr.py --d-model 256 --layers 4 --heads 8
+# Test ATG attention mask +/- 1bp for 1st head, +/- 4bp for 2nd head
+# Expecting Sensitivity 100%, Precision 100%, Specificity 100%
+python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights --attention-masks "0:1,1:4"
 
-# Test Controlled UTRs with stronger class weights
+# Test ATG attention mask +/- 4bp for 1st head, +/- 8bp for 2nd head
+# Expecting Sensitivity 100%, Precision 98%, Specificity 99%
+python tests/pattern_detection/test_simple_atg_detection.py --background random --class-weights --attention-masks "0:4,1:8"
+
+# Test UTRs with C's in the background, higher UTR weight
 python tests/pattern_detection/test_controlled_utr.py --class-weights --utr-weight 5.0
 
-# Test Controlled UTRs with attention masks
-python tests/pattern_detection/test_controlled_utr.py --attention-masks "0:1,1:2,2:5" --class-weights
+# Test UTRs with C's in the background, 3-kmer convolution
+# Expecting UTR5 Sensitivity 71%, Precision 67%, Specificity 97%
+python tests/pattern_detection/test_controlled_utr.py --class-weights --kmer 3
+
+# Test UTRs with C's in the background, 9-kmer convolution
+# Expecting UTR5 Sensitivity 94%, Precision 94%, Specificity 99%
+python tests/pattern_detection/test_controlled_utr.py --class-weights --kmer 9
+
+# Test UTRs with C's in the background, attention mask +/- 1bp for 1st head, +/- 4bp for 2nd head
+# Expecting UTR5 Sensitivity 82%, Precision 78%, Specificity 99%
+python tests/pattern_detection/test_controlled_utr.py --class-weights --attention-masks "0:1,1:4"
+
+# Test UTRs with C's in the background, attention mask +/- 4bp for 1st head, +/- 8bp for 2nd head
+# Expecting UTR5 Sensitivity 90%, Precision 90%, Specificity 99%
+python tests/pattern_detection/test_controlled_utr.py --class-weights --attention-masks "0:4,1:8"
