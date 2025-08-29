@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Controlled UTR Pattern Detection Model.
+Shared Pattern Detection Model for genomic sequence analysis.
 
-Larger model with 3 layers, 6 heads, ~4M parameters for controlled UTR testing.
+This model can be configured for different tasks:
+- Simple ATG detection (2 classes)
+- UTR pattern detection (3 classes)
+- Other genomic pattern recognition tasks
+
+The model architecture and training logic are shared, while datasets
+and task-specific configurations are handled by individual test drivers.
 """
 
 import torch
@@ -19,25 +25,30 @@ sys.path.append(str(project_root))
 
 from models.gene_predictor import DNAEmbedding
 
-class ControlledUTRModel(nn.Module):
+class PatternDetectionModel(nn.Module):
     """
-    Larger transformer model for controlled UTR pattern detection.
+    Configurable transformer model for genomic pattern detection.
     
-    Target: ~4M parameters with 3 layers, 6 heads
+    Can handle different numbers of classes and model sizes based on configuration.
     """
     
-    def __init__(self, vocab_size: int = 5, d_model: int = 512, n_layers: int = 3, 
-                 n_heads: int = 6, dropout: float = 0.1, max_seq_length: int = 1000):
+    def __init__(self, vocab_size: int = 5, d_model: int = 504, n_layers: int = 3, 
+                 n_heads: int = 6, num_classes: int = 3, dropout: float = 0.1, 
+                 max_seq_length: int = 1000):
         super().__init__()
         
-        # DNA embedding (larger model)
+        # Validate that d_model is divisible by n_heads
+        if d_model % n_heads != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by n_heads ({n_heads})")
+        
+        # DNA embedding
         self.embedding = DNAEmbedding(vocab_size=vocab_size, d_model=d_model, max_seq_length=max_seq_length)
         
         # Transformer encoder layers
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
-            dim_feedforward=d_model * 4,  # 2048 for d_model=512
+            dim_feedforward=d_model * 4,
             dropout=dropout,
             activation='gelu',
             batch_first=True,
@@ -45,8 +56,8 @@ class ControlledUTRModel(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
         
-        # Classification head for 3 classes
-        self.classifier = nn.Linear(d_model, 3)  # INTERGENIC, UTR5, UTR3
+        # Classification head - configurable number of classes
+        self.classifier = nn.Linear(d_model, num_classes)
         
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
@@ -59,7 +70,7 @@ class ControlledUTRModel(nn.Module):
             x: Input tensor of shape (batch_size, seq_length) with DNA indices
             
         Returns:
-            Logits of shape (batch_size, seq_length, 3)
+            Logits of shape (batch_size, seq_length, num_classes)
         """
         # Embed DNA sequence
         x = self.embedding(x)  # (batch_size, seq_length, d_model)
@@ -71,13 +82,16 @@ class ControlledUTRModel(nn.Module):
         x = self.dropout(x)
         
         # Classify each position
-        logits = self.classifier(x)  # (batch_size, seq_length, 3)
+        logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
         
         return logits
 
-class ControlledUTRModule(pl.LightningModule):
+class PatternDetectionModule(pl.LightningModule):
     """
-    PyTorch Lightning module for controlled UTR pattern detection.
+    PyTorch Lightning module for pattern detection.
+    
+    Handles training, validation, and testing for any number of classes.
+    Class names and metrics are configurable.
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -86,14 +100,17 @@ class ControlledUTRModule(pl.LightningModule):
         # Store config
         self.config = config
         self.learning_rate = config['training']['learning_rate']
+        self.num_classes = config['model']['num_classes']
+        self.class_names = config.get('class_names', [f'Class_{i}' for i in range(self.num_classes)])
         
         # Create model
         model_config = config['model']
-        self.model = ControlledUTRModel(
+        self.model = PatternDetectionModel(
             vocab_size=model_config['vocab_size'],
             d_model=model_config['d_model'],
             n_layers=model_config['n_layers'],
             n_heads=model_config['n_heads'],
+            num_classes=model_config['num_classes'],
             dropout=model_config['dropout'],
             max_seq_length=model_config['max_seq_length']
         )
@@ -120,20 +137,17 @@ class ControlledUTRModule(pl.LightningModule):
         accuracy = correct.mean()
         
         # Per-class accuracy
-        intergenic_mask = (targets == 0)
-        utr5_mask = (targets == 1)
-        utr3_mask = (targets == 2)
+        metrics = {'accuracy': accuracy}
         
-        intergenic_accuracy = correct[intergenic_mask].mean() if intergenic_mask.any() else torch.tensor(0.0)
-        utr5_accuracy = correct[utr5_mask].mean() if utr5_mask.any() else torch.tensor(0.0)
-        utr3_accuracy = correct[utr3_mask].mean() if utr3_mask.any() else torch.tensor(0.0)
+        for class_idx, class_name in enumerate(self.class_names):
+            class_mask = (targets == class_idx)
+            if class_mask.any():
+                class_accuracy = correct[class_mask].mean()
+                metrics[f'{class_name.lower()}_accuracy'] = class_accuracy
+            else:
+                metrics[f'{class_name.lower()}_accuracy'] = torch.tensor(0.0)
         
-        return {
-            'accuracy': accuracy,
-            'intergenic_accuracy': intergenic_accuracy,
-            'utr5_accuracy': utr5_accuracy,
-            'utr3_accuracy': utr3_accuracy
-        }
+        return metrics
     
     def training_step(self, batch, batch_idx):
         sequences, targets = batch
@@ -153,9 +167,12 @@ class ControlledUTRModule(pl.LightningModule):
         # Log metrics
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_accuracy', metrics['accuracy'], prog_bar=True)
-        self.log('train_intergenic_accuracy', metrics['intergenic_accuracy'], prog_bar=True)
-        self.log('train_utr5_accuracy', metrics['utr5_accuracy'], prog_bar=True)
-        self.log('train_utr3_accuracy', metrics['utr3_accuracy'], prog_bar=True)
+        
+        # Log per-class accuracies
+        for class_name in self.class_names:
+            metric_name = f'train_{class_name.lower()}_accuracy'
+            if metric_name in metrics:
+                self.log(metric_name, metrics[metric_name], prog_bar=True)
         
         return loss
     
@@ -177,9 +194,12 @@ class ControlledUTRModule(pl.LightningModule):
         # Log metrics
         self.log('val_loss', loss, prog_bar=True)
         self.log('val_accuracy', metrics['accuracy'], prog_bar=True)
-        self.log('val_intergenic_accuracy', metrics['intergenic_accuracy'], prog_bar=True)
-        self.log('val_utr5_accuracy', metrics['utr5_accuracy'], prog_bar=True)
-        self.log('val_utr3_accuracy', metrics['utr3_accuracy'], prog_bar=True)
+        
+        # Log per-class accuracies
+        for class_name in self.class_names:
+            metric_name = f'val_{class_name.lower()}_accuracy'
+            if metric_name in metrics:
+                self.log(metric_name, metrics[metric_name], prog_bar=True)
         
         return loss
     
@@ -203,3 +223,60 @@ class ControlledUTRModule(pl.LightningModule):
                 "monitor": "val_loss",
             },
         }
+
+def create_base_config(
+    num_classes: int,
+    class_names: list,
+    d_model: int = 504,
+    n_layers: int = 3,
+    n_heads: int = 6,
+    max_seq_length: int = 1000,
+    learning_rate: float = 5e-5,
+    max_epochs: int = 25,
+    batch_size: int = 8,
+    class_weights: Optional[list] = None
+) -> dict:
+    """
+    Create a base configuration that can be customized by individual tests.
+    
+    Args:
+        num_classes: Number of output classes
+        class_names: List of class names for logging
+        d_model: Model dimension (must be divisible by n_heads)
+        n_layers: Number of transformer layers
+        n_heads: Number of attention heads
+        max_seq_length: Maximum sequence length
+        learning_rate: Learning rate
+        max_epochs: Maximum training epochs
+        batch_size: Batch size
+        class_weights: Optional class weights for loss function
+    
+    Returns:
+        Configuration dictionary
+    """
+    # Validate d_model is divisible by n_heads
+    if d_model % n_heads != 0:
+        # Adjust d_model to nearest multiple
+        d_model = (d_model // n_heads) * n_heads
+        print(f"Warning: Adjusted d_model to {d_model} (divisible by {n_heads} heads)")
+    
+    return {
+        'model': {
+            'vocab_size': 5,      # A, T, G, C, N
+            'd_model': d_model,
+            'n_layers': n_layers,
+            'n_heads': n_heads,
+            'num_classes': num_classes,
+            'dropout': 0.1,
+            'max_seq_length': max_seq_length
+        },
+        'training': {
+            'learning_rate': learning_rate,
+            'max_epochs': max_epochs,
+            'batch_size': batch_size
+        },
+        'loss': {
+            'class_weights': class_weights
+        },
+        'class_names': class_names
+    }

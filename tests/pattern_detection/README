@@ -1,0 +1,12 @@
+# Test ATG with uniform background (all Cs)
+python tests/pattern_detection/test_simple_atg_detection.py --background uniform --class-weights
+
+# Test ATG with same model as controlled UTR
+python tests/pattern_detection/test_simple_atg_detection.py --d-model 504 --layers 3 --heads 6
+
+
+# Test with different model sizes
+python tests/pattern_detection/test_controlled_utr.py --d-model 256 --layers 4 --heads 8
+
+# Test with stronger class weights
+python tests/pattern_detection/test_controlled_utr.py --class-weights --utr-weight 5.0

@@ -25,7 +25,7 @@ import argparse
 from datetime import datetime
 
 from tests.pattern_detection.simple_atg_dataset import SimpleATGDataset
-from tests.pattern_detection.simple_atg_model import SimpleATGModule
+from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
 import json
 import numpy as np
 
@@ -139,42 +139,37 @@ def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
             print(f"      No ATGs found")
 
 
-def create_test_config(n_heads: int = 4, d_model: int = 256, use_class_weights: bool = False, start_weight: float = 10.0) -> dict:
+def create_atg_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+                     learning_rate: float = 5e-5, max_epochs: int = 20, batch_size: int = 8,
+                     use_class_weights: bool = False, start_weight: float = 2.0) -> dict:
     """Create configuration for the simple ATG test."""
     
-    # Class weights: heavily favor START to force learning
-    if use_class_weights:
-        class_weights = [1.0, start_weight]  # [INTERGENIC, START] - heavily weight START
-    else:
-        class_weights = None
+    # Class weights for ATG detection
+    class_weights = [1.0, start_weight] if use_class_weights else None
     
-    return {
-        'model': {
-            'vocab_size': 5,      # A, C, G, T, N
-            'd_model': d_model,
-            'n_layers': 4,
-            'n_heads': n_heads,
-            'dropout': 0.1,
-            'max_seq_length': 1000
-        },
-        'training': {
-            'learning_rate': 1e-4,
-            'max_epochs': 20,
-            'batch_size': 16
-        },
-        'loss': {
-            'class_weights': class_weights
-        }
-    }
+    return create_base_config(
+        num_classes=2,
+        class_names=['INTERGENIC', 'START'],
+        d_model=d_model,
+        n_layers=n_layers,
+        n_heads=n_heads,
+        learning_rate=learning_rate,
+        max_epochs=max_epochs,
+        batch_size=batch_size,
+        class_weights=class_weights
+    )
 
 
-def run_simple_atg_test(n_heads: int = 4, d_model: int = 256, num_sequences: int = 1000, use_class_weights: bool = False, start_weight: float = 10.0):
+def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+                        num_sequences: int = 1000, background: str = 'random',
+                        use_class_weights: bool = False, start_weight: float = 2.0,
+                        learning_rate: float = 5e-5, max_epochs: int = 20, batch_size: int = 8):
     """Run the simple ATG detection test."""
     
     print(f"=" * 60)
     print(f"SIMPLE ATG DETECTION TEST")
-    print(f"Model: {n_heads} heads, d_model={d_model}")
-    print(f"Data: {num_sequences} sequences")
+    print(f"Model: {n_layers} layers, {n_heads} heads, d_model={d_model}")
+    print(f"Data: {num_sequences} sequences, background={background}")
     if use_class_weights:
         print(f"Class weights: INTERGENIC=1.0, START={start_weight}")
     else:
@@ -182,14 +177,19 @@ def run_simple_atg_test(n_heads: int = 4, d_model: int = 256, num_sequences: int
     print(f"=" * 60)
     
     # Create config
-    config = create_test_config(n_heads=n_heads, d_model=d_model, use_class_weights=use_class_weights, start_weight=start_weight)
+    config = create_atg_config(
+        d_model=d_model, n_layers=n_layers, n_heads=n_heads,
+        learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
+        use_class_weights=use_class_weights, start_weight=start_weight
+    )
     
     # Create dataset
     print("\n1. Creating synthetic dataset...")
     dataset = SimpleATGDataset(
         sequence_length=1000,
         num_sequences=num_sequences,
-        atg_density=0.25  # 25% of positions should be ATG starts - balanced test
+        atg_density=0.25,  # 25% of positions should be ATG starts - balanced test
+        background=background
     )
     
     # Split dataset
@@ -217,7 +217,7 @@ def run_simple_atg_test(n_heads: int = 4, d_model: int = 256, num_sequences: int
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"tests/pattern_detection/test_run_{timestamp}")
+    output_dir = Path(f"tests/pattern_detection/simple_atg_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save sample data for verification BEFORE training
@@ -226,7 +226,7 @@ def run_simple_atg_test(n_heads: int = 4, d_model: int = 256, num_sequences: int
     
     # Create model
     print("\n3. Creating model...")
-    model = SimpleATGModule(config)
+    model = PatternDetectionModule(config)
     
     print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"  Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
@@ -338,21 +338,31 @@ def analyze_model_predictions(model, val_loader):
 
 def main():
     parser = argparse.ArgumentParser(description="Test simple ATG detection")
-    parser.add_argument('--heads', type=int, default=4, help='Number of attention heads')
-    parser.add_argument('--model-size', type=int, default=256, help='Model dimension')
+    parser.add_argument('--d-model', type=int, default=504, help='Model dimension')
+    parser.add_argument('--layers', type=int, default=3, help='Number of transformer layers')
+    parser.add_argument('--heads', type=int, default=6, help='Number of attention heads')
     parser.add_argument('--sequences', type=int, default=1000, help='Number of training sequences')
+    parser.add_argument('--background', choices=['random', 'uniform'], default='random', help='Background sequence type')
     parser.add_argument('--class-weights', action='store_true', help='Use class weights to balance learning')
-    parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class (default: 10.0)')
+    parser.add_argument('--start-weight', type=float, default=2.0, help='Weight for START class (default: 2.0)')
+    parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
+    parser.add_argument('--epochs', type=int, default=20, help='Maximum epochs')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     
     args = parser.parse_args()
     
     # Run test
     output_dir = run_simple_atg_test(
+        d_model=args.d_model,
+        n_layers=args.layers,
         n_heads=args.heads,
-        d_model=args.model_size, 
         num_sequences=args.sequences,
+        background=args.background,
         use_class_weights=args.class_weights,
-        start_weight=args.start_weight
+        start_weight=args.start_weight,
+        learning_rate=args.learning_rate,
+        max_epochs=args.epochs,
+        batch_size=args.batch_size
     )
     
     print(f"\nTest completed! Results in: {output_dir}")

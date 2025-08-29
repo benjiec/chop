@@ -33,7 +33,7 @@ import json
 import numpy as np
 
 from tests.pattern_detection.controlled_utr_dataset import ControlledUTRDataset
-from tests.pattern_detection.controlled_utr_model import ControlledUTRModule
+from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -144,52 +144,50 @@ def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
         print(f"    Sequence {i}: {sample['background_purity']:.1%} Cs, {sample['utr5_count']} UTR5s, {sample['utr3_count']} UTR3s")
 
 
-def create_test_config(use_class_weights: bool = False) -> dict:
+def create_controlled_utr_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+                               learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
+                               use_class_weights: bool = False, utr_weight: float = 2.0) -> dict:
     """Create configuration for the controlled UTR test."""
     
-    # Class weights: slight boost to UTR classes if requested
-    if use_class_weights:
-        # With 90% intergenic, 5% each UTR, give UTRs a modest boost
-        class_weights = [1.0, 2.0, 2.0]  # [INTERGENIC, UTR5, UTR3]
-    else:
-        class_weights = None
+    # Class weights for UTR detection
+    class_weights = [1.0, utr_weight, utr_weight] if use_class_weights else None
     
-    return {
-        'model': {
-            'vocab_size': 5,      # A, C, G, T, N
-            'd_model': 504,       # Divisible by 6 heads (504 = 6 * 84)
-            'n_layers': 3,        # As requested
-            'n_heads': 6,         # As requested
-            'dropout': 0.1,
-            'max_seq_length': 1000  # As requested (overkill)
-        },
-        'training': {
-            'learning_rate': 5e-5,  # Lower LR for larger model
-            'max_epochs': 25,       # More epochs for controlled test
-            'batch_size': 8         # Smaller batch for larger model
-        },
-        'loss': {
-            'class_weights': class_weights
-        }
-    }
+    return create_base_config(
+        num_classes=3,
+        class_names=['INTERGENIC', 'UTR5', 'UTR3'],
+        d_model=d_model,
+        n_layers=n_layers,
+        n_heads=n_heads,
+        learning_rate=learning_rate,
+        max_epochs=max_epochs,
+        batch_size=batch_size,
+        class_weights=class_weights
+    )
 
 
-def run_controlled_utr_test(use_class_weights: bool = False):
+def run_controlled_utr_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+                           num_sequences: int = 400, learning_rate: float = 5e-5, 
+                           max_epochs: int = 25, batch_size: int = 8,
+                           use_class_weights: bool = False, utr_weight: float = 2.0):
     """Run the controlled UTR pattern detection test."""
     
     print(f"=" * 70)
     print(f"CONTROLLED UTR PATTERN DETECTION TEST")
-    print(f"Model: 3 layers, 6 heads, ~4M parameters")
+    print(f"Model: {n_layers} layers, {n_heads} heads, d_model={d_model}")
     print(f"Data: 5% UTR5, 5% UTR3, 90% INTERGENIC (all Cs)")
-    print(f"Sequences: 400 total (200 UTR5 + 200 UTR3)")
+    print(f"Sequences: {num_sequences} total")
     if use_class_weights:
-        print(f"Class weights: INTERGENIC=1.0, UTR5=2.0, UTR3=2.0")
+        print(f"Class weights: INTERGENIC=1.0, UTR5={utr_weight}, UTR3={utr_weight}")
     else:
         print(f"Class weights: DISABLED")
     print(f"=" * 70)
     
     # Create config
-    config = create_test_config(use_class_weights=use_class_weights)
+    config = create_controlled_utr_config(
+        d_model=d_model, n_layers=n_layers, n_heads=n_heads,
+        learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
+        use_class_weights=use_class_weights, utr_weight=utr_weight
+    )
     
     # Create dataset
     print("\n1. Creating controlled dataset...")
@@ -234,7 +232,7 @@ def run_controlled_utr_test(use_class_weights: bool = False):
     
     # Create model
     print("\n3. Creating model...")
-    model = ControlledUTRModule(config)
+    model = PatternDetectionModule(config)
     
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -348,6 +346,10 @@ def analyze_controlled_predictions(model, data_loader, output_dir):
         over_prediction_ratio = pred_count / target_count if target_count > 0 else float('inf')
         
         results[class_name] = {
+            'tp': int(tp),
+            'fp': int(fp), 
+            'fn': int(fn),
+            'tn': int(tn),
             'sensitivity': sensitivity,
             'specificity': specificity,
             'precision': precision,
@@ -362,6 +364,7 @@ def analyze_controlled_predictions(model, data_loader, output_dir):
     
     for class_name, metrics in results.items():
         print(f"\n{class_name}:")
+        print(f"  TP: {metrics['tp']}, FP: {metrics['fp']}, FN: {metrics['fn']}, TN: {metrics['tn']}")
         print(f"  Sensitivity: {metrics['sensitivity']:.3f}")
         print(f"  Specificity: {metrics['specificity']:.3f}")
         print(f"  Precision: {metrics['precision']:.3f}")
@@ -399,12 +402,30 @@ def analyze_controlled_predictions(model, data_loader, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="Test controlled UTR pattern detection")
+    parser.add_argument('--d-model', type=int, default=504, help='Model dimension')
+    parser.add_argument('--layers', type=int, default=3, help='Number of transformer layers')
+    parser.add_argument('--heads', type=int, default=6, help='Number of attention heads')
+    parser.add_argument('--sequences', type=int, default=400, help='Number of training sequences')
     parser.add_argument('--class-weights', action='store_true', help='Use class weights')
+    parser.add_argument('--utr-weight', type=float, default=2.0, help='Weight for UTR classes')
+    parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
+    parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     
     args = parser.parse_args()
     
     # Run test
-    output_dir = run_controlled_utr_test(use_class_weights=args.class_weights)
+    output_dir = run_controlled_utr_test(
+        d_model=args.d_model,
+        n_layers=args.layers,
+        n_heads=args.heads,
+        num_sequences=args.sequences,
+        learning_rate=args.learning_rate,
+        max_epochs=args.epochs,
+        batch_size=args.batch_size,
+        use_class_weights=args.class_weights,
+        utr_weight=args.utr_weight
+    )
     
     print(f"\nControlled test completed! Results in: {output_dir}")
 

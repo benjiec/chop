@@ -17,22 +17,27 @@ from typing import Tuple
 
 class SimpleATGDataset(Dataset):
     """
-    Dataset that generates random DNA sequences with ATG codons labeled as START.
+    Dataset that generates DNA sequences with ATG codons labeled as START.
     
     This is designed to test if the transformer model can learn the most basic pattern:
     ATG = START, everything else = INTERGENIC.
+    
+    Background can be random DNA or uniform (all Cs) for controlled experiments.
     """
     
-    def __init__(self, sequence_length: int = 1000, num_sequences: int = 1000, atg_density: float = 0.25):
+    def __init__(self, sequence_length: int = 1000, num_sequences: int = 1000, 
+                 atg_density: float = 0.25, background: str = 'random'):
         """
         Args:
             sequence_length: Length of each DNA sequence
             num_sequences: Number of sequences to generate
             atg_density: Approximate fraction of positions that should be ATG starts
+            background: 'random' for random DNA, 'uniform' for all Cs
         """
         self.sequence_length = sequence_length
         self.num_sequences = num_sequences
         self.atg_density = atg_density
+        self.background = background
         
         # Generate all sequences and targets upfront
         self.sequences = []
@@ -65,16 +70,21 @@ class SimpleATGDataset(Dataset):
         print(f"  Total ATG codons: {sum(atg_counts)}")
     
     def _generate_sequence(self) -> Tuple[str, np.ndarray]:
-        """Generate a single random DNA sequence with ATG labels."""
+        """Generate a single DNA sequence with ATG labels."""
         
-        # Start with random DNA
-        bases = ['A', 'T', 'G', 'C']
-        sequence = [random.choice(bases) for _ in range(self.sequence_length)]
-        
-        # Remove any accidental ATGs by replacing the middle base
-        for i in range(self.sequence_length - 2):
-            if sequence[i] == 'A' and sequence[i + 1] == 'T' and sequence[i + 2] == 'G':
-                sequence[i + 1] = random.choice(['A', 'G', 'C'])  # Change T to avoid ATG
+        # Create background based on configuration
+        if self.background == 'uniform':
+            # All Cs for controlled experiments
+            sequence = ['C'] * self.sequence_length
+        else:
+            # Random DNA (default)
+            bases = ['A', 'T', 'G', 'C']
+            sequence = [random.choice(bases) for _ in range(self.sequence_length)]
+            
+            # Remove any accidental ATGs by replacing the middle base
+            for i in range(self.sequence_length - 2):
+                if sequence[i] == 'A' and sequence[i + 1] == 'T' and sequence[i + 2] == 'G':
+                    sequence[i + 1] = random.choice(['A', 'G', 'C'])  # Change T to avoid ATG
         
         # Create targets (all INTERGENIC initially)
         targets = np.zeros(self.sequence_length, dtype=np.int64)

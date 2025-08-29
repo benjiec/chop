@@ -1,8 +1,7 @@
 ## Summary
 
 This is a repository to develop a gene prediction program. The final end goal
-is to take a genomic FASTA and a genomic GFF file as input, and predict list of
-protein amino acid sequences.
+is to take a genomic FASTA and predict list of protein amino acid sequences.
 
 The strategy we are taking is to develop two transformer NN models, with
 attentions. The first model is a gene boundary prediction model that predicts
