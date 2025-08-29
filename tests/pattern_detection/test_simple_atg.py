@@ -28,6 +28,7 @@ from tests.pattern_detection.simple_atg_dataset import SimpleATGDataset
 from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
 import json
 import numpy as np
+from typing import Optional, Dict
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -141,7 +142,8 @@ def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
 
 def create_atg_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                      learning_rate: float = 5e-5, max_epochs: int = 20, batch_size: int = 8,
-                     use_class_weights: bool = False, start_weight: float = 2.0) -> dict:
+                     use_class_weights: bool = False, start_weight: float = 2.0,
+                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3) -> dict:
     """Create configuration for the simple ATG test."""
     
     # Class weights for ATG detection
@@ -156,14 +158,17 @@ def create_atg_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         learning_rate=learning_rate,
         max_epochs=max_epochs,
         batch_size=batch_size,
-        class_weights=class_weights
+        class_weights=class_weights,
+        attention_masks=attention_masks,
+        kmer_size=kmer_size
     )
 
 
 def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                         num_sequences: int = 1000, background: str = 'random',
                         use_class_weights: bool = False, start_weight: float = 2.0,
-                        learning_rate: float = 5e-5, max_epochs: int = 20, batch_size: int = 8):
+                        learning_rate: float = 5e-5, max_epochs: int = 20, batch_size: int = 8,
+                        attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3):
     """Run the simple ATG detection test."""
     
     print(f"=" * 60)
@@ -180,7 +185,8 @@ def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     config = create_atg_config(
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
-        use_class_weights=use_class_weights, start_weight=start_weight
+        use_class_weights=use_class_weights, start_weight=start_weight,
+        attention_masks=attention_masks, kmer_size=kmer_size
     )
     
     # Create dataset
@@ -450,8 +456,18 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=20, help='Maximum epochs')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--attention-masks', type=str, help='Head attention masks as "head:window,head:window" (e.g., "0:1,1:2")')
+    parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=default)')
     
     args = parser.parse_args()
+    
+    # Parse attention masks
+    attention_masks = None
+    if args.attention_masks:
+        attention_masks = {}
+        for pair in args.attention_masks.split(','):
+            head, window = pair.split(':')
+            attention_masks[int(head)] = int(window)
     
     # Run test
     output_dir = run_simple_atg_test(
@@ -464,7 +480,9 @@ def main():
         start_weight=args.start_weight,
         learning_rate=args.learning_rate,
         max_epochs=args.epochs,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        attention_masks=attention_masks,
+        kmer_size=args.kmer
     )
     
     print(f"\nTest completed! Results in: {output_dir}")

@@ -25,10 +25,11 @@ from utils.constants import (
 class DNAEmbedding(nn.Module):
     """DNA sequence embedding layer with k-mer features and positional encoding."""
     
-    def __init__(self, vocab_size: int = DEFAULT_VOCAB_SIZE, d_model: int = DEFAULT_D_MODEL, max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH):
+    def __init__(self, vocab_size: int = DEFAULT_VOCAB_SIZE, d_model: int = DEFAULT_D_MODEL, max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH, kmer_size: int = 3):
         super().__init__()
         self.d_model = d_model
         self.max_seq_length = max_seq_length
+        self.kmer_size = kmer_size
         
         # DNA token embedding (A, C, G, T, N)
         self.token_embedding = nn.Embedding(vocab_size, d_model)
@@ -36,8 +37,13 @@ class DNAEmbedding(nn.Module):
         # Positional encoding
         self.pos_encoding = nn.Parameter(torch.randn(1, max_seq_length, d_model))
         
-        # K-mer features (3-mer context)
-        self.kmer_conv = nn.Conv1d(d_model, d_model, kernel_size=3, padding=1)
+        # K-mer features (configurable size, 0 = disabled)
+        if kmer_size > 0:
+            # Use 'same' padding to maintain sequence length
+            padding = (kmer_size - 1) // 2  # For odd kernel sizes
+            self.kmer_conv = nn.Conv1d(d_model, d_model, kernel_size=kmer_size, padding=padding)
+        else:
+            self.kmer_conv = None
         
         # Layer normalization
         self.layer_norm = nn.LayerNorm(d_model)
@@ -53,9 +59,10 @@ class DNAEmbedding(nn.Module):
         if seq_length <= self.max_seq_length:
             embeddings = embeddings + self.pos_encoding[:, :seq_length, :]
         
-        # K-mer context features
-        kmer_features = self.kmer_conv(embeddings.transpose(1, 2)).transpose(1, 2)
-        embeddings = embeddings + kmer_features
+        # K-mer context features (if enabled)
+        if self.kmer_conv is not None:
+            kmer_features = self.kmer_conv(embeddings.transpose(1, 2)).transpose(1, 2)
+            embeddings = embeddings + kmer_features
         
         # Layer normalization
         embeddings = self.layer_norm(embeddings)

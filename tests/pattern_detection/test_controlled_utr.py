@@ -34,6 +34,7 @@ import numpy as np
 
 from tests.pattern_detection.controlled_utr_dataset import ControlledUTRDataset
 from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
+from typing import Optional, Dict
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -146,7 +147,8 @@ def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
 
 def create_controlled_utr_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                                learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-                               use_class_weights: bool = False, utr_weight: float = 2.0) -> dict:
+                               use_class_weights: bool = False, utr_weight: float = 2.0,
+                               attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3) -> dict:
     """Create configuration for the controlled UTR test."""
     
     # Class weights for UTR detection
@@ -161,14 +163,17 @@ def create_controlled_utr_config(d_model: int = 504, n_layers: int = 3, n_heads:
         learning_rate=learning_rate,
         max_epochs=max_epochs,
         batch_size=batch_size,
-        class_weights=class_weights
+        class_weights=class_weights,
+        attention_masks=attention_masks,
+        kmer_size=kmer_size
     )
 
 
 def run_controlled_utr_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                            num_sequences: int = 400, learning_rate: float = 5e-5, 
                            max_epochs: int = 25, batch_size: int = 8,
-                           use_class_weights: bool = False, utr_weight: float = 2.0):
+                           use_class_weights: bool = False, utr_weight: float = 2.0,
+                           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3):
     """Run the controlled UTR pattern detection test."""
     
     print(f"=" * 70)
@@ -186,7 +191,8 @@ def run_controlled_utr_test(d_model: int = 504, n_layers: int = 3, n_heads: int 
     config = create_controlled_utr_config(
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
-        use_class_weights=use_class_weights, utr_weight=utr_weight
+        use_class_weights=use_class_weights, utr_weight=utr_weight,
+        attention_masks=attention_masks, kmer_size=kmer_size
     )
     
     # Create dataset
@@ -220,6 +226,7 @@ def run_controlled_utr_test(d_model: int = 504, n_layers: int = 3, n_heads: int 
     
     print(f"  Training samples: {len(train_dataset)}")
     print(f"  Validation samples: {len(val_dataset)}")
+    print(f"  Full config: {config}")
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -411,8 +418,18 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--attention-masks', type=str, help='Head attention masks as "head:window,head:window" (e.g., "0:1,1:2")')
+    parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=default)')
     
     args = parser.parse_args()
+    
+    # Parse attention masks
+    attention_masks = None
+    if args.attention_masks:
+        attention_masks = {}
+        for pair in args.attention_masks.split(','):
+            head, window = pair.split(':')
+            attention_masks[int(head)] = int(window)
     
     # Run test
     output_dir = run_controlled_utr_test(
@@ -424,7 +441,9 @@ def main():
         max_epochs=args.epochs,
         batch_size=args.batch_size,
         use_class_weights=args.class_weights,
-        utr_weight=args.utr_weight
+        utr_weight=args.utr_weight,
+        attention_masks=attention_masks,
+        kmer_size=args.kmer
     )
     
     print(f"\nControlled test completed! Results in: {output_dir}")

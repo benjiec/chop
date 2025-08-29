@@ -27,9 +27,8 @@ test using sliding window to detect longer genes.
 
 ### Targets
 
-We are marking START, STOP, and GENE BODY for bps between START and STOP. For
-500 bps upstream of START, and 500 bps downstream of STOP, we are marking them
-as possible UTRs. All other bps we are marking them INTERGENIC.
+We are marking START, STOP, and GENE BODY for bps between START and STOP. We
+are still uncertain how we want to mark the UTR and intergenic regions.
 
 Let's not worry about overlapping genes. In the future, we can look at
 predictions with less scores and use them to put together overlapping genes
@@ -58,15 +57,24 @@ python tests/gene_prediction/test_gene_prediction_workflow.py
 
 ## Current Learnings
 
-We are learning how to setup the transformer model to learn.
+We are learning how to setup the transformer model to learn certain patterns.
+Tests are in tests/pattern_detection directory. So far, we have discovered that
+either using k-mer convolution to complement transformers, e.g. 9-kmers, or
+attention masking, e.g. 3 bp window followed by 9 bp window, significantly
+improves ability for model to detect and recognize short sequence patterns,
+e.g. ATG.
 
-In tests/pattern_detection, we have tests to see if we can detect UTRs and
-simple ATGs. Using 3-kmer convolution with the DNAEmbedding class in
-models/gene_predictor, we are able to achieve 84% precision of detecting ATGs
-in sequences. However, that number drops significantly when we don't use 3-kmer
-convolution. This suggests to pick up small patterns, using convolution
-augmented transformer approach is helpful.
+We are able to achieve close to 100% sensitivity, precision, and specificity
+when using 9-kmer OR attention masking, to detect ATGs scattered throughout
+random sequences. Sensitivity drops below 50% if k-mer and attention maskings
+are both off. For attention masking, both 3 bp window followed by 9 bp window,
+and 9 bp window followed by 17 bp window, worked well.
 
+For longer UTR sequences, attention masking with 9 bp window followed by 17 bp
+window worked better than smaller windows. The UTR sequences are longer, with
+some with low complexity and some with high complexity, and seem to benefit
+from bigger windows. 9-kmer performed really well, beating attention masking.
+3-kmer did not perform as well.
 
 
 ## Cursor, please following these rules
@@ -87,7 +95,7 @@ changes in the configuration YAML files. Always check to make sure if you
 add/modify the structure of the configuration YAML files, we have code that
 supports the changes.
 
-4. Do not produce python code to just print statements that you will display in
+4. Do not produce Python code to just print statements that you will display in
 rich text in the chat box. Avoid using the terminal to communicate messages -
 only use it to run commands.
 
