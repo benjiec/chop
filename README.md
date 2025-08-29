@@ -6,6 +6,7 @@ is to take a genomic FASTA and predict list of protein amino acid sequences.
 Currently we are focused on just figure out how to detect gene boundaries
 within a genome.
 
+
 ### Fixture generation
 
 The test data, or fixtures, should be genomic sequences with genes that include
@@ -23,6 +24,7 @@ introns) to be within 1200 bp or so, so we can add 1000 bps of UTRs to fit the
 2500 bp sequence length. 10% of the test fixtures are long genes, so we can
 test using sliding window to detect longer genes.
 
+
 ### Targets
 
 We are marking START, STOP, and GENE BODY for bps between START and STOP. For
@@ -32,6 +34,7 @@ as possible UTRs. All other bps we are marking them INTERGENIC.
 Let's not worry about overlapping genes. In the future, we can look at
 predictions with less scores and use them to put together overlapping genes
 (and alternative splicing).
+
 
 ### Running the end to end workflow
 
@@ -52,29 +55,18 @@ Then run the workflow:
 python tests/gene_prediction/test_gene_prediction_workflow.py
 ```
 
-## Current directory structure
 
-chop/
-├── scripts/
-│   ├── preprocess_gene_data.py    # Stage 1: Preprocessing
-├── training/
-│   └── train_gene_prediction.py    # Stage 2 - Training
-├── inference/
-│   └── predict_gene_boundaries.py  # Stage 2 - Inference
-├── tests/
-│   ├── gene_prediction/                      # E2E test for stage 2
-│   │   ├── test_gene_prediction_workflow.py  # Runner for E2E test for stage 2
-│   │   ├── generate_test_fixture.py          # Generates test data for stage 2
-│   │   ├── test_run_20241126_143052/     # Complete isolation per run
-│   │   │   ├── fixtures/                 # Generated test data
-│   │   │   ├── processed/                # Preprocessed data  
-│   │   │   ├── models/                   # Trained models & checkpoints
-│   │   │   └── predictions/              # Model predictions & results
-│   └── unit/                        # Essential unit tests (25 tests)
-├── utils/                          # Minimal utilities
-├── models/                         # Model definitions
-└── configs/
-    └── gene_prediction_test.yaml   # Single config for stage 2 - gene prediction
+## Current Learnings
+
+We are learning how to setup the transformer model to learn.
+
+In tests/pattern_detection, we have tests to see if we can detect UTRs and
+simple ATGs. Using 3-kmer convolution with the DNAEmbedding class in
+models/gene_predictor, we are able to achieve 84% precision of detecting ATGs
+in sequences. However, that number drops significantly when we don't use 3-kmer
+convolution. This suggests to pick up small patterns, using convolution
+augmented transformer approach is helpful.
+
 
 
 ## Cursor, please following these rules

@@ -214,6 +214,7 @@ def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     print(f"  Training samples: {len(train_dataset)}")
     print(f"  Validation samples: {len(val_dataset)}")
+    print(f"  Full config: {config}")
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
