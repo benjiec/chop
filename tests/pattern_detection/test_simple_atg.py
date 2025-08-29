@@ -273,6 +273,10 @@ def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     print("\n6. Analysis...")
     analyze_model_predictions(model, val_loader)
     
+    # Detailed analysis with TP/FP/FN/TN
+    print("\n7. Detailed Analysis...")
+    analyze_detailed_predictions(model, val_loader, output_dir)
+    
     print(f"\nResults saved to: {output_dir}")
     return output_dir
 
@@ -334,6 +338,103 @@ def analyze_model_predictions(model, val_loader):
     print(f"  Total accuracy: {accuracy:.4f}")
     print(f"  START accuracy: {start_accuracy:.4f}")
     print(f"  INTERGENIC accuracy: {intergenic_accuracy:.4f}")
+
+
+def analyze_detailed_predictions(model, data_loader, output_dir):
+    """Detailed analysis with TP/FP/FN/TN for both classes."""
+    
+    model.eval()
+    device = next(model.parameters()).device
+    
+    all_predictions = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for batch in data_loader:
+            sequences, targets = batch
+            sequences = sequences.to(device)
+            targets = targets.to(device)
+            
+            # Get predictions
+            logits = model(sequences)
+            predictions = torch.argmax(logits, dim=-1)
+            
+            # Convert to numpy and collect
+            all_predictions.extend(predictions.cpu().numpy())
+            all_targets.extend(targets.cpu().numpy())
+    
+    # Flatten arrays
+    pred_flat = np.array(all_predictions).flatten()
+    target_flat = np.array(all_targets).flatten()
+    
+    # Calculate detailed metrics for each class
+    results = {}
+    class_names = ['INTERGENIC', 'START']
+    
+    for class_idx, class_name in enumerate(class_names):
+        # True positives, false positives, false negatives, true negatives
+        tp = ((pred_flat == class_idx) & (target_flat == class_idx)).sum()
+        fp = ((pred_flat == class_idx) & (target_flat != class_idx)).sum()
+        fn = ((pred_flat != class_idx) & (target_flat == class_idx)).sum()
+        tn = ((pred_flat != class_idx) & (target_flat != class_idx)).sum()
+        
+        # Calculate metrics
+        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        
+        target_count = (target_flat == class_idx).sum()
+        pred_count = (pred_flat == class_idx).sum()
+        over_prediction_ratio = pred_count / target_count if target_count > 0 else float('inf')
+        
+        results[class_name] = {
+            'tp': int(tp),
+            'fp': int(fp), 
+            'fn': int(fn),
+            'tn': int(tn),
+            'sensitivity': sensitivity,
+            'specificity': specificity,
+            'precision': precision,
+            'target_count': int(target_count),
+            'pred_count': int(pred_count),
+            'over_prediction_ratio': over_prediction_ratio
+        }
+    
+    # Print detailed results
+    print(f"SIMPLE ATG TEST RESULTS:")
+    print(f"=" * 50)
+    
+    for class_name, metrics in results.items():
+        print(f"\n{class_name}:")
+        print(f"  TP: {metrics['tp']}, FP: {metrics['fp']}, FN: {metrics['fn']}, TN: {metrics['tn']}")
+        print(f"  Sensitivity: {metrics['sensitivity']:.3f}")
+        print(f"  Specificity: {metrics['specificity']:.3f}")
+        print(f"  Precision: {metrics['precision']:.3f}")
+        print(f"  Over-prediction: {metrics['over_prediction_ratio']:.1f}x")
+        print(f"  Targets: {metrics['target_count']}, Predictions: {metrics['pred_count']}")
+    
+    # Save detailed results
+    with open(output_dir / "detailed_results.json", 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Critical assessment for ATG detection
+    start_precision = results['START']['precision']
+    start_over_pred = results['START']['over_prediction_ratio']
+    
+    print(f"\n" + "=" * 50)
+    print("CRITICAL ASSESSMENT:")
+    
+    if start_precision > 0.8:
+        print("✅ SUCCESS: High precision suggests real ATG pattern learning!")
+    elif start_precision > 0.5:
+        print("🟡 PARTIAL: Moderate precision, some ATG pattern learning")
+    else:
+        print("❌ FAILURE: Low precision suggests over-prediction, not ATG pattern learning")
+    
+    if start_over_pred > 2.0:
+        print("⚠️  WARNING: Significant over-prediction detected")
+    
+    print(f"=" * 50)
 
 
 def main():
