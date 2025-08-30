@@ -37,7 +37,7 @@ import numpy as np
 from typing import Optional, Dict
 
 from tests.layout_detection.utr_start_dataset import UTRStartDataset
-from tests.layout_detection.layout_model import PatternDetectionModule, create_base_config
+from tests.layout_detection.layout_model import LayoutDetectionModule, create_base_config
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -78,7 +78,7 @@ def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
                         'classification': class_names[atg_class],
                         'context_before': context_before,
                         'context_after': context_after,
-                        'is_real_start': atg_class == 2
+                        'is_real_start': bool(atg_class == 2)  # Convert to Python bool
                     })
             
             # Find UTR5 regions
@@ -202,8 +202,38 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         num_contigs=num_contigs,
         layouts_per_contig=layouts_per_contig,
         background_length=500,
-        sequence_length=2000
+        window_size=2000,
+        window_stride=500
     )
+    
+    # VERIFICATION: Check that full contigs have the expected number of real STARTs
+    print("\n1a. Verifying dataset generation...")
+    for contig_idx in range(min(3, dataset.num_contigs)):  # Check first 3 full contigs
+        full_sequence = dataset.contigs[contig_idx]
+        full_targets = dataset.contig_targets[contig_idx]
+        
+        # Count real STARTs (class 2) and UTR5s (class 1)
+        real_starts = np.sum(full_targets == 2)
+        utr5_positions = np.sum(full_targets == 1)
+        
+        # Count ATGs in sequence
+        total_atgs = 0
+        real_start_atgs = 0
+        for i in range(len(full_sequence) - 2):
+            if full_sequence[i:i+3] == 'ATG':
+                total_atgs += 1
+                if full_targets[i] == 2:  # Check if this ATG is labeled as START
+                    real_start_atgs += 1
+        
+        print(f"  Full Contig {contig_idx}: {real_start_atgs} real START ATGs, {utr5_positions} UTR5 positions, {total_atgs} total ATGs")
+        
+        # Assert expected counts
+        expected_start_atgs = layouts_per_contig    # Number of ATG codons
+        
+        assert real_start_atgs == expected_start_atgs, f"Contig {contig_idx}: Expected {expected_start_atgs} real START ATGs, got {real_start_atgs}"
+        
+    print("  ✓ Dataset generation verified - all contigs have correct START counts")
+    print(f"  ✓ Total training windows: {len(dataset)}")
     
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -225,8 +255,8 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         num_workers=0
     )
     
-    print(f"  Training contigs: {len(train_dataset)}")
-    print(f"  Validation contigs: {len(val_dataset)}")
+    print(f"  Training windows: {len(train_dataset)}")
+    print(f"  Validation windows: {len(val_dataset)}")
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -239,12 +269,13 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create model
     print("\n3. Creating model...")
-    model = PatternDetectionModule(config)
+    model = LayoutDetectionModule(config)
     
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Model parameters: {total_params:,}")
     print(f"  Trainable parameters: {trainable_params:,}")
+    print(f"  Full configuration: {config}")
     
     # Create trainer
     print("\n4. Starting training...")
@@ -369,6 +400,9 @@ def analyze_utr_start_predictions(model, data_loader, output_dir):
     with open(output_dir / "detailed_results.json", 'w') as f:
         json.dump(results, f, indent=2)
     
+    # Save detailed predictions for verification
+    save_detailed_predictions(all_predictions, all_targets, output_dir)
+    
     # Critical assessment for context learning
     start_precision = results['START']['precision']
     start_sensitivity = results['START']['sensitivity']
@@ -392,6 +426,82 @@ def analyze_utr_start_predictions(model, data_loader, output_dir):
         print("⚠️  WARNING: Significant over-prediction - may be finding all ATGs, not just contextual ones")
     
     print(f"=" * 50)
+
+
+def save_detailed_predictions(all_predictions, all_targets, output_dir, max_windows=10):
+    """Save detailed predictions for manual verification."""
+    
+    print(f"  Saving detailed predictions for first {max_windows} windows...")
+    
+    # Convert indices back to nucleotides
+    idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
+    class_names = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START'}
+    
+    detailed_predictions = []
+    
+    for window_idx in range(min(max_windows, len(all_predictions))):
+        pred_array = all_predictions[window_idx]
+        target_array = all_targets[window_idx]
+        
+        # Convert sequences back to strings (this would require storing sequences too)
+        # For now, just save the predictions and targets
+        
+        # Find positions where predictions differ from targets
+        mismatches = []
+        matches = []
+        
+        for pos in range(len(pred_array)):
+            pred_class = pred_array[pos]
+            target_class = target_array[pos]
+            
+            if pred_class != target_class:
+                mismatches.append({
+                    'position': pos,
+                    'predicted': class_names[pred_class],
+                    'actual': class_names[target_class]
+                })
+            else:
+                matches.append({
+                    'position': pos,
+                    'class': class_names[pred_class]
+                })
+        
+        # Find START predictions specifically
+        start_predictions = []
+        start_targets = []
+        
+        for pos in range(len(pred_array)):
+            if pred_array[pos] == 2:  # Predicted START
+                start_predictions.append({
+                    'position': pos,
+                    'correct': target_array[pos] == 2
+                })
+            if target_array[pos] == 2:  # Actual START
+                start_targets.append({
+                    'position': pos,
+                    'predicted': pred_array[pos] == 2
+                })
+        
+        window_analysis = {
+            'window_index': window_idx,
+            'sequence_length': len(pred_array),
+            'total_mismatches': len(mismatches),
+            'accuracy': len(matches) / len(pred_array),
+            'start_predictions': start_predictions,
+            'start_targets': start_targets,
+            'mismatches': mismatches[:20],  # First 20 mismatches
+            'predictions': [int(x) for x in pred_array],  # Full prediction array
+            'targets': [int(x) for x in target_array]      # Full target array
+        }
+        
+        detailed_predictions.append(window_analysis)
+    
+    # Save to file
+    with open(output_dir / "detailed_predictions.json", 'w') as f:
+        json.dump(detailed_predictions, f, indent=2)
+    
+    print(f"    Saved predictions for {len(detailed_predictions)} windows")
+    print(f"    File: detailed_predictions.json")
 
 
 def main():

@@ -38,64 +38,76 @@ class UTRStartDataset(Dataset):
     """
     Dataset for testing UTR-START context learning.
     
-    Creates sequences where real START codons follow 5' UTRs,
-    while decoy ATGs appear in random background regions.
+    Creates full-length contigs with UTR-START layouts, then provides
+    sliding windows for training. Each training sample is a window
+    of fixed length that slides across the full contigs.
     """
     
     def __init__(self, num_contigs: int = 20, layouts_per_contig: int = 10, 
-                 background_length: int = 500, sequence_length: int = 2000):
+                 background_length: int = 500, window_size: int = 2000, window_stride: int = 500):
         """
         Args:
             num_contigs: Number of contigs to generate (default 20)
             layouts_per_contig: Number of UTR-START layouts per contig (default 10)
             background_length: Length of background regions (default 500bp)
-            sequence_length: Target length for each contig sequence (default 2000bp)
+            window_size: Size of sliding windows for training (default 2000bp)
+            window_stride: Stride between windows (default 500bp)
         """
         self.num_contigs = num_contigs
         self.layouts_per_contig = layouts_per_contig
         self.background_length = background_length
-        self.sequence_length = sequence_length
+        self.window_size = window_size
+        self.window_stride = window_stride
         
         # Collect all UTR5 sequences
         self.utr5_sequences = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
         
-        # Generate all sequences and targets upfront
-        self.sequences = []
-        self.targets = []
+        # Generate all contigs (full length) and calculate windows
+        self.contigs = []  # Store full-length contigs
+        self.contig_targets = []  # Store full-length targets
+        self.windows = []  # Store (contig_idx, start_pos) for each window
         
         print(f"Generating {num_contigs} contigs with UTR-START layouts...")
         print(f"  {layouts_per_contig} layouts per contig")
         print(f"  Background regions: {background_length}bp each")
-        print(f"  Target sequence length: {sequence_length}bp")
+        print(f"  Window size: {window_size}bp, stride: {window_stride}bp")
         
         layout_counts = []
         start_counts = []
         decoy_atg_counts = []
+        total_windows = 0
         
         for contig_idx in range(num_contigs):
             seq, targets, stats = self._generate_contig()
-            self.sequences.append(seq)
-            self.targets.append(targets)
+            self.contigs.append(seq)
+            self.contig_targets.append(targets)
             
             layout_counts.append(stats['layouts'])
             start_counts.append(stats['real_starts'])
             decoy_atg_counts.append(stats['decoy_atgs'])
             
+            # Calculate sliding windows for this contig
+            contig_length = len(seq)
+            for start_pos in range(0, contig_length - window_size + 1, window_stride):
+                self.windows.append((contig_idx, start_pos))
+                total_windows += 1
+            
             if (contig_idx + 1) % 5 == 0:
                 print(f"  Generated {contig_idx + 1}/{num_contigs} contigs")
         
         # Calculate statistics
-        total_positions = sum(len(seq) for seq in self.sequences)
-        total_starts = sum(np.sum(targets == 2) for targets in self.targets)
-        total_utr5 = sum(np.sum(targets == 1) for targets in self.targets)
-        total_intergenic = total_positions - total_starts - total_utr5
+        total_contig_positions = sum(len(seq) for seq in self.contigs)
+        total_starts = sum(np.sum(targets == 2) for targets in self.contig_targets)
+        total_utr5 = sum(np.sum(targets == 1) for targets in self.contig_targets)
+        total_intergenic = total_contig_positions - total_starts - total_utr5
         
         print(f"Dataset statistics:")
         print(f"  Total contigs: {num_contigs}")
-        print(f"  Total positions: {total_positions}")
-        print(f"  START positions: {total_starts} ({total_starts/total_positions:.3f})")
-        print(f"  UTR5 positions: {total_utr5} ({total_utr5/total_positions:.3f})")
-        print(f"  INTERGENIC positions: {total_intergenic} ({total_intergenic/total_positions:.3f})")
+        print(f"  Contig positions: {total_contig_positions}")
+        print(f"  Training windows: {total_windows}")
+        print(f"  START positions: {total_starts} ({total_starts/total_contig_positions:.3f})")
+        print(f"  UTR5 positions: {total_utr5} ({total_utr5/total_contig_positions:.3f})")
+        print(f"  INTERGENIC positions: {total_intergenic} ({total_intergenic/total_contig_positions:.3f})")
         print(f"  Layouts per contig: min={min(layout_counts)}, max={max(layout_counts)}, avg={sum(layout_counts)/len(layout_counts):.1f}")
         print(f"  Real STARTs per contig: min={min(start_counts)}, max={max(start_counts)}, avg={sum(start_counts)/len(start_counts):.1f}")
         print(f"  Decoy ATGs per contig: min={min(decoy_atg_counts)}, max={max(decoy_atg_counts)}, avg={sum(decoy_atg_counts)/len(decoy_atg_counts):.1f}")
@@ -122,19 +134,7 @@ class UTRStartDataset(Dataset):
             real_starts += layout_stats['real_starts']
             decoy_atgs += layout_stats['decoy_atgs']
         
-        # Trim or pad to target length
-        if len(full_sequence) > self.sequence_length:
-            full_sequence = full_sequence[:self.sequence_length]
-            full_targets = full_targets[:self.sequence_length]
-        elif len(full_sequence) < self.sequence_length:
-            # Pad with random background
-            padding_needed = self.sequence_length - len(full_sequence)
-            padding_seq, padding_targets, padding_stats = self._generate_background(
-                padding_needed, include_decoy_atgs=True
-            )
-            full_sequence.extend(padding_seq)
-            full_targets.extend(padding_targets)
-            decoy_atgs += padding_stats['decoy_atgs']
+        # No trimming - keep full contig length for sliding windows
         
         sequence_str = ''.join(full_sequence)
         targets_array = np.array(full_targets, dtype=np.int64)
@@ -228,14 +228,23 @@ class UTRStartDataset(Dataset):
         return sequence, targets, stats
     
     def __len__(self) -> int:
-        return self.num_contigs
+        return len(self.windows)  # Number of sliding windows, not contigs
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        sequence = self.sequences[idx]
-        targets = self.targets[idx]
+        # Get window information
+        contig_idx, start_pos = self.windows[idx]
+        
+        # Extract window from full contig
+        full_sequence = self.contigs[contig_idx]
+        full_targets = self.contig_targets[contig_idx]
+        
+        # Get window slice
+        end_pos = start_pos + self.window_size
+        window_sequence = full_sequence[start_pos:end_pos]
+        window_targets = full_targets[start_pos:end_pos]
         
         # Encode DNA sequence to integers
         dna_vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
-        encoded_seq = np.array([dna_vocab.get(base, 4) for base in sequence])
+        encoded_seq = np.array([dna_vocab.get(base, 4) for base in window_sequence])
         
-        return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(targets, dtype=torch.long)
+        return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(window_targets, dtype=torch.long)
