@@ -43,15 +43,15 @@ class UTRStartDataset(Dataset):
     of fixed length that slides across the full contigs.
     """
     
-    def __init__(self, num_contigs: int = 20, layouts_per_contig: int = 10, 
-                 background_length: int = 500, window_size: int = 2000, window_stride: int = 500):
+    def __init__(self, num_contigs: int = 1000, layouts_per_contig: int = 1, 
+                 background_length: int = 500, window_size: int = 1100, window_stride: int = 1100):
         """
         Args:
-            num_contigs: Number of contigs to generate (default 20)
-            layouts_per_contig: Number of UTR-START layouts per contig (default 10)
+            num_contigs: Number of contigs to generate (default 1000)
+            layouts_per_contig: Number of UTR-START layouts per contig (default 1)
             background_length: Length of background regions (default 500bp)
-            window_size: Size of sliding windows for training (default 2000bp)
-            window_stride: Stride between windows (default 500bp)
+            window_size: Size of sliding windows for training (default 1100bp)
+            window_stride: Stride between windows (default 1100bp - no overlap)
         """
         self.num_contigs = num_contigs
         self.layouts_per_contig = layouts_per_contig
@@ -86,10 +86,18 @@ class UTRStartDataset(Dataset):
             start_counts.append(stats['real_starts'])
             decoy_atg_counts.append(stats['decoy_atgs'])
             
-            # Calculate sliding windows for this contig
+            # Calculate windows for this contig
             contig_length = len(seq)
-            for start_pos in range(0, contig_length - window_size + 1, window_stride):
-                self.windows.append((contig_idx, start_pos))
+            
+            # For simplified design: each contig ~= window size, so just use the whole contig
+            if contig_length >= self.window_size:
+                # Use sliding windows if contig is longer than window
+                for start_pos in range(0, contig_length - self.window_size + 1, self.window_stride):
+                    self.windows.append((contig_idx, start_pos))
+                    total_windows += 1
+            else:
+                # Contig is smaller than window - use the whole contig (pad if needed)
+                self.windows.append((contig_idx, 0))
                 total_windows += 1
             
             if (contig_idx + 1) % 5 == 0:
@@ -242,6 +250,17 @@ class UTRStartDataset(Dataset):
         end_pos = start_pos + self.window_size
         window_sequence = full_sequence[start_pos:end_pos]
         window_targets = full_targets[start_pos:end_pos]
+        
+        # Pad if window is shorter than expected (for simplified contigs)
+        if len(window_sequence) < self.window_size:
+            padding_needed = self.window_size - len(window_sequence)
+            # Pad with random bases and INTERGENIC labels
+            bases = ['A', 'T', 'G', 'C']
+            padding_seq = ''.join([bases[i % 4] for i in range(padding_needed)])
+            padding_targets = [0] * padding_needed  # INTERGENIC
+            
+            window_sequence += padding_seq
+            window_targets = list(window_targets) + padding_targets
         
         # Encode DNA sequence to integers
         dna_vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}

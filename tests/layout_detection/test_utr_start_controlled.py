@@ -319,6 +319,10 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     print("\n6. Detailed Analysis...")
     analyze_utr_start_predictions(model, val_loader, output_dir)
     
+    # Layer analysis
+    print("\n7. Comprehensive Layer Analysis...")
+    run_comprehensive_layer_analysis(model, dataset, output_dir)
+    
     print(f"\nResults saved to: {output_dir}")
     return output_dir
 
@@ -474,12 +478,12 @@ def save_detailed_predictions(all_predictions, all_targets, output_dir, max_wind
             if pred_array[pos] == 2:  # Predicted START
                 start_predictions.append({
                     'position': pos,
-                    'correct': target_array[pos] == 2
+                    'correct': bool(target_array[pos] == 2)
                 })
             if target_array[pos] == 2:  # Actual START
                 start_targets.append({
                     'position': pos,
-                    'predicted': pred_array[pos] == 2
+                    'predicted': bool(pred_array[pos] == 2)
                 })
         
         window_analysis = {
@@ -504,13 +508,35 @@ def save_detailed_predictions(all_predictions, all_targets, output_dir, max_wind
     print(f"    File: detailed_predictions.json")
 
 
+def run_comprehensive_layer_analysis(model, dataset, output_dir):
+    """Run comprehensive layer analysis."""
+    
+    # Create analysis output directory
+    analysis_dir = output_dir / "layer_analysis"
+    analysis_dir.mkdir(exist_ok=True)
+    
+    # Import and run layer analysis
+    from tests.layout_detection.layer_analysis import LayerAnalyzer
+    from torch.utils.data import DataLoader, random_split
+    
+    # Create validation loader
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False, num_workers=0)
+    
+    # Run analysis
+    analyzer = LayerAnalyzer(model)
+    analyzer.analyze_all(val_loader, analysis_dir, max_samples=20)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Test UTR-START context learning")
     parser.add_argument('--d-model', type=int, default=504, help='Model dimension')
     parser.add_argument('--layers', type=int, default=3, help='Number of transformer layers')
     parser.add_argument('--heads', type=int, default=6, help='Number of attention heads')
-    parser.add_argument('--contigs', type=int, default=20, help='Number of contigs')
-    parser.add_argument('--layouts', type=int, default=10, help='Layouts per contig')
+    parser.add_argument('--contigs', type=int, default=1000, help='Number of contigs')
+    parser.add_argument('--layouts', type=int, default=1, help='Layouts per contig')
     parser.add_argument('--class-weights', action='store_true', help='Use class weights')
     parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')

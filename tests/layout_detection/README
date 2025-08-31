@@ -1,0 +1,3 @@
+# to test target generation code
+
+python tests/layout_detection/test_target_generation.py
