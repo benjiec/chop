@@ -91,7 +91,7 @@ class MaskedTransformerLayer(nn.Module):
         # Convert to attention mask format (True = attend, False = ignore)
         return mask
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         """Forward pass with masked attention."""
         seq_length = x.size(1)
         
@@ -105,9 +105,9 @@ class MaskedTransformerLayer(nn.Module):
             global_mask = attn_mask[0]  # Use head 0's mask for all heads
             # Convert to attention mask format (False = ignore)
             attention_mask = ~global_mask  # Invert for PyTorch format
-            attn_output, _ = self.self_attn(x, x, x, attn_mask=attention_mask)
+            attn_output, attention_weights = self.self_attn(x, x, x, attn_mask=attention_mask, need_weights=return_attention)
         else:
-            attn_output, _ = self.self_attn(x, x, x)
+            attn_output, attention_weights = self.self_attn(x, x, x, need_weights=return_attention)
         
         x = self.norm1(x + attn_output)
         
@@ -115,7 +115,10 @@ class MaskedTransformerLayer(nn.Module):
         ffn_output = self.ffn(x)
         x = self.norm2(x + ffn_output)
         
-        return x
+        if return_attention:
+            return x, attention_weights
+        else:
+            return x
     
 
 
@@ -163,22 +166,29 @@ class LayoutDetectionModel(nn.Module):
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         """
         Forward pass.
         
         Args:
             x: Input tensor of shape (batch_size, seq_length) with DNA indices
+            return_attention: Whether to return attention weights
             
         Returns:
             Logits of shape (batch_size, seq_length, num_classes)
+            If return_attention=True, also returns dict of attention weights
         """
         # Embed DNA sequence
         x = self.embedding(x)  # (batch_size, seq_length, d_model)
         
         # Apply transformer layers with masking
-        for layer in self.transformer_layers:
-            x = layer(x)  # (batch_size, seq_length, d_model)
+        layer_attention_weights = {}
+        for i, layer in enumerate(self.transformer_layers):
+            if return_attention:
+                x, attention_weights = layer(x, return_attention=True)
+                layer_attention_weights[f'layer_{i}'] = attention_weights
+            else:
+                x = layer(x)  # (batch_size, seq_length, d_model)
         
         # Apply dropout
         x = self.dropout(x)
@@ -186,7 +196,10 @@ class LayoutDetectionModel(nn.Module):
         # Classify each position
         logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
         
-        return logits
+        if return_attention:
+            return logits, layer_attention_weights
+        else:
+            return logits
 
 class LayoutDetectionModule(pl.LightningModule):
     """

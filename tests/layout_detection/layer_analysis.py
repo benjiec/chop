@@ -51,9 +51,9 @@ class LayerAnalyzer:
         feature_data = self._analyze_layer_features(sample_data)
         self._save_feature_analysis(feature_data, output_dir / "layer_features.json")
         
-        # 3. Gradient-based attribution
+        # 3. Gradient-based attribution (simplified for now)
         print("3. Analyzing gradient attribution...")
-        attribution_data = self._analyze_gradient_attribution(sample_data)
+        attribution_data = {'position_attributions': [], 'note': 'Gradient analysis temporarily disabled due to tensor type issues'}
         self._save_attribution_analysis(attribution_data, output_dir / "gradient_attribution.json")
         
         # 4. Save sequences in clean format
@@ -136,34 +136,104 @@ class LayerAnalyzer:
         attention_analysis = {
             'layer_attention_patterns': {},
             'start_position_attention': [],
-            'utr_position_attention': []
+            'attention_matrices': {}
         }
         
-        # Hook to capture attention weights
-        attention_weights = {}
+        # Hook to capture attention weights from each layer
+        captured_attention = {}
         
-        def attention_hook(layer_idx):
+        def create_attention_hook(layer_idx):
             def hook(module, input, output):
-                # Extract attention weights if available
-                if hasattr(module, 'self_attn') and hasattr(module.self_attn, 'attention_weights'):
-                    attention_weights[f'layer_{layer_idx}'] = module.self_attn.attention_weights.detach().cpu()
+                # For MaskedTransformerLayer, we need to modify it to return attention weights
+                # For now, we'll capture what we can from the MultiheadAttention module
+                if hasattr(module, 'self_attn'):
+                    # Enable attention weight return temporarily
+                    module.self_attn.return_attention = True
             return hook
         
-        # Register hooks (this is a simplified version - full implementation would need model modification)
-        # For now, analyze available attention patterns
+        # Register hooks on each transformer layer
+        hooks = []
+        for i, layer in enumerate(self.model.model.transformer_layers):
+            hook = layer.register_forward_hook(create_attention_hook(i))
+            hooks.append(hook)
         
-        for sample in sample_data:
-            # Analyze attention patterns for START positions
-            for atg in sample['atg_analysis']:
-                if atg['target_class'] == 2:  # Real START
-                    attention_analysis['start_position_attention'].append({
-                        'sample_index': sample['sample_index'],
-                        'position': atg['position'],
-                        'start_probability': atg['start_probability'],
-                        'predicted_correctly': atg['predicted_class'] == 2
-                    })
+        # Modify the model to capture attention weights
+        # We need to temporarily modify the forward pass to return attention weights
+        original_forward_methods = {}
+        
+        try:
+            # Run inference on first few samples to capture attention
+            with torch.no_grad():
+                for sample in sample_data[:5]:  # Analyze first 5 samples
+                    seq_tensor = sample['sequence_tensor'].unsqueeze(0).to(self.device)
+                    
+                    # Custom forward pass to capture attention weights
+                    attention_weights = self._forward_with_attention_capture(seq_tensor)
+                    
+                    # Analyze attention patterns for START positions
+                    for atg in sample['atg_analysis']:
+                        if atg['target_class'] == 2:  # Real START
+                            pos = atg['position']
+                            
+                            # Extract attention patterns for this START position
+                            start_attention = {}
+                            for layer_name, layer_attention in attention_weights.items():
+                                # layer_attention shape: (batch, heads, seq_len, seq_len)
+                                if layer_attention is not None and layer_attention.size(0) > 0:
+                                    # Get attention from this position to all other positions
+                                    pos_attention = layer_attention[0, :, pos, :].cpu().numpy()  # (heads, seq_len)
+                                    
+                                    # Analyze attention patterns for each head
+                                    head_patterns = {}
+                                    for head_idx in range(pos_attention.shape[0]):
+                                        head_attn = pos_attention[head_idx]
+                                        
+                                        # Find top attended positions
+                                        top_positions = np.argsort(head_attn)[-10:]  # Top 10 positions
+                                        
+                                        # Analyze upstream vs downstream attention
+                                        upstream_attn = head_attn[max(0, pos-100):pos].mean() if pos >= 100 else head_attn[:pos].mean()
+                                        downstream_attn = head_attn[pos+3:pos+53].mean() if pos+53 < len(head_attn) else head_attn[pos+3:].mean()
+                                        local_attn = head_attn[max(0, pos-5):pos+8].mean()
+                                        
+                                        head_patterns[f'head_{head_idx}'] = {
+                                            'upstream_attention': float(upstream_attn),
+                                            'local_attention': float(local_attn), 
+                                            'downstream_attention': float(downstream_attn),
+                                            'top_attended_positions': [int(p) for p in top_positions],
+                                            'attention_weights': head_attn.tolist()
+                                        }
+                                    
+                                    start_attention[layer_name] = head_patterns
+                            
+                            attention_analysis['start_position_attention'].append({
+                                'sample_index': sample['sample_index'],
+                                'position': pos,
+                                'start_probability': atg['start_probability'],
+                                'predicted_correctly': atg['predicted_class'] == 2,
+                                'attention_patterns': start_attention
+                            })
+                    
+                    # Store full attention matrices for this sample
+                    attention_analysis['attention_matrices'][f'sample_{sample["sample_index"]}'] = {
+                        layer_name: layer_attention[0].cpu().numpy().tolist() if layer_attention is not None else None
+                        for layer_name, layer_attention in attention_weights.items()
+                    }
+        
+        finally:
+            # Remove hooks
+            for hook in hooks:
+                hook.remove()
         
         return attention_analysis
+    
+    def _forward_with_attention_capture(self, seq_tensor: torch.Tensor) -> Dict:
+        """Custom forward pass that captures attention weights from each layer."""
+        
+        # Use the model's attention extraction capability
+        logits, attention_weights = self.model.model(seq_tensor, return_attention=True)
+        
+        return attention_weights
     
     def _analyze_layer_features(self, sample_data: List[Dict]) -> Dict:
         """Analyze how features evolve through layers."""
@@ -237,46 +307,61 @@ class LayerAnalyzer:
             'downstream_importance': []
         }
         
-        self.model.train()  # Need gradients
+        # Simplified gradient analysis - use embedding gradients
+        self.model.train()
         
-        for sample in sample_data[:10]:  # Analyze first 10 samples
+        for sample in sample_data[:5]:  # Analyze first 5 samples to avoid complexity
             seq_tensor = sample['sequence_tensor'].unsqueeze(0).to(self.device)
-            seq_tensor.requires_grad_(True)
             
-            # Forward pass
-            logits = self.model(seq_tensor)
+            # Hook to capture embedding gradients
+            embedding_grads = {}
             
-            # Find START positions for attribution
-            for atg in sample['atg_analysis']:
-                if atg['target_class'] == 2:  # Real START
-                    pos = atg['position']
-                    
-                    # Get gradient w.r.t. START class at this position
-                    start_logit = logits[0, pos, 2]  # START class logit
-                    
-                    # Backward pass
-                    if seq_tensor.grad is not None:
-                        seq_tensor.grad.zero_()
-                    start_logit.backward(retain_graph=True)
-                    
-                    # Get attribution (gradient magnitude)
-                    if seq_tensor.grad is not None:
-                        attribution = seq_tensor.grad[0].abs().cpu().numpy()
+            def embedding_hook(module, grad_input, grad_output):
+                if grad_output[0] is not None:
+                    embedding_grads['embeddings'] = grad_output[0].detach().cpu()
+            
+            # Register hook on embedding layer
+            hook = self.model.model.embedding.register_backward_hook(embedding_hook)
+            
+            try:
+                # Forward pass
+                logits = self.model(seq_tensor)
+                
+                # Find START positions for attribution
+                for atg in sample['atg_analysis']:
+                    if atg['target_class'] == 2:  # Real START
+                        pos = atg['position']
                         
-                        # Analyze upstream vs downstream importance
-                        upstream_attr = attribution[max(0, pos-100):pos].mean() if pos >= 100 else attribution[:pos].mean()
-                        downstream_attr = attribution[pos+3:pos+53].mean() if pos+53 < len(attribution) else attribution[pos+3:].mean()
-                        local_attr = attribution[max(0, pos-5):pos+8].mean()
+                        # Get gradient w.r.t. START class at this position
+                        start_logit = logits[0, pos, 2]  # START class logit
                         
-                        attribution_analysis['position_attributions'].append({
-                            'sample_index': sample['sample_index'],
-                            'position': pos,
-                            'predicted_correctly': atg['predicted_class'] == 2,
-                            'upstream_importance': float(upstream_attr),
-                            'downstream_importance': float(downstream_attr),
-                            'local_importance': float(local_attr),
-                            'full_attribution': attribution.tolist()
-                        })
+                        # Backward pass
+                        self.model.zero_grad()
+                        start_logit.backward(retain_graph=True)
+                        
+                        # Get attribution from embedding gradients
+                        if 'embeddings' in embedding_grads:
+                            emb_grad = embedding_grads['embeddings'][0]  # (seq_length, d_model)
+                            # Sum across embedding dimensions to get per-position attribution
+                            attribution = emb_grad.abs().sum(dim=1).numpy()
+                            
+                            # Analyze upstream vs downstream importance
+                            upstream_attr = attribution[max(0, pos-100):pos].mean() if pos >= 100 else attribution[:pos].mean()
+                            downstream_attr = attribution[pos+3:pos+53].mean() if pos+53 < len(attribution) else attribution[pos+3:].mean()
+                            local_attr = attribution[max(0, pos-5):pos+8].mean()
+                            
+                            attribution_analysis['position_attributions'].append({
+                                'sample_index': sample['sample_index'],
+                                'position': pos,
+                                'predicted_correctly': atg['predicted_class'] == 2,
+                                'upstream_importance': float(upstream_attr),
+                                'downstream_importance': float(downstream_attr),
+                                'local_importance': float(local_attr),
+                                'full_attribution': attribution.tolist()
+                            })
+            
+            finally:
+                hook.remove()
         
         self.model.eval()
         return attribution_analysis
