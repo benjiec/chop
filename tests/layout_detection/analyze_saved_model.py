@@ -160,8 +160,10 @@ def main():
     
     # Default output directory
     if args.output_dir is None:
+        from datetime import datetime
         model_dir = Path(args.model_path).parent.parent
-        args.output_dir = str(model_dir / "analysis")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output_dir = str(model_dir / f"analysis_{timestamp}")
     
     # Run analysis
     analyze_saved_model(
@@ -185,8 +187,10 @@ def main():
     
     # Default output directory
     if args.output_dir is None:
+        from datetime import datetime
         model_dir = Path(args.model_path).parent.parent
-        args.output_dir = str(model_dir / "analysis")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output_dir = str(model_dir / f"analysis_{timestamp}")
     
     # Run analysis
     analyze_saved_model(

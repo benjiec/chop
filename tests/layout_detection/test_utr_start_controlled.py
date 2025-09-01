@@ -38,6 +38,7 @@ from typing import Optional, Dict
 
 from tests.layout_detection.utr_start_dataset import UTRStartDataset
 from tests.layout_detection.layout_model import LayoutDetectionModule, create_base_config
+from tests.layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -294,7 +295,12 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
             patience=8,
             mode='min'
         ),
-        pl.callbacks.LearningRateMonitor(logging_interval='epoch')
+        pl.callbacks.LearningRateMonitor(logging_interval='epoch'),
+        TrainingDynamicsCallback(
+            val_loader=val_loader,
+            output_dir=output_dir / "training_dynamics",
+            analysis_frequency=5  # Analyze every 5 epochs
+        )
     ]
     
     trainer = pl.Trainer(

@@ -178,10 +178,21 @@ class LayerAnalyzer:
                             # Extract attention patterns for this START position
                             start_attention = {}
                             for layer_name, layer_attention in attention_weights.items():
-                                # layer_attention shape: (batch, heads, seq_len, seq_len)
-                                if layer_attention is not None and layer_attention.size(0) > 0:
-                                    # Get attention from this position to all other positions
-                                    pos_attention = layer_attention[0, :, pos, :].cpu().numpy()  # (heads, seq_len)
+                                if layer_attention is not None:
+                                    print(f"Debug: {layer_name} attention shape: {layer_attention.shape}")
+                                    
+                                    # Handle different attention tensor formats
+                                    if layer_attention.dim() == 4:
+                                        # Expected format: (batch, heads, seq_len, seq_len)
+                                        pos_attention = layer_attention[0, :, pos, :].cpu().numpy()  # (heads, seq_len)
+                                    elif layer_attention.dim() == 3:
+                                        # Alternative format: (batch, seq_len, seq_len) - averaged across heads
+                                        pos_attention = layer_attention[0, pos, :].cpu().numpy()  # (seq_len,)
+                                        # Reshape to look like single head
+                                        pos_attention = pos_attention.reshape(1, -1)  # (1, seq_len)
+                                    else:
+                                        print(f"Warning: Unexpected attention shape for {layer_name}: {layer_attention.shape}")
+                                        continue
                                     
                                     # Analyze attention patterns for each head
                                     head_patterns = {}
@@ -214,11 +225,16 @@ class LayerAnalyzer:
                                 'attention_patterns': start_attention
                             })
                     
-                    # Store full attention matrices for this sample
-                    attention_analysis['attention_matrices'][f'sample_{sample["sample_index"]}'] = {
-                        layer_name: layer_attention[0].cpu().numpy().tolist() if layer_attention is not None else None
-                        for layer_name, layer_attention in attention_weights.items()
-                    }
+                    # Store full attention matrices only for first 2 samples (to limit file size)
+                    if sample['sample_index'] < 2:
+                        attention_analysis['attention_matrices'][f'sample_{sample["sample_index"]}'] = {
+                            layer_name: layer_attention[0].cpu().numpy().tolist() if layer_attention is not None else None
+                            for layer_name, layer_attention in attention_weights.items()
+                        }
+                        print(f"    Saved full attention matrices for sample {sample['sample_index']}")
+                    else:
+                        # For other samples, just save summary statistics to save space
+                        print(f"    Saved attention summaries for sample {sample['sample_index']} (full matrices skipped)")
         
         finally:
             # Remove hooks
