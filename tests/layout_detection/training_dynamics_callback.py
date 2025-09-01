@@ -183,19 +183,18 @@ class TrainingDynamicsCallback(pl.Callback):
         return epoch_summary
     
     def _summarize_attention_evolution(self, start_predictions: List[Dict]) -> Dict:
-        """Summarize how attention focus evolves."""
+        """Summarize how attention focus evolves, preserving per-head data."""
         
         if not start_predictions:
             return {}
         
-        # Calculate average attention focus by layer
+        # Calculate attention focus by layer, preserving per-head information
         layer_focus = {}
         for layer_idx in range(self.num_layers if self.num_layers else 4):  # Dynamic layer count
             layer_name = f'layer_{layer_idx}'
             
-            upstream_scores = []
-            local_scores = []
-            downstream_scores = []
+            # Collect per-head data across all samples
+            head_data_collection = {}
             
             for sp in start_predictions:
                 if layer_name in sp['attention_summary']:
@@ -205,36 +204,56 @@ class TrainingDynamicsCallback(pl.Callback):
                     if isinstance(layer_data, dict):
                         # Check if this is the old single-head format or new multi-head format
                         if 'upstream_focus' in layer_data:
-                            # Old format - single values
-                            upstream_scores.append(layer_data['upstream_focus'])
-                            local_scores.append(layer_data['local_focus'])
-                            downstream_scores.append(layer_data['downstream_focus'])
+                            # Old format - single values (treat as head_0)
+                            if 'head_0' not in head_data_collection:
+                                head_data_collection['head_0'] = {'upstream': [], 'local': [], 'downstream': []}
+                            head_data_collection['head_0']['upstream'].append(layer_data['upstream_focus'])
+                            head_data_collection['head_0']['local'].append(layer_data['local_focus'])
+                            head_data_collection['head_0']['downstream'].append(layer_data['downstream_focus'])
                         else:
-                            # New format - multiple heads, average across all heads
-                            head_upstream = []
-                            head_local = []
-                            head_downstream = []
-                            
+                            # New format - multiple heads, preserve per-head data
                             for head_name, head_data in layer_data.items():
                                 if isinstance(head_data, dict) and 'upstream_focus' in head_data:
-                                    head_upstream.append(head_data['upstream_focus'])
-                                    head_local.append(head_data['local_focus'])
-                                    head_downstream.append(head_data['downstream_focus'])
-                            
-                            if head_upstream:  # Only if we found head data
-                                upstream_scores.append(sum(head_upstream) / len(head_upstream))
-                                local_scores.append(sum(head_local) / len(head_local))
-                                downstream_scores.append(sum(head_downstream) / len(head_downstream))
+                                    if head_name not in head_data_collection:
+                                        head_data_collection[head_name] = {'upstream': [], 'local': [], 'downstream': []}
+                                    head_data_collection[head_name]['upstream'].append(head_data['upstream_focus'])
+                                    head_data_collection[head_name]['local'].append(head_data['local_focus'])
+                                    head_data_collection[head_name]['downstream'].append(head_data['downstream_focus'])
             
-            if upstream_scores:  # Only if we have data
-                layer_focus[layer_name] = {
-                    'avg_upstream_focus': float(np.mean(upstream_scores)),
-                    'avg_local_focus': float(np.mean(local_scores)),
-                    'avg_downstream_focus': float(np.mean(downstream_scores)),
-                    'upstream_std': float(np.std(upstream_scores)),
-                    'local_std': float(np.std(local_scores)),
-                    'downstream_std': float(np.std(downstream_scores))
-                }
+            # Calculate per-head statistics
+            if head_data_collection:
+                layer_focus[layer_name] = {}
+                
+                # Store per-head data
+                for head_name, head_scores in head_data_collection.items():
+                    if head_scores['upstream']:  # Only if we have data
+                        layer_focus[layer_name][head_name] = {
+                            'avg_upstream_focus': float(np.mean(head_scores['upstream'])),
+                            'avg_local_focus': float(np.mean(head_scores['local'])),
+                            'avg_downstream_focus': float(np.mean(head_scores['downstream'])),
+                            'upstream_std': float(np.std(head_scores['upstream'])),
+                            'local_std': float(np.std(head_scores['local'])),
+                            'downstream_std': float(np.std(head_scores['downstream']))
+                        }
+                
+                # Also calculate layer averages for backward compatibility
+                all_upstream = []
+                all_local = []
+                all_downstream = []
+                for head_scores in head_data_collection.values():
+                    all_upstream.extend(head_scores['upstream'])
+                    all_local.extend(head_scores['local'])
+                    all_downstream.extend(head_scores['downstream'])
+                
+                if all_upstream:
+                    layer_focus[layer_name]['layer_average'] = {
+                        'avg_upstream_focus': float(np.mean(all_upstream)),
+                        'avg_local_focus': float(np.mean(all_local)),
+                        'avg_downstream_focus': float(np.mean(all_downstream)),
+                        'upstream_std': float(np.std(all_upstream)),
+                        'local_std': float(np.std(all_local)),
+                        'downstream_std': float(np.std(all_downstream))
+                    }
         
         return layer_focus
     
