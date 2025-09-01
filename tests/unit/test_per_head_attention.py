@@ -27,6 +27,9 @@ class TestPerHeadAttention(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
+        # Set random seed for reproducible results
+        torch.manual_seed(42)
+        
         self.d_model = 12  # Must be divisible by n_heads
         self.n_heads = 3
         self.seq_length = 20
@@ -44,7 +47,7 @@ class TestPerHeadAttention(unittest.TestCase):
             d_model=self.d_model,
             n_heads=self.n_heads,
             dim_feedforward=48,
-            dropout=0.1,
+            dropout=0.0,  # No dropout for deterministic results
             attention_masks=attention_masks,
             max_seq_length=self.seq_length
         )
@@ -86,10 +89,11 @@ class TestPerHeadAttention(unittest.TestCase):
             d_model=self.d_model,
             n_heads=self.n_heads,
             dim_feedforward=48,
-            dropout=0.1,
+            dropout=0.0,  # No dropout for deterministic results
             attention_masks=attention_masks,
             max_seq_length=self.seq_length
         )
+        layer.eval()  # Set to eval mode for deterministic behavior
         
         output, attention_weights = layer(self.test_input, return_attention=True)
         
@@ -112,7 +116,7 @@ class TestPerHeadAttention(unittest.TestCase):
         head2_attn = attention_weights[0, 2, pos, :].detach().numpy()
         nonzero_pos = [i for i, attn in enumerate(head2_attn) if attn > 1e-6]
         self.assertEqual(min(nonzero_pos), 10, "Head 2 should not attend upstream")
-        self.assertEqual(max(nonzero_pos), 13, "Head 2 should attend 4bp downstream")
+        self.assertEqual(max(nonzero_pos), 14, "Head 2 should attend 4bp downstream")
     
     def test_no_masks_global_attention(self):
         """Test that heads without masks use global attention."""
@@ -123,10 +127,11 @@ class TestPerHeadAttention(unittest.TestCase):
             d_model=self.d_model,
             n_heads=self.n_heads,
             dim_feedforward=48,
-            dropout=0.1,
+            dropout=0.0,  # No dropout for deterministic results
             attention_masks=attention_masks,
             max_seq_length=self.seq_length
         )
+        layer.eval()  # Set to eval mode for deterministic behavior
         
         output, attention_weights = layer(self.test_input, return_attention=True)
         
@@ -149,7 +154,7 @@ class TestPerHeadAttention(unittest.TestCase):
             d_model=self.d_model,
             n_heads=self.n_heads,
             dim_feedforward=48,
-            dropout=0.1,
+            dropout=0.0,  # No dropout for deterministic results
             attention_masks=attention_masks,
             max_seq_length=self.seq_length
         )
@@ -205,10 +210,11 @@ class TestPerHeadAttention(unittest.TestCase):
             d_model=self.d_model,
             n_heads=self.n_heads,
             dim_feedforward=48,
-            dropout=0.1,
+            dropout=0.0,  # No dropout for deterministic results
             attention_masks=attention_masks,
             max_seq_length=self.seq_length
         )
+        layer.eval()  # Set to eval mode for deterministic behavior
         
         output, attention_weights = layer(self.test_input, return_attention=True)
         
