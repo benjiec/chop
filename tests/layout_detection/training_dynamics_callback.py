@@ -41,6 +41,9 @@ class TrainingDynamicsCallback(pl.Callback):
         # Convert indices back to nucleotides
         self.idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
         
+        # Dynamic layer count (will be set when first model is analyzed)
+        self.num_layers = None
+        
     def on_validation_epoch_end(self, trainer, pl_module):
         """Analyze model state at the end of each validation epoch."""
         
@@ -64,6 +67,11 @@ class TrainingDynamicsCallback(pl.Callback):
         
         model.eval()
         device = next(model.parameters()).device
+        
+        # Set layer count dynamically on first analysis
+        if self.num_layers is None:
+            self.num_layers = len(model.model.transformer_layers)
+            print(f"    Detected {self.num_layers} layers in model")
         
         # Collect data from a few validation samples
         attention_summaries = []
@@ -106,8 +114,29 @@ class TrainingDynamicsCallback(pl.Callback):
                                 start_attention_summary = {}
                                 for layer_name, layer_attention in attention_weights.items():
                                     if layer_attention is not None:
+                                        layer_head_summary = {}
+                                        
                                         # Handle different attention tensor formats
-                                        if layer_attention.dim() == 3:
+                                        if layer_attention.dim() == 4:
+                                            # Format: (batch, heads, seq_len, seq_len)
+                                            num_heads = layer_attention.size(1)
+                                            
+                                            # Analyze all heads in this layer
+                                            for head_idx in range(num_heads):
+                                                head_attention = layer_attention[i, head_idx, pos, :].cpu().numpy()
+                                                
+                                                # Calculate attention focus regions for this head
+                                                upstream_attn = head_attention[max(0, pos-100):pos].mean() if pos >= 100 else head_attention[:pos].mean()
+                                                downstream_attn = head_attention[pos+3:pos+53].mean() if pos+53 < len(head_attention) else head_attention[pos+3:].mean()
+                                                local_attn = head_attention[max(0, pos-5):pos+8].mean()
+                                                
+                                                layer_head_summary[f'head_{head_idx}'] = {
+                                                    'upstream_focus': float(upstream_attn),
+                                                    'local_focus': float(local_attn),
+                                                    'downstream_focus': float(downstream_attn)
+                                                }
+                                        
+                                        elif layer_attention.dim() == 3:
                                             # Format: (batch, seq_len, seq_len) - averaged across heads
                                             pos_attention = layer_attention[i, pos, :].cpu().numpy()
                                             
@@ -116,11 +145,13 @@ class TrainingDynamicsCallback(pl.Callback):
                                             downstream_attn = pos_attention[pos+3:pos+53].mean() if pos+53 < len(pos_attention) else pos_attention[pos+3:].mean()
                                             local_attn = pos_attention[max(0, pos-5):pos+8].mean()
                                             
-                                            start_attention_summary[layer_name] = {
+                                            layer_head_summary['averaged_heads'] = {
                                                 'upstream_focus': float(upstream_attn),
                                                 'local_focus': float(local_attn),
                                                 'downstream_focus': float(downstream_attn)
                                             }
+                                        
+                                        start_attention_summary[layer_name] = layer_head_summary
                                 
                                 start_predictions.append({
                                     'epoch': epoch,
@@ -159,7 +190,7 @@ class TrainingDynamicsCallback(pl.Callback):
         
         # Calculate average attention focus by layer
         layer_focus = {}
-        for layer_idx in range(3):  # Assuming 3 layers
+        for layer_idx in range(self.num_layers if self.num_layers else 4):  # Dynamic layer count
             layer_name = f'layer_{layer_idx}'
             
             upstream_scores = []
@@ -168,9 +199,32 @@ class TrainingDynamicsCallback(pl.Callback):
             
             for sp in start_predictions:
                 if layer_name in sp['attention_summary']:
-                    upstream_scores.append(sp['attention_summary'][layer_name]['upstream_focus'])
-                    local_scores.append(sp['attention_summary'][layer_name]['local_focus'])
-                    downstream_scores.append(sp['attention_summary'][layer_name]['downstream_focus'])
+                    layer_data = sp['attention_summary'][layer_name]
+                    
+                    # Handle new multi-head format
+                    if isinstance(layer_data, dict):
+                        # Check if this is the old single-head format or new multi-head format
+                        if 'upstream_focus' in layer_data:
+                            # Old format - single values
+                            upstream_scores.append(layer_data['upstream_focus'])
+                            local_scores.append(layer_data['local_focus'])
+                            downstream_scores.append(layer_data['downstream_focus'])
+                        else:
+                            # New format - multiple heads, average across all heads
+                            head_upstream = []
+                            head_local = []
+                            head_downstream = []
+                            
+                            for head_name, head_data in layer_data.items():
+                                if isinstance(head_data, dict) and 'upstream_focus' in head_data:
+                                    head_upstream.append(head_data['upstream_focus'])
+                                    head_local.append(head_data['local_focus'])
+                                    head_downstream.append(head_data['downstream_focus'])
+                            
+                            if head_upstream:  # Only if we found head data
+                                upstream_scores.append(sum(head_upstream) / len(head_upstream))
+                                local_scores.append(sum(head_local) / len(head_local))
+                                downstream_scores.append(sum(head_downstream) / len(head_downstream))
             
             if upstream_scores:  # Only if we have data
                 layer_focus[layer_name] = {
@@ -193,19 +247,42 @@ class TrainingDynamicsCallback(pl.Callback):
         # Calculate which layers focus where
         specialization = {}
         
-        for layer_idx in range(3):
+        for layer_idx in range(self.num_layers if self.num_layers else 4):  # Dynamic layer count
             layer_name = f'layer_{layer_idx}'
             
             # Collect focus scores for this layer
             focus_scores = []
             for sp in start_predictions:
                 if layer_name in sp['attention_summary']:
-                    focus = sp['attention_summary'][layer_name]
-                    focus_scores.append({
-                        'upstream': focus['upstream_focus'],
-                        'local': focus['local_focus'], 
-                        'downstream': focus['downstream_focus']
-                    })
+                    layer_data = sp['attention_summary'][layer_name]
+                    
+                    # Handle both old and new attention summary formats
+                    if isinstance(layer_data, dict):
+                        if 'upstream_focus' in layer_data:
+                            # Old format - single values
+                            focus_scores.append({
+                                'upstream': layer_data['upstream_focus'],
+                                'local': layer_data['local_focus'], 
+                                'downstream': layer_data['downstream_focus']
+                            })
+                        else:
+                            # New format - multiple heads, average across heads
+                            head_upstream = []
+                            head_local = []
+                            head_downstream = []
+                            
+                            for head_name, head_data in layer_data.items():
+                                if isinstance(head_data, dict) and 'upstream_focus' in head_data:
+                                    head_upstream.append(head_data['upstream_focus'])
+                                    head_local.append(head_data['local_focus'])
+                                    head_downstream.append(head_data['downstream_focus'])
+                            
+                            if head_upstream:  # Only if we found head data
+                                focus_scores.append({
+                                    'upstream': sum(head_upstream) / len(head_upstream),
+                                    'local': sum(head_local) / len(head_local),
+                                    'downstream': sum(head_downstream) / len(head_downstream)
+                                })
             
             if focus_scores:
                 # Calculate which region this layer focuses on most
@@ -258,7 +335,9 @@ class TrainingDynamicsCallback(pl.Callback):
         
         # Track layer specialization over time
         layer_trends = {}
-        for layer_name in ['layer_0', 'layer_1', 'layer_2']:
+        # Generate layer names dynamically
+        layer_names = [f'layer_{i}' for i in range(self.num_layers if self.num_layers else 4)]
+        for layer_name in layer_names:
             upstream_trends = []
             local_trends = []
             downstream_trends = []

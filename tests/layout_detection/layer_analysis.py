@@ -185,19 +185,24 @@ class LayerAnalyzer:
                                     if layer_attention.dim() == 4:
                                         # Expected format: (batch, heads, seq_len, seq_len)
                                         pos_attention = layer_attention[0, :, pos, :].cpu().numpy()  # (heads, seq_len)
+                                        num_heads = pos_attention.shape[0]
                                     elif layer_attention.dim() == 3:
                                         # Alternative format: (batch, seq_len, seq_len) - averaged across heads
                                         pos_attention = layer_attention[0, pos, :].cpu().numpy()  # (seq_len,)
                                         # Reshape to look like single head
                                         pos_attention = pos_attention.reshape(1, -1)  # (1, seq_len)
+                                        num_heads = 1
                                     else:
                                         print(f"Warning: Unexpected attention shape for {layer_name}: {layer_attention.shape}")
                                         continue
                                     
-                                    # Analyze attention patterns for each head
+                                    # Analyze attention patterns for ALL heads
                                     head_patterns = {}
-                                    for head_idx in range(pos_attention.shape[0]):
-                                        head_attn = pos_attention[head_idx]
+                                    for head_idx in range(num_heads):
+                                        if num_heads == 1:
+                                            head_attn = pos_attention[0]  # Single head case
+                                        else:
+                                            head_attn = pos_attention[head_idx]
                                         
                                         # Find top attended positions
                                         top_positions = np.argsort(head_attn)[-10:]  # Top 10 positions
