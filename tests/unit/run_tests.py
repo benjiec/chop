@@ -14,10 +14,11 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from test_codon_constraints import TestCodonValidation, TestBiologicalLoss, TestIntegration
 from test_target_generation import TestTargetGeneration
+from test_per_head_attention import TestPerHeadAttention
 
 
 def run_all_tests():
-    """Run essential unit tests for codon validation and target generation."""
+    """Run essential unit tests for codon validation, target generation, and attention masking."""
     
     # Create test suite
     loader = unittest.TestLoader()
@@ -28,6 +29,7 @@ def run_all_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestBiologicalLoss))
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
     suite.addTests(loader.loadTestsFromTestCase(TestTargetGeneration))
+    suite.addTests(loader.loadTestsFromTestCase(TestPerHeadAttention))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)
