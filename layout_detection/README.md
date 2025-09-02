@@ -45,39 +45,39 @@ Training runs generate comprehensive analysis data in timestamped directories (e
 - Used for model inference and continued training
 
 ### Training Dynamics (`training_dynamics/`)
-- `training_dynamics.json` - Epoch-by-epoch attention evolution data **[START-SPECIFIC]**
+- `training_dynamics.json` - Epoch-by-epoch attention evolution data [START-SPECIFIC]
   - How attention patterns changed during training (epochs 0, 5, 10, 15, 20, 24)
-  - Layer specialization trends over time **measured from START positions**
+  - Layer specialization trends over time measured from START positions
   - START prediction accuracy progression
-  - Individual head focus evolution (upstream/local/downstream **relative to START codons**)
+  - Individual head focus evolution (upstream/local/downstream relative to START codons)
   - ~100MB, contains temporal analysis data
 
-- `training_dynamics_summary.json` - Condensed training trends **[START-SPECIFIC]**
-  - Overall learning insights and layer specialization patterns **for START detection**
+- `training_dynamics_summary.json` - Condensed training trends [START-SPECIFIC]
+  - Overall learning insights and layer specialization patterns for START detection
   - Key performance metrics across epochs
 
 ### Layer Analysis (`layer_analysis/`)
-- `attention_weights.json` - Detailed final model attention patterns (4.7GB) **[START-SPECIFIC]**
-  - Individual sample attention breakdowns **from START positions to all other positions**
-  - Head-by-head attention weights and matrices **queried from START codons**
-  - Top attended positions for each head **when processing START positions**
-  - Upstream/local/downstream attention scores **relative to START codons**
+- `attention_weights.json` - Detailed final model attention patterns (4.7GB) [START-SPECIFIC]
+  - Individual sample attention breakdowns from START positions to all other positions
+  - Head-by-head attention weights and matrices queried from START codons
+  - Top attended positions for each head when processing START positions
+  - Upstream/local/downstream attention scores relative to START codons
   - Essential for spatial attention analysis (e.g., "Head 2 focuses 20-50 bases upstream of START")
 
-- `analysis_summary.json` - High-level attention statistics **[START-SPECIFIC]**
-  - Average importance scores across regions **for START prediction**
+- `analysis_summary.json` - High-level attention statistics [START-SPECIFIC]
+  - Average importance scores across regions for START prediction
   - START prediction accuracy summary
 
-- `layer_features.json` - Layer activation patterns **[START-SPECIFIC]**
-  - Mean/max/min activations per layer **at START positions**
+- `layer_features.json` - Layer activation patterns [START-SPECIFIC]
+  - Mean/max/min activations per layer at START positions
   - Feature evolution at START positions
 
-- `gradient_attribution.json` - Attribution analysis **[START-SPECIFIC]**
-  - Gradient-based feature importance **for START prediction**
-  - Position-wise attribution scores **relative to START positions**
+- `gradient_attribution.json` - Attribution analysis [START-SPECIFIC]
+  - Gradient-based feature importance for START prediction
+  - Position-wise attribution scores relative to START positions
 
-- `combined_analysis.png` - Visualization of attention patterns **[START-SPECIFIC]**
-  - Multi-panel plot showing attention evolution and patterns **for START detection**
+- `combined_analysis.png` - Visualization of attention patterns [START-SPECIFIC]
+  - Multi-panel plot showing attention evolution and patterns for START detection
 
 ### Lightning Logs (`lightning_logs/`)
 - TensorBoard event files for training visualization
@@ -96,7 +96,7 @@ python layout_detection/generate_attention_summary_visual.py --run-dir layout_de
 ```
 
 **All attention analysis data is START-position specific**. The analysis
-measures attention patterns **from START codon positions** to other sequence
+measures attention patterns from START codon positions to other sequence
 positions. This means:
 
 - What it shows: How the model processes information when making START codon
