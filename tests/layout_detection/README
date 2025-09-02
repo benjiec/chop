@@ -1,3 +1,9 @@
+# Layout Detection for START Codon Prediction
+
+This directory contains tools for detecting START codons in genomic sequences with UTR context.
+
+## Running Experiments
+
 # try to detect START codons that are after UTRs
 python tests/layout_detection/test_utr_start_controlled.py --class-weights --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
 
@@ -12,3 +18,108 @@ python tests/layout_detection/analyze_saved_model.py --model-path your_model.ckp
 
 # Quick analysis with fewer samples
 python tests/layout_detection/analyze_saved_model.py --model-path your_model.ckpt --max-samples 5
+
+## Output Files and Analysis Data
+
+Training runs generate comprehensive analysis data in timestamped directories (e.g., `utr_start_test_run_20250901_150439/`):
+
+### Model Checkpoints (`checkpoints/`)
+- `last.ckpt` - Final model checkpoint
+- `utr_start_model_epoch=X_val_loss=Y.ckpt` - Best validation checkpoints
+- Used for model inference and continued training
+
+### Training Dynamics (`training_dynamics/`)
+- **`training_dynamics.json`** - Epoch-by-epoch attention evolution data
+  - How attention patterns changed during training (epochs 0, 5, 10, 15, 20, 24)
+  - Layer specialization trends over time
+  - START prediction accuracy progression
+  - Individual head focus evolution (upstream/local/downstream)
+  - ~100MB, contains temporal analysis data
+
+- **`training_dynamics_summary.json`** - Condensed training trends
+  - Overall learning insights and layer specialization patterns
+  - Key performance metrics across epochs
+
+### Layer Analysis (`layer_analysis/`)
+- **`attention_weights.json`** - Detailed final model attention patterns (4.7GB)
+  - Individual sample attention breakdowns with exact positions
+  - Head-by-head attention weights and matrices  
+  - Top attended positions for each head
+  - Upstream/local/downstream attention scores
+  - Essential for spatial attention analysis (e.g., "Head 2 focuses 20-50 bases upstream")
+
+- **`analysis_summary.json`** - High-level attention statistics
+  - Average importance scores across regions
+  - START prediction accuracy summary
+
+- **`layer_features.json`** - Layer activation patterns
+  - Mean/max/min activations per layer
+  - Feature evolution at START positions
+
+- **`sequences_and_predictions.json`** - Sample sequences with predictions
+  - Input sequences and model outputs for analysis
+
+- **`gradient_attribution.json`** - Attribution analysis
+  - Gradient-based feature importance
+  - Position-wise attribution scores
+
+- **`combined_analysis.png`** - Visualization of attention patterns
+  - Multi-panel plot showing attention evolution and patterns
+
+### Prediction Results
+- **`detailed_predictions.json`** - Individual sample predictions
+- **`detailed_results.json`** - Performance metrics and analysis
+- **`sample_data.json`** - Test sample information
+
+### Lightning Logs (`lightning_logs/`)
+- TensorBoard event files for training visualization
+- Hyperparameters and training configuration
+
+## Attention Analysis Tools
+
+### Generate Attention Range Data
+
+After training runs complete, extract attention patterns into structured data:
+
+```bash
+# Extract attention ranges to TSV format
+python tests/layout_detection/generate_attention_summary_visual.py --run-dir tests/layout_detection/utr_start_test_run_YYYYMMDD_HHMMSS
+```
+
+### Generated Data Files
+
+**`attention_ranges.tsv`** - Structured attention data with columns:
+- `epoch`: Training epoch (0, 5, 10, 15, 20, 24) or "final" for final model
+- `layer`: Layer index (0, 1, 2, 3, ...)
+- `head`: Attention head index (0, 1, 2, 3, 4, 5, ...)
+- `range_start`: Start position relative to START codon (negative = upstream)
+- `range_end`: End position relative to START codon (positive = downstream)
+- `average_attention_weight`: Mean attention weight for this range
+
+### Data Structure Features
+
+1. **Dynamic Range Detection**: 
+   - Local boundary automatically determined from data (e.g., ±12 bases)
+   - Upstream/downstream extents based on actual attention patterns
+   - No hardcoded position thresholds
+
+2. **Training Evolution Data**:
+   - Uses estimated ranges based on global attention patterns
+   - Shows how attention focus evolved epoch by epoch
+   - Handles duplicate epochs by taking the last entry
+
+3. **Final Model Precision**:
+   - Uses actual measured attention positions from final model
+   - Clusters nearby positions into coherent ranges (min 3 positions, max 20bp gap)
+   - Provides exact spatial attention patterns
+
+4. **Architecture Agnostic**:
+   - Automatically detects number of layers and heads from data
+   - Works with any transformer architecture
+   - Scales to different model sizes
+
+## File Size Considerations
+
+- `attention_weights.json` is large (4.7GB) due to detailed attention matrices
+- Use streaming JSON parsing (e.g., `ijson`) for analysis to avoid memory issues
+- Training dynamics files are much smaller (~100MB) and can be loaded normally

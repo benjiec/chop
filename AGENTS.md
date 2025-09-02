@@ -28,4 +28,7 @@ test suite.
 something. Comments should describe the current state of the code or
 configuration.
 
-9. Always use chop_env virtual env.
+9. Follow DRY model in code development. Abstract common code into functions
+that can be re-called as much as possible.
+
+10. Always use chop_env virtual env.
