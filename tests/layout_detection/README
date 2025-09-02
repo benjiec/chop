@@ -2,7 +2,11 @@
 
 This directory contains tools for detecting START codons in genomic sequences with UTR context.
 
-## Running Experiments
+## Fresh START Prediction Analysis
+
+python tests/layout_detection/analyze_fresh_start_predictions.py --model-path tests/layout_detection/utr_start_test_run_20250901_150439/checkpoints/last.ckpt --output-dir tests/layout_detection/utr_start_test_run_20250901_150439 --num-sequences 30
+
+## Running Trainings
 
 # try to detect START codons that are after UTRs
 python tests/layout_detection/test_utr_start_controlled.py --class-weights --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
@@ -72,6 +76,10 @@ Training runs generate comprehensive analysis data in timestamped directories (e
 - **`detailed_results.json`** - Performance metrics and analysis
 - **`sample_data.json`** - Test sample information
 
+### Fresh Analysis Results
+- **`prediction_<timestamp>_input.fa`** - Input sequences used for analysis in FASTA format
+- **`prediction_<timestamp>_report.txt`** - Visual sequence context showing TP/FP/FN predictions with 60bp upstream and 20bp downstream context
+
 ### Lightning Logs (`lightning_logs/`)
 - TensorBoard event files for training visualization
 - Hyperparameters and training configuration
@@ -85,6 +93,9 @@ After training runs complete, extract attention patterns into structured data:
 ```bash
 # Extract attention ranges to TSV format
 python tests/layout_detection/generate_attention_summary_visual.py --run-dir tests/layout_detection/utr_start_test_run_YYYYMMDD_HHMMSS
+
+# Analyze START predictions with fresh test data (recommended for accurate FP/TP analysis)
+python tests/layout_detection/analyze_fresh_start_predictions.py --model-path tests/layout_detection/utr_start_test_run_YYYYMMDD_HHMMSS/checkpoints/last.ckpt --output-dir tests/layout_detection/utr_start_test_run_YYYYMMDD_HHMMSS --num-sequences 50
 ```
 
 ### Generated Data Files
@@ -97,6 +108,19 @@ python tests/layout_detection/generate_attention_summary_visual.py --run-dir tes
 - `range_start`: Start position **relative to START codon** (negative = upstream)
 - `range_end`: End position **relative to START codon** (positive = downstream)
 - `average_attention_weight`: Mean attention weight **from START positions** to this range
+
+**`fresh_start_analysis.tsv`** - Detailed START prediction analysis with fresh test data:
+- `sequence_index`: Test sequence number
+- `atg_position`: Position of predicted START region center
+- `actual_codon`: Actual codon at the predicted position
+- `is_true_positive`: Whether the prediction is correct
+- `target_class`: Actual class (INTERGENIC/UTR5/START)
+- `start_probability`: Model's confidence in START prediction
+- `upstream_20`: 20bp upstream sequence context
+- `downstream_20`: 20bp downstream sequence context
+- `kozak_score`: Kozak consensus score (0-7)
+- `kozak_purine_minus3`: Whether position -3 has purine (A/G)
+- `region_length`: Number of consecutive positions predicted as START
 
 ### Data Structure Features
 
