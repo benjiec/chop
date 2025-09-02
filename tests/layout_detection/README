@@ -29,42 +29,43 @@ Training runs generate comprehensive analysis data in timestamped directories (e
 - Used for model inference and continued training
 
 ### Training Dynamics (`training_dynamics/`)
-- **`training_dynamics.json`** - Epoch-by-epoch attention evolution data
+- **`training_dynamics.json`** - Epoch-by-epoch attention evolution data **[START-SPECIFIC]**
   - How attention patterns changed during training (epochs 0, 5, 10, 15, 20, 24)
-  - Layer specialization trends over time
+  - Layer specialization trends over time **measured from START positions**
   - START prediction accuracy progression
-  - Individual head focus evolution (upstream/local/downstream)
+  - Individual head focus evolution (upstream/local/downstream **relative to START codons**)
   - ~100MB, contains temporal analysis data
 
-- **`training_dynamics_summary.json`** - Condensed training trends
-  - Overall learning insights and layer specialization patterns
+- **`training_dynamics_summary.json`** - Condensed training trends **[START-SPECIFIC]**
+  - Overall learning insights and layer specialization patterns **for START detection**
   - Key performance metrics across epochs
 
 ### Layer Analysis (`layer_analysis/`)
-- **`attention_weights.json`** - Detailed final model attention patterns (4.7GB)
-  - Individual sample attention breakdowns with exact positions
-  - Head-by-head attention weights and matrices  
-  - Top attended positions for each head
-  - Upstream/local/downstream attention scores
-  - Essential for spatial attention analysis (e.g., "Head 2 focuses 20-50 bases upstream")
+- **`attention_weights.json`** - Detailed final model attention patterns (4.7GB) **[START-SPECIFIC]**
+  - Individual sample attention breakdowns **from START positions to all other positions**
+  - Head-by-head attention weights and matrices **queried from START codons**
+  - Top attended positions for each head **when processing START positions**
+  - Upstream/local/downstream attention scores **relative to START codons**
+  - Essential for spatial attention analysis (e.g., "Head 2 focuses 20-50 bases upstream of START")
 
-- **`analysis_summary.json`** - High-level attention statistics
-  - Average importance scores across regions
+- **`analysis_summary.json`** - High-level attention statistics **[START-SPECIFIC]**
+  - Average importance scores across regions **for START prediction**
   - START prediction accuracy summary
 
-- **`layer_features.json`** - Layer activation patterns
-  - Mean/max/min activations per layer
+- **`layer_features.json`** - Layer activation patterns **[START-SPECIFIC]**
+  - Mean/max/min activations per layer **at START positions**
   - Feature evolution at START positions
 
 - **`sequences_and_predictions.json`** - Sample sequences with predictions
   - Input sequences and model outputs for analysis
+  - **General model outputs** (not position-specific)
 
-- **`gradient_attribution.json`** - Attribution analysis
-  - Gradient-based feature importance
-  - Position-wise attribution scores
+- **`gradient_attribution.json`** - Attribution analysis **[START-SPECIFIC]**
+  - Gradient-based feature importance **for START prediction**
+  - Position-wise attribution scores **relative to START positions**
 
-- **`combined_analysis.png`** - Visualization of attention patterns
-  - Multi-panel plot showing attention evolution and patterns
+- **`combined_analysis.png`** - Visualization of attention patterns **[START-SPECIFIC]**
+  - Multi-panel plot showing attention evolution and patterns **for START detection**
 
 ### Prediction Results
 - **`detailed_predictions.json`** - Individual sample predictions
@@ -88,14 +89,14 @@ python tests/layout_detection/generate_attention_summary_visual.py --run-dir tes
 
 ### Generated Data Files
 
-**`attention_ranges.tsv`** - Structured attention data with columns:
+**`attention_ranges.tsv`** - Structured attention data **[START-SPECIFIC]** with columns:
 - `epoch`: Training epoch (0, 5, 10, 15, 20, 24) or "final" for final model
 - `layer`: Layer index (0, 1, 2, 3, ...)
 - `head`: Attention head index (0, 1, 2, 3, 4, 5, ...)
 - `range_index`: Incremental index for ranges within each epoch/layer/head combination
-- `range_start`: Start position relative to START codon (negative = upstream)
-- `range_end`: End position relative to START codon (positive = downstream)
-- `average_attention_weight`: Mean attention weight for this range
+- `range_start`: Start position **relative to START codon** (negative = upstream)
+- `range_end`: End position **relative to START codon** (positive = downstream)
+- `average_attention_weight`: Mean attention weight **from START positions** to this range
 
 ### Data Structure Features
 
@@ -104,20 +105,31 @@ python tests/layout_detection/generate_attention_summary_visual.py --run-dir tes
    - Upstream/downstream extents based on actual attention patterns
    - No hardcoded position thresholds
 
-2. **Training Evolution Data**:
-   - Uses estimated ranges based on global attention patterns
-   - Shows how attention focus evolved epoch by epoch
+2. **Training Evolution Data** **[START-SPECIFIC]**:
+   - Uses estimated ranges based on global attention patterns **from START positions**
+   - Shows how attention focus evolved epoch by epoch **for START detection task**
    - Handles duplicate epochs by taking the last entry
 
-3. **Final Model Precision**:
-   - Uses actual measured attention positions from final model
+3. **Final Model Precision** **[START-SPECIFIC]**:
+   - Uses actual measured attention positions **from START positions** in final model
    - Clusters nearby positions into coherent ranges (min 3 positions, max 20bp gap)
-   - Provides exact spatial attention patterns
+   - Provides exact spatial attention patterns **for START codon recognition**
 
 4. **Architecture Agnostic**:
    - Automatically detects number of layers and heads from data
    - Works with any transformer architecture
    - Scales to different model sizes
+
+### **Important Note: START-Specific Analysis**
+
+**All attention analysis data is START-position specific**. The analysis measures attention patterns **from START codon positions** to other sequence positions. This means:
+
+- **What it shows**: How the model processes information when making START codon predictions
+- **What it doesn't show**: Attention patterns for UTR prediction, exon/intron classification, or other tasks
+- **Task dependency**: The same model heads would likely show different attention patterns when analyzed from UTR positions or other genomic features
+- **Architecture insights**: The finding that "all heads focus locally" applies specifically to START detection - UTR or exon prediction might require and utilize the broader attention ranges
+
+For comprehensive model understanding, similar analysis would need to be conducted from UTR positions, exon boundaries, and other relevant genomic features.
 
 ## File Size Considerations
 
