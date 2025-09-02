@@ -499,7 +499,7 @@ def run_layer_analysis(model_path: str, dataset, output_dir: Path, max_samples: 
     """Run comprehensive layer analysis on a trained model."""
     
     # Load model
-    from tests.layout_detection.layout_model import LayoutDetectionModule
+    from layout_detection.layout_model import LayoutDetectionModule
     model = LayoutDetectionModule.load_from_checkpoint(model_path)
     
     # Create data loader

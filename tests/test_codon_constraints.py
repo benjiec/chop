@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from utils.dna_processor import validate_start_stop_codons_from_exons, reverse_complement
-from models.gene_predictor import BiologicalLoss
+from gene_predictor.model import BiologicalLoss
 
 
 class TestCodonValidation(unittest.TestCase):

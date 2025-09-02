@@ -16,7 +16,7 @@ whether an ATG should be classified as START vs INTERGENIC?
 
 Usage:
     cd /Users/benjie/git/chop && source chop_env/bin/activate
-    python tests/layout_detection/test_utr_start_controlled.py
+    python layout_detection/test_utr_start_controlled.py
 """
 
 import sys
@@ -36,9 +36,9 @@ import json
 import numpy as np
 from typing import Optional, Dict
 
-from tests.layout_detection.utr_start_dataset import UTRStartDataset
-from tests.layout_detection.layout_model import LayoutDetectionModule, create_base_config
-from tests.layout_detection.training_dynamics_callback import TrainingDynamicsCallback
+from layout_detection.utr_start_dataset import UTRStartDataset
+from layout_detection.layout_model import LayoutDetectionModule, create_base_config
+from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 
 
 def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
@@ -261,7 +261,7 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"tests/layout_detection/utr_start_test_run_{timestamp}")
+    output_dir = Path(f"layout_detection/utr_start_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save sample data for verification BEFORE training
@@ -321,9 +321,8 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     print("\n5. Testing model...")
     trainer.test(model, val_loader)
     
-    # Detailed analysis
-    print("\n6. Detailed Analysis...")
-    analyze_utr_start_predictions(model, val_loader, output_dir)
+    # Detailed analysis (skipped)
+    print("\n6. Detailed Analysis... (skipped; use analyze_fresh_start_predictions.py)")
     
     # Layer analysis
     print("\n7. Comprehensive Layer Analysis...")
@@ -522,7 +521,7 @@ def run_comprehensive_layer_analysis(model, dataset, output_dir):
     analysis_dir.mkdir(exist_ok=True)
     
     # Import and run layer analysis
-    from tests.layout_detection.layer_analysis import LayerAnalyzer
+    from layout_detection.layer_analysis import LayerAnalyzer
     from torch.utils.data import DataLoader, random_split
     
     # Create validation loader

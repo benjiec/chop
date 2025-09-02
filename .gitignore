@@ -6,5 +6,5 @@ chop_env
 models/checkpoints
 cache
 .*.swp
-tests/*/*test_run_*
+*/*test_run_*
 .~*.twbr

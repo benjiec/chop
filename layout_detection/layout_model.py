@@ -19,7 +19,7 @@ import math
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from models.gene_predictor import DNAEmbedding, MaskedTransformerLayer
+from gene_predictor.model import DNAEmbedding, MaskedTransformerLayer
 
 
 class LayoutDetectionModel(nn.Module):

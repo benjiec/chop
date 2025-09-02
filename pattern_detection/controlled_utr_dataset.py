@@ -23,7 +23,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from tests.gene_prediction.realistic_utr_sequences import (
+from utils.realistic_utr_sequences import (
     KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES,
     POLYA_SIGNALS, ARE_SEQUENCES, GRE_SEQUENCES, UTR3_REAL_SEQUENCES, UTR3_COMPLETE_SEQUENCES,
     mutate_sequence

@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from tests.layout_detection.analyze_fresh_start_predictions import (
+from layout_detection.analyze_fresh_start_predictions import (
     analyze_all_predictions,
     calculate_metrics,
     validate_predictions,

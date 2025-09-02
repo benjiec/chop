@@ -13,7 +13,7 @@ Model: 3 layers, 6 heads, ~4M parameters
 
 Usage:
     cd /Users/benjie/git/chop && source chop_env/bin/activate
-    python tests/pattern_detection/test_controlled_utr.py
+    python pattern_detection/test_controlled_utr.py
 """
 
 import sys
@@ -32,8 +32,8 @@ from datetime import datetime
 import json
 import numpy as np
 
-from tests.pattern_detection.controlled_utr_dataset import ControlledUTRDataset
-from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
+from pattern_detection.controlled_utr_dataset import ControlledUTRDataset
+from pattern_detection.pattern_model import PatternDetectionModule, create_base_config
 from typing import Optional, Dict
 
 
@@ -230,7 +230,7 @@ def run_controlled_utr_test(d_model: int = 504, n_layers: int = 3, n_heads: int 
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"tests/pattern_detection/controlled_test_run_{timestamp}")
+    output_dir = Path(f"pattern_detection/controlled_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save sample data for verification BEFORE training

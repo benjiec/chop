@@ -7,7 +7,7 @@ ATG = START, everything else = INTERGENIC.
 
 Usage:
     cd /Users/benjie/git/chop && source chop_env/bin/activate
-    python tests/pattern_detection/test_simple_atg_detection.py
+    python pattern_detection/test_simple_atg_detection.py
 """
 
 import sys
@@ -24,8 +24,8 @@ from torch.utils.data import DataLoader, random_split
 import argparse
 from datetime import datetime
 
-from tests.pattern_detection.simple_atg_dataset import SimpleATGDataset
-from tests.pattern_detection.pattern_model import PatternDetectionModule, create_base_config
+from pattern_detection.simple_atg_dataset import SimpleATGDataset
+from pattern_detection.pattern_model import PatternDetectionModule, create_base_config
 import json
 import numpy as np
 from typing import Optional, Dict
@@ -224,7 +224,7 @@ def run_simple_atg_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"tests/pattern_detection/simple_atg_test_run_{timestamp}")
+    output_dir = Path(f"pattern_detection/simple_atg_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save sample data for verification BEFORE training

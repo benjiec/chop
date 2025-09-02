@@ -22,7 +22,7 @@
       <connection class='federated'>
         <named-connections>
           <named-connection caption='attention_ranges' name='textscan.1dcrify0omwdqk1evb52j02yukaj'>
-            <connection class='textscan' directory='/Users/benjie/git/chop/tests/layout_detection/utr_start_test_run_20250901_150439' filename='attention_ranges.tsv' password='' server='' />
+            <connection class='textscan' directory='/Users/benjie/git/chop/layout_detection/utr_start_test_run_20250901_150439' filename='attention_ranges.tsv' password='' server='' />
           </named-connection>
         </named-connections>
         <relation connection='textscan.1dcrify0omwdqk1evb52j02yukaj' name='attention_ranges.tsv' table='[attention_ranges#tsv]' type='table'>

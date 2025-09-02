@@ -22,10 +22,10 @@ import hashlib
 # Add project paths
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
-sys.path.append(str(project_root / "tests" / "layout_detection"))
+sys.path.append(str(project_root / "layout_detection"))
 
-from tests.layout_detection.utr_start_dataset import UTRStartDataset
-from tests.layout_detection.layout_model import LayoutDetectionModule
+from layout_detection.utr_start_dataset import UTRStartDataset
+from layout_detection.layout_model import LayoutDetectionModule
 from torch.utils.data import DataLoader
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -38,7 +38,7 @@ def load_trained_model(model_path: Path, device='cpu'):
         checkpoint = torch.load(model_path, map_location=device)
         
         # Create model instance matching the saved configuration
-        from tests.layout_detection.test_utr_start_controlled import create_utr_start_config
+        from layout_detection.test_utr_start_controlled import create_utr_start_config
         config = create_utr_start_config(
             d_model=504, n_layers=4, n_heads=6,
             attention_masks={0: 4, 1: (20, 5), 2: (50, 0)},

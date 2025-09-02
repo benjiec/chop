@@ -6,7 +6,7 @@ This script loads a saved model and runs comprehensive layer analysis
 without needing to retrain.
 
 Usage:
-    python tests/layout_detection/analyze_saved_model.py --model-path tests/layout_detection/utr_start_test_run_20250831_064626/checkpoints/last.ckpt
+    python layout_detection/analyze_saved_model.py --model-path layout_detection/utr_start_test_run_20250831_064626/checkpoints/last.ckpt
 """
 
 import sys
@@ -20,9 +20,9 @@ import torch
 from torch.utils.data import DataLoader, random_split
 import argparse
 
-from tests.layout_detection.utr_start_dataset import UTRStartDataset
-from tests.layout_detection.layout_model import LayoutDetectionModule
-from tests.layout_detection.layer_analysis import LayerAnalyzer
+from layout_detection.utr_start_dataset import UTRStartDataset
+from layout_detection.layout_model import LayoutDetectionModule
+from layout_detection.layer_analysis import LayerAnalyzer
 
 def analyze_saved_model(model_path: str, output_dir: str, 
                        num_contigs: int = 1000, layouts_per_contig: int = 1,

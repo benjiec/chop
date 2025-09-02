@@ -1,1 +1,1 @@
-source chop_env/bin/activate && python tests/unit/run_tests.py
+source chop_env/bin/activate && python tests/run_tests.py

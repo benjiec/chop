@@ -21,8 +21,7 @@ answer with possibilities and providing lots of text to read.
 not in the tests/ directory.
 
 7. Whenever adding code outside of the tests/ directory, consider adding unit
-tests in tests/unit, and then include the unit test in the running the the unit
-test suite.
+tests to tests/ directory and tests/run_tests.py driver.
 
 8. Don't leave comments that only pertain to an action you took, e.g. to undo
 something. Comments should describe the current state of the code or

@@ -16,7 +16,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from tests.layout_detection.utr_start_dataset import UTRStartDataset
+from layout_detection.utr_start_dataset import UTRStartDataset
 import numpy as np
 
 def test_target_generation():
