@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from test_codon_constraints import TestCodonValidation, TestBiologicalLoss, TestIntegration
 from test_target_generation import TestTargetGeneration
 from test_per_head_attention import TestPerHeadAttention
+from test_start_analysis_sanity import TestStartAnalysisSanity
 
 
 def run_all_tests():
@@ -30,6 +31,7 @@ def run_all_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
     suite.addTests(loader.loadTestsFromTestCase(TestTargetGeneration))
     suite.addTests(loader.loadTestsFromTestCase(TestPerHeadAttention))
+    suite.addTests(loader.loadTestsFromTestCase(TestStartAnalysisSanity))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

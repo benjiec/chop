@@ -17,6 +17,7 @@ import json
 import argparse
 from typing import List, Dict, Tuple
 from datetime import datetime
+import hashlib
 
 # Add project paths
 project_root = Path(__file__).parent.parent.parent
@@ -241,12 +242,6 @@ def calculate_metrics(all_predictions):
                         fn_positions += 1
                     elif pred_class != 2 and target_class != 2:  # Didn't predict START, not actually START
                         tn_positions += 1
-                else:
-                    # Non-ATG position
-                    if pred_class == 2:  # Predicted START at non-ATG position
-                        fp_positions += 1
-                    else:  # Correctly didn't predict START at non-ATG position
-                        tn_positions += 1
     
     # Calculate metrics
     sensitivity = tp_positions / (tp_positions + fn_positions) if (tp_positions + fn_positions) > 0 else 0
@@ -284,6 +279,7 @@ def analyze_all_predictions(results_data):
         tp_count = 0
         fp_count = 0
         fn_count = 0
+        seen_positions = set()
         
         for pos in range(len(sequence) - 2):
             if sequence[pos:pos+3] == 'ATG':
@@ -300,6 +296,12 @@ def analyze_all_predictions(results_data):
                 
                 # Only include ATGs that were either predicted as START or should be START
                 if is_predicted_start or is_target_start:
+                    # Ensure uniqueness per sequence/position
+                    key = (seq_idx, pos)
+                    if key in seen_positions:
+                        raise ValueError(f"Duplicate ATG position detected for sequence {seq_idx} at position {pos}")
+                    seen_positions.add(key)
+
                     is_tp = is_predicted_start and is_target_start
                     
                     if is_tp:
@@ -330,6 +332,7 @@ def analyze_all_predictions(results_data):
                         'atg_position': pos,
                         'actual_codon': 'ATG',
                         'is_true_positive': is_tp,
+                        'classification': classification,
                         'target_class': target_name,
                         'start_probability': float(start_prob),
                         'upstream_20': upstream,
@@ -346,6 +349,55 @@ def analyze_all_predictions(results_data):
         print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
     
     return all_predictions
+
+def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
+    """Validate prediction entries for correctness and consistency.
+    - Ensure each reported site is an ATG in the source sequence
+    - Ensure no duplicate (sequence_index, atg_position)
+    - Ensure FN+TP equals number of real ATG STARTs in targets per sequence
+    """
+    # Map sequences for quick lookup
+    seq_map = {}
+    target_map = {}
+    for result in results_data:
+        seq_idx = result['sequence_index']
+        seq_map[seq_idx] = convert_tokens_to_sequence(result['sequence_tokens'])
+        target_map[seq_idx] = result['targets']
+
+    seen = set()
+    for p in predictions:
+        seq_idx = p['sequence_index']
+        pos = p['atg_position']
+        key = (seq_idx, pos)
+        if key in seen:
+            raise AssertionError(f"Duplicate predicted site: sequence {seq_idx} position {pos}")
+        seen.add(key)
+
+        seq = seq_map[seq_idx]
+        assert seq[pos:pos+3] == 'ATG', f"Reported site is not ATG at sequence {seq_idx} pos {pos}"
+
+    # Per-sequence TP+FN should equal number of target==2 ATG sites
+    # Identify real ATG START positions from targets
+    from collections import defaultdict
+    real_start_positions = defaultdict(set)
+    for seq_idx, targets in target_map.items():
+        seq = seq_map[seq_idx]
+        for pos in range(0, len(seq) - 2):
+            if seq[pos:pos+3] == 'ATG' and targets[pos] == 2:
+                real_start_positions[seq_idx].add(pos)
+
+    counted_tp_fn = defaultdict(set)
+    for p in predictions:
+        if p.get('classification') in ('TP', 'FN'):
+            counted_tp_fn[p['sequence_index']].add(p['atg_position'])
+
+    for seq_idx in real_start_positions:
+        if real_start_positions[seq_idx] != counted_tp_fn.get(seq_idx, set()):
+            raise AssertionError(
+                f"TP+FN positions do not match real START ATGs for sequence {seq_idx}:\n"
+                f"  expected={sorted(real_start_positions[seq_idx])}\n"
+                f"  got={sorted(counted_tp_fn.get(seq_idx, set()))}"
+            )
 
 def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
     """Save input sequences as FASTA file."""
@@ -364,42 +416,10 @@ def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
 def generate_visual_output(predictions: List[Dict], results_data: List[Dict], output_path: Path):
     """Generate visual sequence output showing predictions with context."""
     
-    # Collect all predictions and missed targets
-    tps = [p for p in predictions if p['is_true_positive']]
-    fps = [p for p in predictions if not p['is_true_positive']]
-    
-    # Find false negatives (missed STARTs)
-    fns = []
-    for result in results_data:
-        seq_idx = result['sequence_index']
-        sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-        targets = result['targets']
-        predictions_array = result['predictions']
-        probabilities = result['probabilities']
-        
-        # Find actual START positions that were missed
-        # Only count positions that have START target AND actually contain ATG
-        for pos in range(len(targets) - 2):  # -2 to ensure we can check 3-base codon
-            if targets[pos] == 2 and predictions_array[pos] != 2:  # Actual START, not predicted
-                # Check if this position actually contains ATG
-                if pos + 2 < len(sequence):
-                    codon = sequence[pos:pos+3]
-                    if codon == 'ATG':  # Only count ATG positions as real START FNs
-                        # Get context
-                        upstream = sequence[max(0, pos-60):pos]
-                        downstream = sequence[pos+3:pos+23]
-                        
-                        # Get START probability
-                        start_prob = probabilities[pos, 2]
-                        
-                        fns.append({
-                            'sequence_index': seq_idx,
-                            'position': pos,
-                            'sequence': sequence,
-                            'start_probability': float(start_prob),
-                            'upstream_60': upstream,
-                            'downstream_20': downstream
-                        })
+    # Collect all predictions by explicit classification to prevent overlap
+    tps = [p for p in predictions if p.get('classification') == 'TP']
+    fps = [p for p in predictions if p.get('classification') == 'FP']
+    fns = [p for p in predictions if p.get('classification') == 'FN']
     
     with open(output_path, 'w') as f:
         f.write("START Prediction Visual Analysis\n")
@@ -408,7 +428,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         # True Positives
         f.write("TRUE POSITIVES:\n")
         f.write("-" * 40 + "\n")
-        for i, tp in enumerate(tps[:10]):  # Show first 10
+        for i, tp in enumerate(tps):  # Show all TPs
             seq_idx = tp['sequence_index']
             pos = tp['atg_position']
             prob = tp['start_probability']
@@ -436,7 +456,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         # False Positives
         f.write("\nFALSE POSITIVES:\n")
         f.write("-" * 40 + "\n")
-        for i, fp in enumerate(fps[:10]):  # Show first 10
+        for i, fp in enumerate(fps):  # Show all FPs
             seq_idx = fp['sequence_index']
             pos = fp['atg_position']
             prob = fp['start_probability']
@@ -464,26 +484,30 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         # False Negatives
         f.write("\nFALSE NEGATIVES (Missed STARTs):\n")
         f.write("-" * 40 + "\n")
-        for i, fn in enumerate(fns[:10]):  # Show first 10
+        for i, fn in enumerate(fns):  # Show all FNs
             seq_idx = fn['sequence_index']
-            pos = fn['position']
+            pos = fn['atg_position']
             prob = fn['start_probability']
-            sequence = fn['sequence']
             
-            upstream_60 = sequence[max(0, pos-60):pos]
-            codon = sequence[pos:pos+3]
-            downstream_20 = sequence[pos+3:pos+23]
-            
-            # Create header with sequence name and position
-            header = f">sequence_{seq_idx}@{pos}"
-            
-            # Create visual line
-            context_line = upstream_60 + codon + downstream_20
-            marker_line = " " * len(upstream_60) + f"^^^ FN {prob:.2f}"
-            
-            f.write(f"{header}\n")
-            f.write(f"{context_line}\n")
-            f.write(f"{marker_line}\n\n")
+            # Get full context from original sequence
+            for result in results_data:
+                if result['sequence_index'] == seq_idx:
+                    sequence = convert_tokens_to_sequence(result['sequence_tokens'])
+                    upstream_60 = sequence[max(0, pos-60):pos]
+                    codon = sequence[pos:pos+3]
+                    downstream_20 = sequence[pos+3:pos+23]
+                    
+                    # Create header with sequence name and position
+                    header = f">sequence_{seq_idx}@{pos}"
+                    
+                    # Create visual line
+                    context_line = upstream_60 + codon + downstream_20
+                    marker_line = " " * len(upstream_60) + f"^^^ FN {prob:.2f}"
+                    
+                    f.write(f"{header}\n")
+                    f.write(f"{context_line}\n")
+                    f.write(f"{marker_line}\n\n")
+                    break
     
     print(f"✓ Visual analysis saved to: {output_path}")
 
@@ -492,14 +516,27 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     
     # Generate timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
+    # Compute dataset hash from sequences to bind FASTA and report
+    hasher = hashlib.sha256()
+    for result in results_data:
+        seq = convert_tokens_to_sequence(result['sequence_tokens'])
+        hasher.update(seq.encode('utf-8'))
+        hasher.update(b"\n")
+    dataset_hash = hasher.hexdigest()[:10]
+
+    base_name = f"prediction_{timestamp}_{dataset_hash}"
+
     # Save input sequences as FASTA
-    fasta_output = output_dir / f"prediction_{timestamp}_input.fa"
+    fasta_output = output_dir / f"{base_name}.fa"
     save_input_sequences_fasta(results_data, fasta_output)
     
     # Generate visual output
-    report_output = output_dir / f"prediction_{timestamp}_report.txt"
+    report_output = output_dir / f"{base_name}.txt"
     generate_visual_output(predictions, results_data, report_output)
+
+    # Run validations and print a short footer to stdout for confidence
+    validate_predictions(results_data, predictions)
 
 def print_summary(predictions: List[Dict], metrics: Dict):
     """Print comprehensive summary of results."""
