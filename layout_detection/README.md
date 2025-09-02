@@ -7,7 +7,7 @@ with upstream UTR context.
 ## Analyzing Predictions
 
 ```
-python layout_detection/analyze_fresh_start_predictions.py --model-path layout_detection/utr_start_test_run_20250901_150439/checkpoints/last.ckpt --output-dir layout_detection/utr_start_test_run_20250901_150439 --num-sequences 30
+python layout_detection/predict_and_analyze.py --model-path layout_detection/utr_start_test_run_20250901_150439/checkpoints/last.ckpt --output-dir layout_detection/utr_start_test_run_20250901_150439 --num-sequences 30
 ```
 
 Prediction results appear under the test run directory

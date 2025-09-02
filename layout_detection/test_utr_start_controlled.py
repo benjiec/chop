@@ -322,7 +322,7 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     trainer.test(model, val_loader)
     
     # Detailed analysis (skipped)
-    print("\n6. Detailed Analysis... (skipped; use analyze_fresh_start_predictions.py)")
+    print("\n6. Detailed Analysis... (skipped; use predict_and_analyze.py)")
     
     # Layer analysis
     print("\n7. Comprehensive Layer Analysis...")

@@ -20,7 +20,7 @@ from datetime import datetime
 import hashlib
 
 # Add project paths
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
@@ -181,32 +181,7 @@ def analyze_kozak_pattern(upstream: str, atg_codon: str):
     
     return {'score': score, 'features': features}
 
-def find_start_regions(predictions):
-    """Group consecutive START predictions into regions."""
-    
-    start_regions = []
-    
-    # Find all positions predicted as START (class 2)
-    start_positions = [i for i, pred in enumerate(predictions) if pred == 2]
-    
-    if not start_positions:
-        return start_regions
-    
-    # Group consecutive positions
-    current_region = [start_positions[0]]
-    
-    for pos in start_positions[1:]:
-        if pos == current_region[-1] + 1:
-            current_region.append(pos)
-        else:
-            # End current region, start new one
-            start_regions.append(current_region)
-            current_region = [pos]
-    
-    # Add the last region
-    start_regions.append(current_region)
-    
-    return start_regions
+# Note: region grouping helper removed as unused.
 
 def calculate_metrics(all_predictions):
     """Calculate sensitivity, precision, and specificity for ATG-based START detection."""
@@ -539,16 +514,10 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     validate_predictions(results_data, predictions)
 
 def print_summary(predictions: List[Dict], metrics: Dict):
-    """Print comprehensive summary of results."""
-    
-    total_preds = len(predictions)
-    tps = [p for p in predictions if p['is_true_positive']]
-    fps = [p for p in predictions if not p['is_true_positive']]
-    
+    """Print concise summary of position-level metrics only."""
     print(f"\n{'='*60}")
     print("COMPREHENSIVE START PREDICTION ANALYSIS")
     print(f"{'='*60}")
-    
     print(f"\nMETRICS (Position-level):")
     print(f"  True Positives: {metrics['tp']}")
     print(f"  False Positives: {metrics['fp']}")
@@ -558,66 +527,6 @@ def print_summary(predictions: List[Dict], metrics: Dict):
     print(f"  Sensitivity: {metrics['sensitivity']:.1%}")
     print(f"  Precision: {metrics['precision']:.1%}")
     print(f"  Specificity: {metrics['specificity']:.1%}")
-    
-    print(f"\nREGION-LEVEL RESULTS:")
-    print(f"  Total START regions predicted: {total_preds}")
-    print(f"  True positive regions: {len(tps)}")
-    print(f"  False positive regions: {len(fps)}")
-    print(f"  Region precision: {len(tps)/total_preds:.1%}")
-    
-    if fps:
-        print(f"\nFALSE POSITIVE ANALYSIS:")
-        
-        # By target class
-        fp_by_target = {}
-        for fp in fps:
-            target = fp['target_class']
-            if target not in fp_by_target:
-                fp_by_target[target] = []
-            fp_by_target[target].append(fp)
-        
-        for target, target_fps in fp_by_target.items():
-            print(f"  {target}: {len(target_fps)} false positives")
-        
-        # Codon analysis
-        atg_fps = [fp for fp in fps if fp['actual_codon'] == 'ATG']
-        non_atg_fps = [fp for fp in fps if fp['actual_codon'] != 'ATG']
-        
-        print(f"\n  CODON ANALYSIS:")
-        print(f"    ATG codons: {len(atg_fps)} ({len(atg_fps)/len(fps):.1%})")
-        print(f"    Non-ATG codons: {len(non_atg_fps)} ({len(non_atg_fps)/len(fps):.1%})")
-        
-        if non_atg_fps:
-            non_atg_codons = [fp['actual_codon'] for fp in non_atg_fps]
-            unique_codons = sorted(list(set(non_atg_codons)))
-            print(f"      Non-ATG codons: {unique_codons}")
-        
-        # Kozak analysis
-        kozak_fps = [fp for fp in fps if fp['kozak_features'].get('minus3_purine', False)]
-        print(f"\n  KOZAK ANALYSIS:")
-        print(f"    With purine at -3: {len(kozak_fps)} ({len(kozak_fps)/len(fps):.1%})")
-        
-        avg_kozak_fp = sum(fp['kozak_score'] for fp in fps) / len(fps)
-        avg_kozak_tp = sum(tp['kozak_score'] for tp in tps) / len(tps) if tps else 0
-        
-        print(f"    Average Kozak score (FP): {avg_kozak_fp:.2f}")
-        print(f"    Average Kozak score (TP): {avg_kozak_tp:.2f}")
-        
-        # Note: Downstream stop analysis removed since we're not handling splicing
-        
-        # Show examples
-        print(f"\n  EXAMPLE FALSE POSITIVES:")
-        for i, fp in enumerate(fps[:5]):
-            print(f"    FP {i+1}: pos {fp['atg_position']}, codon {fp['actual_codon']}, target {fp['target_class']}")
-            print(f"      Context: {fp['upstream_20'][-10:]}[{fp['actual_codon']}]{fp['downstream_20'][:10]}")
-            print(f"      Kozak score: {fp['kozak_score']}, START prob: {fp['start_probability']:.4f}")
-    
-    if tps:
-        print(f"\n  TRUE POSITIVE EXAMPLES:")
-        for i, tp in enumerate(tps[:3]):
-            print(f"    TP {i+1}: pos {tp['atg_position']}, codon {tp['actual_codon']}")
-            print(f"      Context: {tp['upstream_20'][-10:]}[{tp['actual_codon']}]{tp['downstream_20'][:10]}")
-            print(f"      Kozak score: {tp['kozak_score']}, START prob: {tp['start_probability']:.4f}")
 
 def main():
     parser = argparse.ArgumentParser(description='Fresh START prediction analysis')
