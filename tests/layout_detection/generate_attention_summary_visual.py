@@ -423,7 +423,9 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                             downstream_focus = float(head_data['avg_downstream_focus'])
                             
                             # Add ranges based on attention focus (estimated for training epochs)
-                            if upstream_focus > 0.001:
+                            range_idx = 0  # Range index counter for this head
+                            
+                            if upstream_focus > 0.0001:
                                 if global_ranges:
                                     start_pos = global_ranges['upstream_extent'][0]
                                     end_pos = global_ranges['upstream_extent'][1]
@@ -435,22 +437,26 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                     'epoch': epoch,
                                     'layer': layer_idx,
                                     'head': head_idx,
+                                    'range_index': range_idx,
                                     'range_start': start_pos,
                                     'range_end': end_pos,
                                     'average_attention_weight': upstream_focus
                                 })
+                                range_idx += 1
                             
-                            if local_focus > 0.001:
+                            if local_focus > 0.0001:
                                 rows.append({
                                     'epoch': epoch,
                                     'layer': layer_idx,
                                     'head': head_idx,
+                                    'range_index': range_idx,
                                     'range_start': -local_boundary,
                                     'range_end': local_boundary,
                                     'average_attention_weight': local_focus
                                 })
+                                range_idx += 1
                             
-                            if downstream_focus > 0.001:
+                            if downstream_focus > 0.0001:
                                 if global_ranges:
                                     start_pos = global_ranges['downstream_extent'][0]
                                     end_pos = global_ranges['downstream_extent'][1]
@@ -462,10 +468,12 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                     'epoch': epoch,
                                     'layer': layer_idx,
                                     'head': head_idx,
+                                    'range_index': range_idx,
                                     'range_start': start_pos,
                                     'range_end': end_pos,
                                     'average_attention_weight': downstream_focus
                                 })
+                                range_idx += 1
     
     # Process final model with actual position data
     if attention_data and 'layer_head_patterns' in attention_data:
@@ -502,8 +510,11 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                             local_positions = [p for p in all_positions if abs(p) <= local_boundary]
                             downstream_positions = [p for p in all_positions if p > local_boundary]
                             
+                            # Range index counter for this head
+                            range_idx = 0
+                            
                             # Cluster upstream positions
-                            if upstream_positions and upstream_score > 0.001:
+                            if upstream_positions and upstream_score > 0.0001:
                                 upstream_clusters = cluster_positions(upstream_positions)
                                 if not upstream_clusters:  # If no clusters, use full range
                                     upstream_clusters = [(min(upstream_positions), max(upstream_positions))]
@@ -513,24 +524,28 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                         'epoch': 'final',
                                         'layer': layer_idx,
                                         'head': head_idx,
+                                        'range_index': range_idx,
                                         'range_start': start_pos,
                                         'range_end': end_pos,
                                         'average_attention_weight': upstream_score / len(upstream_clusters)
                                     })
+                                    range_idx += 1
                             
                             # Local range (always one range)
-                            if local_score > 0.001:
+                            if local_score > 0.0001:
                                 rows.append({
                                     'epoch': 'final',
                                     'layer': layer_idx,
                                     'head': head_idx,
+                                    'range_index': range_idx,
                                     'range_start': -local_boundary,
                                     'range_end': local_boundary,
                                     'average_attention_weight': local_score
                                 })
+                                range_idx += 1
                             
                             # Cluster downstream positions
-                            if downstream_positions and downstream_score > 0.001:
+                            if downstream_positions and downstream_score > 0.0001:
                                 downstream_clusters = cluster_positions(downstream_positions)
                                 if not downstream_clusters:  # If no clusters, use full range
                                     downstream_clusters = [(min(downstream_positions), max(downstream_positions))]
@@ -540,14 +555,16 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                         'epoch': 'final',
                                         'layer': layer_idx,
                                         'head': head_idx,
+                                        'range_index': range_idx,
                                         'range_start': start_pos,
                                         'range_end': end_pos,
                                         'average_attention_weight': downstream_score / len(downstream_clusters)
                                     })
+                                    range_idx += 1
     
     # Write to TSV
     with open(output_path, 'w', newline='') as tsvfile:
-        fieldnames = ['epoch', 'layer', 'head', 'range_start', 'range_end', 'average_attention_weight']
+        fieldnames = ['epoch', 'layer', 'head', 'range_index', 'range_start', 'range_end', 'average_attention_weight']
         writer = csv.DictWriter(tsvfile, fieldnames=fieldnames, delimiter='\t')
         writer.writeheader()
         

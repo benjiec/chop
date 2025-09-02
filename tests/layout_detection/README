@@ -92,6 +92,7 @@ python tests/layout_detection/generate_attention_summary_visual.py --run-dir tes
 - `epoch`: Training epoch (0, 5, 10, 15, 20, 24) or "final" for final model
 - `layer`: Layer index (0, 1, 2, 3, ...)
 - `head`: Attention head index (0, 1, 2, 3, 4, 5, ...)
+- `range_index`: Incremental index for ranges within each epoch/layer/head combination
 - `range_start`: Start position relative to START codon (negative = upstream)
 - `range_end`: End position relative to START codon (positive = downstream)
 - `average_attention_weight`: Mean attention weight for this range
