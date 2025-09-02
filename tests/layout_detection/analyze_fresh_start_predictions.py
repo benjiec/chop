@@ -208,9 +208,9 @@ def find_start_regions(predictions):
     return start_regions
 
 def calculate_metrics(all_predictions):
-    """Calculate sensitivity, precision, and specificity."""
+    """Calculate sensitivity, precision, and specificity for ATG-based START detection."""
     
-    # Count position-level metrics (not region-level)
+    # Count ATG-level metrics (only positions with actual ATG codons)
     tp_positions = 0
     fp_positions = 0
     fn_positions = 0
@@ -219,19 +219,34 @@ def calculate_metrics(all_predictions):
     for result in all_predictions:
         targets = result['targets']
         predictions = result['predictions']
+        sequence = convert_tokens_to_sequence(result['sequence_tokens'])
         
-        for pos in range(len(targets)):
+        # Only analyze positions that could contain ATG (sequence length - 2)
+        for pos in range(len(targets) - 2):
             target_class = targets[pos]
             pred_class = predictions[pos]
             
-            if pred_class == 2 and target_class == 2:  # Predicted START, actually START
-                tp_positions += 1
-            elif pred_class == 2 and target_class != 2:  # Predicted START, not actually START
-                fp_positions += 1
-            elif pred_class != 2 and target_class == 2:  # Didn't predict START, but actually START
-                fn_positions += 1
-            elif pred_class != 2 and target_class != 2:  # Didn't predict START, not actually START
-                tn_positions += 1
+            # Check if this position actually contains ATG
+            if pos + 2 < len(sequence):
+                codon = sequence[pos:pos+3]
+                is_atg_position = codon == 'ATG'
+                
+                if is_atg_position:
+                    # This is an actual ATG position
+                    if pred_class == 2 and target_class == 2:  # Predicted START, actually START
+                        tp_positions += 1
+                    elif pred_class == 2 and target_class != 2:  # Predicted START, not actually START
+                        fp_positions += 1
+                    elif pred_class != 2 and target_class == 2:  # Didn't predict START, but actually START
+                        fn_positions += 1
+                    elif pred_class != 2 and target_class != 2:  # Didn't predict START, not actually START
+                        tn_positions += 1
+                else:
+                    # Non-ATG position
+                    if pred_class == 2:  # Predicted START at non-ATG position
+                        fp_positions += 1
+                    else:  # Correctly didn't predict START at non-ATG position
+                        tn_positions += 1
     
     # Calculate metrics
     sensitivity = tp_positions / (tp_positions + fn_positions) if (tp_positions + fn_positions) > 0 else 0
@@ -249,7 +264,7 @@ def calculate_metrics(all_predictions):
     }
 
 def analyze_all_predictions(results_data):
-    """Analyze all START predictions with sequence context."""
+    """Analyze all START predictions with sequence context using direct ATG-based approach."""
     
     print("Analyzing all START predictions...")
     
@@ -262,96 +277,73 @@ def analyze_all_predictions(results_data):
         predictions = result['predictions']
         probabilities = result['probabilities']
         
-        # Find START regions in predictions
-        start_regions = find_start_regions(predictions)
+        print(f"Sequence {seq_idx}: length {len(sequence)}")
         
-        # Find actual START regions in targets
-        target_start_regions = find_start_regions(targets)
+        # Find all ATG positions and analyze each one
+        atg_count = 0
+        tp_count = 0
+        fp_count = 0
+        fn_count = 0
         
-        # Analyze each predicted START region
-        for region_idx, region in enumerate(start_regions):
-            region_start = min(region)
-            region_end = max(region)
-            region_center = (region_start + region_end) // 2
-            
-            # Determine if this is a true positive
-            # Check if this region overlaps with any target START region
-            is_tp = False
-            overlapping_target = None
-            
-            for target_region in target_start_regions:
-                target_start = min(target_region)
-                target_end = max(target_region)
+        for pos in range(len(sequence) - 2):
+            if sequence[pos:pos+3] == 'ATG':
+                atg_count += 1
                 
-                # Check for overlap
-                if not (region_end < target_start or region_start > target_end):
-                    is_tp = True
-                    overlapping_target = target_region
-                    break
-            
-            # Find the ATG in this region or nearby
-            atg_position = None
-            actual_codon = None
-            
-            # Look for ATG within the predicted region and nearby
-            search_start = max(0, region_start - 3)
-            search_end = min(len(sequence) - 2, region_end + 3)
-            
-            for pos in range(search_start, search_end):
-                if pos + 2 < len(sequence):
-                    codon = sequence[pos:pos+3]
-                    if codon == 'ATG':
-                        atg_position = pos
-                        actual_codon = codon
-                        break
-            
-            # If no ATG found, use the center position
-            if atg_position is None:
-                atg_position = region_center
-                if atg_position + 2 < len(sequence):
-                    actual_codon = sequence[atg_position:atg_position+3]
-                else:
-                    actual_codon = 'N/A'
-            
-            # Get context around the ATG/center position
-            upstream = sequence[max(0, atg_position-20):atg_position]
-            downstream = sequence[atg_position+3:atg_position+23]
-            
-            # Analyze Kozak pattern
-            kozak_analysis = analyze_kozak_pattern(upstream, actual_codon)
-            
-            # Note: We don't analyze downstream stop codons since we're not handling splicing yet
-            
-            # Determine target class at this position
-            if atg_position < len(targets):
-                target_class = targets[atg_position]
-                target_name = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START'}[target_class]
-            else:
-                target_class = -1
-                target_name = 'UNKNOWN'
-            
-            # Get START probability
-            if atg_position < len(probabilities):
-                start_prob = probabilities[atg_position, 2]  # START class probability
-            else:
-                start_prob = 0.0
-            
-            prediction_data = {
-                'sequence_index': seq_idx,
-                'region_positions': region,
-                'atg_position': atg_position,
-                'actual_codon': actual_codon,
-                'is_true_positive': is_tp,
-                'target_class': target_name,
-                'start_probability': float(start_prob),
-                'upstream_20': upstream,
-                'downstream_20': downstream,
-                'kozak_score': kozak_analysis['score'],
-                'kozak_features': kozak_analysis['features'],
-                'region_length': len(region)
-            }
-            
-            all_predictions.append(prediction_data)
+                # Check target and prediction at this position
+                target_class = targets[pos] if pos < len(targets) else -1
+                pred_class = predictions[pos] if pos < len(predictions) else -1
+                start_prob = probabilities[pos, 2] if pos < len(probabilities) else 0.0
+                
+                # Classify this ATG
+                is_target_start = target_class == 2
+                is_predicted_start = pred_class == 2
+                
+                # Only include ATGs that were either predicted as START or should be START
+                if is_predicted_start or is_target_start:
+                    is_tp = is_predicted_start and is_target_start
+                    
+                    if is_tp:
+                        classification = "TP"
+                        tp_count += 1
+                    elif is_predicted_start and not is_target_start:
+                        classification = "FP" 
+                        fp_count += 1
+                    elif not is_predicted_start and is_target_start:
+                        classification = "FN"
+                        fn_count += 1
+                    else:
+                        continue  # TN - skip
+                    
+                    # Get context
+                    upstream = sequence[max(0, pos-20):pos]
+                    downstream = sequence[pos+3:pos+23]
+                    
+                    # Analyze Kozak pattern
+                    kozak_analysis = analyze_kozak_pattern(upstream, 'ATG')
+                    
+                    # Determine target class name
+                    target_name = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START', -1: 'UNKNOWN'}[target_class]
+                    
+                    prediction_data = {
+                        'sequence_index': seq_idx,
+                        'region_positions': [pos],  # Single position for ATG
+                        'atg_position': pos,
+                        'actual_codon': 'ATG',
+                        'is_true_positive': is_tp,
+                        'target_class': target_name,
+                        'start_probability': float(start_prob),
+                        'upstream_20': upstream,
+                        'downstream_20': downstream,
+                        'kozak_score': kozak_analysis['score'],
+                        'kozak_features': kozak_analysis['features'],
+                        'region_length': 1
+                    }
+                    
+                    all_predictions.append(prediction_data)
+                    
+                    print(f"    ATG at {pos}: {classification}, target: {target_name}, prob: {start_prob:.3f}")
+        
+        print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
     
     return all_predictions
 
@@ -386,23 +378,28 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         probabilities = result['probabilities']
         
         # Find actual START positions that were missed
-        for pos in range(len(targets)):
+        # Only count positions that have START target AND actually contain ATG
+        for pos in range(len(targets) - 2):  # -2 to ensure we can check 3-base codon
             if targets[pos] == 2 and predictions_array[pos] != 2:  # Actual START, not predicted
-                # Get context
-                upstream = sequence[max(0, pos-60):pos]
-                downstream = sequence[pos+3:pos+23]
-                
-                # Get START probability
-                start_prob = probabilities[pos, 2]
-                
-                fns.append({
-                    'sequence_index': seq_idx,
-                    'position': pos,
-                    'sequence': sequence,
-                    'start_probability': float(start_prob),
-                    'upstream_60': upstream,
-                    'downstream_20': downstream
-                })
+                # Check if this position actually contains ATG
+                if pos + 2 < len(sequence):
+                    codon = sequence[pos:pos+3]
+                    if codon == 'ATG':  # Only count ATG positions as real START FNs
+                        # Get context
+                        upstream = sequence[max(0, pos-60):pos]
+                        downstream = sequence[pos+3:pos+23]
+                        
+                        # Get START probability
+                        start_prob = probabilities[pos, 2]
+                        
+                        fns.append({
+                            'sequence_index': seq_idx,
+                            'position': pos,
+                            'sequence': sequence,
+                            'start_probability': float(start_prob),
+                            'upstream_60': upstream,
+                            'downstream_20': downstream
+                        })
     
     with open(output_path, 'w') as f:
         f.write("START Prediction Visual Analysis\n")
@@ -424,10 +421,14 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     codon = sequence[pos:pos+3]
                     downstream_20 = sequence[pos+3:pos+23]
                     
+                    # Create header with sequence name and position
+                    header = f">sequence_{seq_idx}@{pos}"
+                    
                     # Create visual line
                     context_line = upstream_60 + codon + downstream_20
                     marker_line = " " * len(upstream_60) + f"^^^ TP {prob:.2f}"
                     
+                    f.write(f"{header}\n")
                     f.write(f"{context_line}\n")
                     f.write(f"{marker_line}\n\n")
                     break
@@ -448,10 +449,14 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     codon = sequence[pos:pos+3]
                     downstream_20 = sequence[pos+3:pos+23]
                     
+                    # Create header with sequence name and position
+                    header = f">sequence_{seq_idx}@{pos}"
+                    
                     # Create visual line
                     context_line = upstream_60 + codon + downstream_20
                     marker_line = " " * len(upstream_60) + f"^^^ FP {prob:.2f}"
                     
+                    f.write(f"{header}\n")
                     f.write(f"{context_line}\n")
                     f.write(f"{marker_line}\n\n")
                     break
@@ -460,6 +465,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         f.write("\nFALSE NEGATIVES (Missed STARTs):\n")
         f.write("-" * 40 + "\n")
         for i, fn in enumerate(fns[:10]):  # Show first 10
+            seq_idx = fn['sequence_index']
             pos = fn['position']
             prob = fn['start_probability']
             sequence = fn['sequence']
@@ -468,10 +474,14 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
             codon = sequence[pos:pos+3]
             downstream_20 = sequence[pos+3:pos+23]
             
+            # Create header with sequence name and position
+            header = f">sequence_{seq_idx}@{pos}"
+            
             # Create visual line
             context_line = upstream_60 + codon + downstream_20
             marker_line = " " * len(upstream_60) + f"^^^ FN {prob:.2f}"
             
+            f.write(f"{header}\n")
             f.write(f"{context_line}\n")
             f.write(f"{marker_line}\n\n")
     

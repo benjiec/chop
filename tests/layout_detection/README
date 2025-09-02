@@ -76,7 +76,7 @@ Training runs generate comprehensive analysis data in timestamped directories (e
 - **`detailed_results.json`** - Performance metrics and analysis
 - **`sample_data.json`** - Test sample information
 
-### Fresh Analysis Results
+### Fresh Analysis Results (Timestamped)
 - **`prediction_<timestamp>_input.fa`** - Input sequences used for analysis in FASTA format
 - **`prediction_<timestamp>_report.txt`** - Visual sequence context showing TP/FP/FN predictions with 60bp upstream and 20bp downstream context
 
