@@ -21,7 +21,7 @@ You can then analyze which sequences are in the FP or FN categories, using the f
 
 ```
 python layout_detection/breakdown_prediction_report.py \
-    --report-file layout_detection/utr_start_test_run_*/prediction_..._.txt
+    --report-file layout_detection/utr_start_test_run_<timestamp>/prediction_<timestamp_and_hash>.txt
 ```
 
 ## Running Trainings
