@@ -112,11 +112,79 @@ class TestPerHeadAttention(unittest.TestCase):
         self.assertEqual(min(nonzero_pos), 8, "Head 1 should attend 2bp upstream")
         self.assertEqual(max(nonzero_pos), 13, "Head 1 should attend 3bp downstream")
         
-        # Head 2: (0, 4) should attend to positions 10-13 (4bp downstream only)
+        # Head 2: (0, 4) should attend to positions 10-14 (4bp downstream only)
         head2_attn = attention_weights[0, 2, pos, :].detach().numpy()
         nonzero_pos = [i for i, attn in enumerate(head2_attn) if attn > 1e-6]
         self.assertEqual(min(nonzero_pos), 10, "Head 2 should not attend upstream")
         self.assertEqual(max(nonzero_pos), 14, "Head 2 should attend 4bp downstream")
+
+    def test_mask_zero_outside_windows(self):
+        """Masked positions should have zero attention mass outside the window."""
+        # Symmetric case
+        attention_masks = {0: 2, 1: 4}
+        layer = MaskedTransformerLayer(
+            d_model=self.d_model,
+            n_heads=self.n_heads,
+            dim_feedforward=48,
+            dropout=0.0,
+            attention_masks=attention_masks,
+            max_seq_length=self.seq_length
+        )
+        layer.eval()
+        output, attn = layer(self.test_input, return_attention=True)
+        pos = 10
+        # Head 0 window [8,12]
+        h0 = attn[0, 0, pos, :].detach().numpy()
+        for i in list(range(0, 8)) + list(range(13, self.seq_length)):
+            self.assertEqual(h0[i], 0.0, "Masked-out positions must have zero attention (symmetric)")
+        # Head 1 window [6,14]
+        h1 = attn[0, 1, pos, :].detach().numpy()
+        for i in list(range(0, 6)) + list(range(15, self.seq_length)):
+            self.assertEqual(h1[i], 0.0, "Masked-out positions must have zero attention (symmetric)")
+
+        # Asymmetric case
+        attention_masks = {0: (5, 0), 1: (2, 3)}
+        layer = MaskedTransformerLayer(
+            d_model=self.d_model,
+            n_heads=self.n_heads,
+            dim_feedforward=48,
+            dropout=0.0,
+            attention_masks=attention_masks,
+            max_seq_length=self.seq_length
+        )
+        layer.eval()
+        output, attn = layer(self.test_input, return_attention=True)
+        # Head 0 window [5,10]
+        h0 = attn[0, 0, pos, :].detach().numpy()
+        for i in list(range(0, 5)) + list(range(11, self.seq_length)):
+            self.assertEqual(h0[i], 0.0, "Masked-out positions must have zero attention (asymmetric)")
+        # Head 1 window [8,13]
+        h1 = attn[0, 1, pos, :].detach().numpy()
+        for i in list(range(0, 8)) + list(range(14, self.seq_length)):
+            self.assertEqual(h1[i], 0.0, "Masked-out positions must have zero attention (asymmetric)")
+
+    def test_mask_includes_self_across_configs(self):
+        """Each mask must include self-attention at the query position."""
+        configs = [
+            {0: 1, 1: 3},
+            {0: (5, 0), 1: (0, 4)},
+            {0: (2, 2), 1: (10, 6)},
+        ]
+        pos = 10
+        for attention_masks in configs:
+            layer = MaskedTransformerLayer(
+                d_model=self.d_model,
+                n_heads=self.n_heads,
+                dim_feedforward=48,
+                dropout=0.0,
+                attention_masks=attention_masks,
+                max_seq_length=self.seq_length
+            )
+            layer.eval()
+            _, attn = layer(self.test_input, return_attention=True)
+            for head_idx in range(self.n_heads):
+                a = attn[0, head_idx, pos, pos].item()
+                self.assertGreater(a, 0.0, f"Head {head_idx} must include self in its window")
     
     def test_no_masks_global_attention(self):
         """Test that heads without masks use global attention."""

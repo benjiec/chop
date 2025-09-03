@@ -14,6 +14,12 @@ Prediction results appear under the test run directory
 - `prediction_<timestamp>_input.fa` - Input sequences used for analysis in FASTA format
 - `prediction_<timestamp>_report.txt` - Visual sequence context showing TP/FP/FN predictions with 60bp upstream and 20bp downstream context
 
+You can then analyze which sequences are in the FP or FN categories, using the following
+
+```
+python layout_detection/breakdown_prediction_report.py \
+    --report-file layout_detection/utr_start_test_run_*/prediction_..._.txt
+```
 
 ## Running Trainings
 
