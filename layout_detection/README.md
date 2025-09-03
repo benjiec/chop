@@ -7,7 +7,10 @@ with upstream UTR context.
 ## Analyzing Predictions
 
 ```
-python layout_detection/predict_and_analyze.py --model-path layout_detection/utr_start_test_run_20250901_150439/checkpoints/last.ckpt --output-dir layout_detection/utr_start_test_run_20250901_150439 --num-sequences 30
+python layout_detection/predict_and_analyze.py \
+  --model-path layout_detection/utr_start_test_run_<timestamp>/checkpoints/last.ckpt \
+  --output-dir layout_detection/utr_start_test_run_<timestamp> \
+  --num-sequences 30
 ```
 
 Prediction results appear under the test run directory
@@ -28,10 +31,25 @@ python layout_detection/breakdown_prediction_report.py \
 python layout_detection/train.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
 ```
 
+After training completes you will want to evaluate the model by running
+prediction, like above, and also analyze the attention weights with respect to
+the START position (note that this is NOT a general attention weight analysis;
+all weight distribution is relative to the START position).
+
+```
+# Extract attention ranges to TSV format
+python layout_detection/generate_attention_summary_visual.py --run-dir layout_detection/utr_start_test_run_<timestamp>
+```
+
+Use the attention_dynamics.twb Tableau workbook to visualize the attention
+weights: edit the data connection to the output of the above command
+`layout_detection/utr_start_test_run_<timestamp>/attention_ranges.tsv`.
+
 
 ## Training Output Files
 
-Training runs generate comprehensive analysis data in timestamped directories (e.g., `utr_start_test_run_20250901_150439/`):
+Training runs generate comprehensive analysis data in timestamped directories
+(e.g., `utr_start_test_run_20250901_150439/`):
 
 ### Model Checkpoints (`checkpoints/`)
 - `last.ckpt` - Final model checkpoint
@@ -76,33 +94,3 @@ Training runs generate comprehensive analysis data in timestamped directories (e
 ### Lightning Logs (`lightning_logs/`)
 - TensorBoard event files for training visualization
 - Hyperparameters and training configuration
-
-
-## Attention Analysis Tools
-
-### Generate Attention Range Data
-
-After training runs complete, extract attention patterns into structured data:
-
-```
-# Extract attention ranges to TSV format
-python layout_detection/generate_attention_summary_visual.py --run-dir layout_detection/utr_start_test_run_YYYYMMDD_HHMMSS
-```
-
-**All attention analysis data is START-position specific**. The analysis
-measures attention patterns from START codon positions to other sequence
-positions. This means:
-
-- What it shows: How the model processes information when making START codon
-  predictions
-- What it doesn't show: Attention patterns for UTR prediction, exon/intron
-  classification, or other tasks
-- Task dependency: The same model heads would likely show different attention
-  patterns when analyzed from UTR positions or other genomic features
-- Architecture insights: The finding that "all heads focus locally" applies
-  specifically to START detection - UTR or exon prediction might require and
-  utilize the broader attention ranges
-
-For comprehensive model understanding, similar analysis would need to be
-conducted from UTR positions, exon boundaries, and other relevant genomic
-features.
