@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
+from utils.constants import GenePredictionClass as P, DNAClass as D
+
 
 class LayerAnalyzer:
     """Comprehensive analyzer for transformer layer behavior."""
@@ -29,9 +31,9 @@ class LayerAnalyzer:
         self.model.eval()
         
         # Convert indices back to nucleotides
-        self.idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
-        self.class_names = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START'}
-        
+        self.idx_to_nucleotide = {D.A: 'A', D.T: 'T', D.G: 'G', D.C: 'C', D.N: 'N'}
+        self.class_names = {P.INTERGENIC: 'INTERGENIC', P.UTR5: 'UTR5', P.START: 'START'}
+
     def analyze_all(self, data_loader, output_dir: Path, max_samples: int = 20):
         """Run all analysis types and save results."""
         
@@ -172,7 +174,7 @@ class LayerAnalyzer:
                     
                     # Analyze attention patterns for START positions
                     for atg in sample['atg_analysis']:
-                        if atg['target_class'] == 2:  # Real START
+                        if atg['target_class'] == P.START:  # Real START
                             pos = atg['position']
                             
                             # Extract attention patterns for this START position
@@ -226,7 +228,7 @@ class LayerAnalyzer:
                                 'sample_index': sample['sample_index'],
                                 'position': pos,
                                 'start_probability': atg['start_probability'],
-                                'predicted_correctly': atg['predicted_class'] == 2,
+                                'predicted_correctly': atg['predicted_class'] == P.START,
                                 'attention_patterns': start_attention
                             })
                     
@@ -292,7 +294,7 @@ class LayerAnalyzer:
                 
                 # Analyze features at START positions
                 for atg in sample['atg_analysis']:
-                    if atg['target_class'] == 2:  # Real START
+                    if atg['target_class'] == P.START:  # Real START
                         pos = atg['position']
                         
                         layer_features = {}
@@ -309,7 +311,7 @@ class LayerAnalyzer:
                         feature_analysis['start_position_features'].append({
                             'sample_index': sample['sample_index'],
                             'position': pos,
-                            'predicted_correctly': atg['predicted_class'] == 2,
+                            'predicted_correctly': atg['predicted_class'] == P.START,
                             'layer_features': layer_features
                         })
         
@@ -350,11 +352,11 @@ class LayerAnalyzer:
                 
                 # Find START positions for attribution
                 for atg in sample['atg_analysis']:
-                    if atg['target_class'] == 2:  # Real START
+                    if atg['target_class'] == P.START:  # Real START
                         pos = atg['position']
                         
                         # Get gradient w.r.t. START class at this position
-                        start_logit = logits[0, pos, 2]  # START class logit
+                        start_logit = logits[0, pos, P.START]  # START class logit
                         
                         # Backward pass
                         self.model.zero_grad()
@@ -374,7 +376,7 @@ class LayerAnalyzer:
                             attribution_analysis['position_attributions'].append({
                                 'sample_index': sample['sample_index'],
                                 'position': pos,
-                                'predicted_correctly': atg['predicted_class'] == 2,
+                                'predicted_correctly': atg['predicted_class'] == P.START,
                                 'upstream_importance': float(upstream_attr),
                                 'downstream_importance': float(downstream_attr),
                                 'local_importance': float(local_attr),

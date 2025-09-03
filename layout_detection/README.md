@@ -24,11 +24,8 @@ python layout_detection/breakdown_prediction_report.py \
 ## Running Trainings
 
 ```
-# to test target generation code
-python layout_detection/test_target_generation.py
-
 # Train with asymmetric attention masks
-python layout_detection/test_utr_start_controlled.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
+python layout_detection/train.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
 ```
 
 

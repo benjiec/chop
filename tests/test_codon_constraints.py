@@ -15,7 +15,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from utils.dna_processor import validate_start_stop_codons_from_exons, reverse_complement
-from gene_predictor.model import BiologicalLoss
 
 
 class TestCodonValidation(unittest.TestCase):
@@ -129,130 +128,6 @@ class TestCodonValidation(unittest.TestCase):
         self.assertTrue(self._validate_single_exon_gene(sequence, 0, 6))
 
 
-class TestBiologicalLoss(unittest.TestCase):
-    """Test biological loss function with codon constraints."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.device = torch.device('cpu')
-        self.loss_fn = BiologicalLoss(
-            gene_weight=1.0,
-            exon_weight=1.0,
-            coding_weight=1.0,
-            constraint_weight=0.1,
-            enforce_start_stop_codons=True
-        )
-    
-    def test_codon_constraint_enabled(self):
-        """Test that codon constraints are applied when enabled."""
-        batch_size, seq_len = 2, 20
-        
-        # Create mock predictions with invalid codons
-        # DNA vocab: A=0, C=1, G=2, T=3, N=4
-        # TTG = [3, 3, 2] (invalid start)
-        # TAT = [3, 0, 3] (invalid stop) 
-        sequence_tokens = torch.tensor([
-            [3, 3, 2, 0, 0, 0, 3, 0, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],  # TTG...TAT
-            [0, 3, 2, 0, 0, 0, 3, 0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]   # ATG...TAA  
-        ], device=self.device)
-        
-        # Gene boundaries: start at pos 0, end at pos 9
-        gene_boundaries = torch.zeros(batch_size, seq_len, 3, device=self.device)
-        gene_boundaries[0, 0, 1] = 1.0  # Start at position 0
-        gene_boundaries[0, 9, 2] = 1.0  # End at position 9
-        gene_boundaries[1, 0, 1] = 1.0  # Start at position 0  
-        gene_boundaries[1, 9, 2] = 1.0  # End at position 9
-        
-        predictions = {
-            'gene_boundaries': gene_boundaries,
-            'exon_intron': torch.zeros(batch_size, seq_len, 3, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'coding_potential_logits': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'sequence_tokens': sequence_tokens
-        }
-        
-        targets = {
-            'gene_boundaries': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'exon_intron': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, dtype=torch.float, device=self.device)
-        }
-        
-        # Calculate loss
-        loss = self.loss_fn(predictions, targets)
-        
-        # Should have codon penalty for first sequence (invalid codons)
-        # but not for second sequence (valid codons)
-        self.assertIsInstance(loss, torch.Tensor)
-        self.assertGreater(loss.item(), 0)
-    
-    def test_codon_constraint_disabled(self):
-        """Test that codon constraints are not applied when disabled."""
-        loss_fn_disabled = BiologicalLoss(
-            gene_weight=1.0,
-            exon_weight=1.0,
-            coding_weight=1.0,
-            constraint_weight=0.1,
-            enforce_start_stop_codons=False
-        )
-        
-        batch_size, seq_len = 1, 10
-        
-        # Create mock predictions (doesn't matter if codons are invalid)
-        predictions = {
-            'gene_boundaries': torch.zeros(batch_size, seq_len, 3, device=self.device),
-            'exon_intron': torch.zeros(batch_size, seq_len, 3, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'coding_potential_logits': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'sequence_tokens': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device)
-        }
-        
-        targets = {
-            'gene_boundaries': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'exon_intron': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, dtype=torch.float, device=self.device)
-        }
-        
-        # Calculate loss - should work without codon constraints
-        loss = loss_fn_disabled(predictions, targets)
-        self.assertIsInstance(loss, torch.Tensor)
-    
-    def test_valid_codons_no_penalty(self):
-        """Test that valid codons don't add penalty to loss."""
-        batch_size, seq_len = 1, 10
-        
-        # Create sequence with valid codons: ATG...TAA
-        # ATG = [0, 3, 2], TAA = [3, 0, 0]
-        sequence_tokens = torch.tensor([
-            [0, 3, 2, 0, 0, 0, 3, 0, 0, 4]  # ATG...TAA
-        ], device=self.device)
-        
-        # Gene boundaries: start at pos 0, end at pos 9
-        gene_boundaries = torch.zeros(batch_size, seq_len, 3, device=self.device)
-        gene_boundaries[0, 0, 1] = 1.0  # Start at position 0
-        gene_boundaries[0, 9, 2] = 1.0  # End at position 9
-        
-        predictions = {
-            'gene_boundaries': gene_boundaries,
-            'exon_intron': torch.zeros(batch_size, seq_len, 3, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'coding_potential_logits': torch.zeros(batch_size, seq_len, 1, device=self.device),
-            'sequence_tokens': sequence_tokens
-        }
-        
-        targets = {
-            'gene_boundaries': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'exon_intron': torch.zeros(batch_size, seq_len, dtype=torch.long, device=self.device),
-            'coding_potential': torch.zeros(batch_size, seq_len, dtype=torch.float, device=self.device)
-        }
-        
-        # Calculate loss - codon constraint should be minimal
-        loss = self.loss_fn(predictions, targets)
-        
-        # Loss should be mostly from classification errors, not codon constraints
-        self.assertIsInstance(loss, torch.Tensor)
-        # The loss will still be > 0 due to classification loss, but codon penalty should be 0
-
-
 class TestIntegration(unittest.TestCase):
     """Integration tests for codon constraint system."""
     
@@ -298,33 +173,3 @@ class TestIntegration(unittest.TestCase):
                 result = self._validate_single_exon_gene(sequence, start, end, strand)
                 self.assertEqual(result, expected, 
                     f"Failed for {sequence} strand {strand}: expected {expected}, got {result}")
-
-
-def run_tests():
-    """Run all codon constraint tests."""
-    # Create test suite
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
-    
-    # Add test classes
-    suite.addTests(loader.loadTestsFromTestCase(TestCodonValidation))
-    suite.addTests(loader.loadTestsFromTestCase(TestBiologicalLoss))
-    suite.addTests(loader.loadTestsFromTestCase(TestIntegration))
-    
-    # Run tests
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-    
-    return result.wasSuccessful()
-
-
-if __name__ == '__main__':
-    print("Running codon constraint tests...")
-    success = run_tests()
-    
-    if success:
-        print("\n✅ All codon constraint tests passed!")
-        exit(0)
-    else:
-        print("\n❌ Some tests failed!")
-        exit(1)

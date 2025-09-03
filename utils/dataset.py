@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """
 UTR-START Layout Dataset for testing biological context learning.
 
@@ -25,14 +26,11 @@ from typing import Tuple, List
 import sys
 from pathlib import Path
 
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent
-sys.path.append(str(project_root))
-
-from utils.realistic_utr_sequences import (
+from utils.sequences import (
     KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES,
     mutate_sequence
 )
+from utils.constants import DNAClass
 
 class UTRStartDataset(Dataset):
     """
@@ -263,7 +261,7 @@ class UTRStartDataset(Dataset):
             window_targets = list(window_targets) + padding_targets
         
         # Encode DNA sequence to integers
-        dna_vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+        dna_vocab = {'A': DNAClass.A, 'T': DNAClass.T, 'G': DNAClass.G, 'C': DNAClass.C, 'N': DNAClass.N}
         encoded_seq = np.array([dna_vocab.get(base, 4) for base in window_sequence])
         
         return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(window_targets, dtype=torch.long)

@@ -24,7 +24,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
-from layout_detection.utr_start_dataset import UTRStartDataset
+from utils.dataset import UTRStartDataset
 from layout_detection.layout_model import LayoutDetectionModule
 from torch.utils.data import DataLoader
 

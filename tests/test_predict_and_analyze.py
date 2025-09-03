@@ -15,7 +15,7 @@ def encode_sequence(seq: str):
     return np.array([vocab.get(ch, 4) for ch in seq], dtype=np.int64)
 
 
-class TestStartAnalysisSanity(unittest.TestCase):
+class TestPredictAndAnalyze(unittest.TestCase):
     def test_atg_only_classification_and_no_duplicates(self):
         # Sequence with two ATGs: positions 4 and 10
         dna = "NNNNATGNNNATGNNN"

@@ -16,7 +16,7 @@ whether an ATG should be classified as START vs INTERGENIC?
 
 Usage:
     cd /Users/benjie/git/chop && source chop_env/bin/activate
-    python layout_detection/test_utr_start_controlled.py
+    python layout_detection/train.py
 """
 
 import sys
@@ -36,7 +36,7 @@ import json
 import numpy as np
 from typing import Optional, Dict
 
-from layout_detection.utr_start_dataset import UTRStartDataset
+from utils.dataset import UTRStartDataset
 from layout_detection.layout_model import LayoutDetectionModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 

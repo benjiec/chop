@@ -31,3 +31,7 @@ configuration.
 that can be re-called as much as possible.
 
 10. Always use chop_env virtual env.
+
+11. Whenever possible, use constants in utils/constants.py. Specifically,
+always use the GenePredictionClass enums from that module to refer to training
+target values, and DNAClass enums to refer to embeddings.
