@@ -18,20 +18,11 @@ Prediction results appear under the test run directory
 ## Running Trainings
 
 ```
-# try to detect START codons that are after UTRs
-python layout_detection/test_utr_start_controlled.py --class-weights --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
-
 # to test target generation code
 python layout_detection/test_target_generation.py
 
-# Test on 100 new contigs and analyze data
-python layout_detection/analyze_saved_model.py --model-path your_model.ckpt --contigs 100
-
-# Test on 50 contigs with different layout patterns
-python layout_detection/analyze_saved_model.py --model-path your_model.ckpt --contigs 50 --layouts 2
-
-# Quick analysis with fewer samples
-python layout_detection/analyze_saved_model.py --model-path your_model.ckpt --max-samples 5
+# Train with asymmetric attention masks
+python layout_detection/test_utr_start_controlled.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
 ```
 
 

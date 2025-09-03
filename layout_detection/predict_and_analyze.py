@@ -29,46 +29,61 @@ from layout_detection.layout_model import LayoutDetectionModule
 from torch.utils.data import DataLoader
 
 def load_trained_model(model_path: Path, device='cpu'):
-    """Load the trained model from checkpoint."""
-    
+    """Load the trained model from checkpoint, restoring exact architecture."""
     print(f"Loading model from: {model_path}")
-    
+
+    # First, try Lightning's native loader which restores saved hyperparameters
     try:
-        # Load the checkpoint
-        checkpoint = torch.load(model_path, map_location=device)
-        
-        # Create model instance matching the saved configuration
-        from layout_detection.test_utr_start_controlled import create_utr_start_config
-        config = create_utr_start_config(
-            d_model=504, n_layers=4, n_heads=6,
-            attention_masks={0: 4, 1: (20, 5), 2: (50, 0)},
-            kmer_size=0  # No k-mer convolution based on hparams
-        )
-        
-        model = LayoutDetectionModule(config)
-        
-        # Load state dict, filtering out non-model parameters
-        if 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        else:
-            state_dict = checkpoint
-        
-        # Filter out non-model keys (like criterion weights)
-        model_state_dict = {}
-        for key, value in state_dict.items():
-            if key.startswith('model.'):
-                model_state_dict[key] = value
-            elif not key.startswith('criterion'):
-                model_state_dict[key] = value
-        
-        model.load_state_dict(model_state_dict)
-        
+        model = LayoutDetectionModule.load_from_checkpoint(model_path, map_location=device)
         model.eval()
         model = model.to(device)
-        
-        print("✓ Model loaded successfully")
+        cfg = getattr(model, 'config', None)
+        if cfg and 'model' in cfg:
+            m = cfg['model']
+            print(f"✓ Model loaded successfully (layers={m.get('n_layers')}, heads={m.get('n_heads')}, kmer={m.get('kmer_size')})")
+        else:
+            print("✓ Model loaded successfully")
         return model
-        
+    except Exception:
+        pass  # Fallback to manual
+
+    try:
+        checkpoint = torch.load(model_path, map_location=device)
+
+        # Extract config from checkpoint hyperparameters
+        config = None
+        for hp_key in ('hyper_parameters', 'hparams'):
+            if hp_key in checkpoint:
+                hp = checkpoint[hp_key]
+                if isinstance(hp, dict):
+                    if 'model' in hp and 'training' in hp:
+                        config = hp
+                        break
+                    if 'config' in hp and isinstance(hp['config'], dict):
+                        config = hp['config']
+                        break
+
+        if config is None:
+            raise RuntimeError("Checkpoint does not contain saved hyperparameters/config; cannot safely reconstruct model.")
+
+        model = LayoutDetectionModule(config)
+
+        # Load state dict, filtering out non-model parameters
+        state_dict = checkpoint.get('state_dict', checkpoint)
+        model_state_dict = {k: v for k, v in state_dict.items() if not k.startswith('criterion')}
+
+        missing, unexpected = model.load_state_dict(model_state_dict, strict=False)
+        if missing:
+            print(f"Warning: Missing keys while loading: {sorted(missing)[:5]}{' ...' if len(missing) > 5 else ''}")
+        if unexpected:
+            print(f"Warning: Unexpected keys while loading: {sorted(unexpected)[:5]}{' ...' if len(unexpected) > 5 else ''}")
+
+        model.eval()
+        model = model.to(device)
+        m = config.get('model', {})
+        print(f"✓ Model loaded successfully (layers={m.get('n_layers')}, heads={m.get('n_heads')}, kmer={m.get('kmer_size')})")
+        return model
+
     except Exception as e:
         print(f"Error loading model: {e}")
         return None
