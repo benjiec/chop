@@ -35,3 +35,8 @@ that can be re-called as much as possible.
 11. Whenever possible, use constants in utils/constants.py. Specifically,
 always use the GenePredictionClass enums from that module to refer to training
 target values, and DNAEmbed enums to refer to embeddings.
+
+12. Use these metrics and terminology.
+Sensitivity = TP / (TP + FN)
+Precision = TP / (TP + FP)
+Specificity = TN / (TN + FP)
