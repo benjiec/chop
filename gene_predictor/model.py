@@ -91,7 +91,7 @@ class MaskedTransformerLayer(nn.Module):
     """
     
     def __init__(self, d_model: int, n_heads: int, dim_feedforward: int, dropout: float,
-                 attention_masks: Dict[int, int], max_seq_length: int):
+                 attention_masks: Dict[int, Any], max_seq_length: int):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
@@ -131,7 +131,7 @@ class MaskedTransformerLayer(nn.Module):
             if head_idx in self.attention_masks:
                 mask_config = self.attention_masks[head_idx]
                 
-                # Support both symmetric and asymmetric masking
+                # Support symmetric (int), asymmetric (before, after), and donut (before, gap, after)
                 if isinstance(mask_config, int):
                     # Symmetric: head -> window_size
                     window_size = mask_config
@@ -147,6 +147,22 @@ class MaskedTransformerLayer(nn.Module):
                         start = max(0, i - before) if before > 0 else i
                         end = min(seq_length, i + after + 1) if after > 0 else i + 1
                         masks[head_idx, i, start:end] = True
+                elif isinstance(mask_config, tuple) and len(mask_config) == 3:
+                    # Donut: (before, gap, after) leaves a gap around the center
+                    before, gap, after = mask_config
+                    for i in range(seq_length):
+                        # upstream window
+                        if before > 0:
+                            s1 = max(0, i - before)
+                            e1 = max(0, i - max(0, gap))
+                            if e1 > s1:
+                                masks[head_idx, i, s1:e1] = True
+                        # downstream window
+                        if after > 0:
+                            s2 = min(seq_length, i + max(1, gap))
+                            e2 = min(seq_length, i + after + 1)
+                            if e2 > s2:
+                                masks[head_idx, i, s2:e2] = True
             else:
                 # No mask - global attention
                 masks[head_idx, :, :] = True
@@ -326,12 +342,21 @@ class GenePredictorModule(pl.LightningModule):
             kmer_size=model_config.get('kmer_size', 0)
         )
 
-        # Loss function
+        # Loss function configuration
         loss_config = config.get('loss', {})
         class_weights = loss_config.get('class_weights')
         if class_weights is not None:
             class_weights = torch.tensor(class_weights, dtype=torch.float32)
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+        # Focal loss options
+        self.use_focal: bool = bool(loss_config.get('use_focal', False))
+        self.focal_gamma: float = float(loss_config.get('focal_gamma', 2.0))
+        focal_alpha = loss_config.get('focal_alpha')
+        # If explicit focal_alpha is not provided, fall back to class_weights as alphas
+        if focal_alpha is None:
+            focal_alpha = class_weights.tolist() if class_weights is not None else None
+        self.focal_alpha = torch.tensor(focal_alpha, dtype=torch.float32) if focal_alpha is not None else None
         
         # Save hyperparameters for logging
         self.save_hyperparameters(config)
@@ -370,7 +395,7 @@ class GenePredictorModule(pl.LightningModule):
         targets_flat = targets.view(-1)
         
         # Calculate loss
-        loss = self.criterion(logits_flat, targets_flat)
+        loss = self._compute_loss(logits_flat, targets_flat)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -397,7 +422,7 @@ class GenePredictorModule(pl.LightningModule):
         targets_flat = targets.view(-1)
         
         # Calculate loss
-        loss = self.criterion(logits_flat, targets_flat)
+        loss = self._compute_loss(logits_flat, targets_flat)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -435,6 +460,41 @@ class GenePredictorModule(pl.LightningModule):
             },
         }
 
+    def _compute_loss(self, logits_flat: torch.Tensor, targets_flat: torch.Tensor) -> torch.Tensor:
+        """Select between CrossEntropy and Focal loss based on configuration."""
+        if not self.use_focal:
+            return self.criterion(logits_flat, targets_flat)
+        return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha)
+
+    @staticmethod
+    def _focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float, alpha: Optional[torch.Tensor]) -> torch.Tensor:
+        """
+        Compute multi-class focal loss using logits.
+        - logits: (N, C)
+        - targets: (N,)
+        - gamma: focusing parameter
+        - alpha: Optional tensor of shape (C,) for per-class weighting
+        """
+        # Log-softmax for numerical stability
+        log_probs = F.log_softmax(logits, dim=-1)  # (N, C)
+        probs = torch.exp(log_probs)  # (N, C)
+
+        # Gather true-class probabilities
+        indices = torch.arange(logits.size(0), device=logits.device)
+        log_pt = log_probs[indices, targets]  # (N,)
+        pt = probs[indices, targets]          # (N,)
+
+        # Alpha weighting
+        if alpha is not None:
+            alpha = alpha.to(logits.device)
+            alpha_t = alpha[targets]
+        else:
+            alpha_t = 1.0
+
+        focal_factor = (1.0 - pt).clamp(min=0.0) ** gamma
+        loss = -alpha_t * focal_factor * log_pt
+        return loss.mean()
+
 
 def create_base_config(
     max_seq_length: int, num_classes: int, class_names: list,
@@ -446,7 +506,10 @@ def create_base_config(
     batch_size: int = 8,
     class_weights: Optional[list] = None,
     attention_masks: Optional[Dict[int, int]] = None,
-    kmer_size: int = 0
+    kmer_size: int = 0,
+    use_focal: Optional[bool] = None,
+    focal_gamma: Optional[float] = None,
+    focal_alpha: Optional[list] = None,
 ) -> dict:
 
     # Validate d_model is divisible by n_heads
@@ -455,7 +518,7 @@ def create_base_config(
         d_model = (d_model // n_heads) * n_heads
         print(f"Warning: Adjusted d_model to {d_model} (divisible by {n_heads} heads)")
     
-    return {
+    cfg = {
         'model': {
             'vocab_size': 5,      # A, T, G, C, N
             'd_model': d_model,
@@ -477,3 +540,13 @@ def create_base_config(
         },
         'class_names': class_names
     }
+
+    # Optionally add focal loss settings
+    if use_focal is not None:
+        cfg['loss']['use_focal'] = use_focal
+    if focal_gamma is not None:
+        cfg['loss']['focal_gamma'] = focal_gamma
+    if focal_alpha is not None:
+        cfg['loss']['focal_alpha'] = focal_alpha
+
+    return cfg

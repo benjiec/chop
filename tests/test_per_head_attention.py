@@ -268,6 +268,31 @@ class TestPerHeadAttention(unittest.TestCase):
                     attn_sum = attention_weights[batch_idx, head_idx, pos, :].sum().item()
                     self.assertAlmostEqual(attn_sum, 1.0, places=5, 
                                          msg=f"Attention weights should sum to 1 for batch {batch_idx}, head {head_idx}, pos {pos}")
+
+    def test_donut_attention_mask(self):
+        """Donut masks should exclude a local gap while allowing upstream/downstream bands."""
+        attention_masks = {0: (5, 2, 5)}  # before=5, gap=2, after=5
+        layer = MaskedTransformerLayer(
+            d_model=self.d_model,
+            n_heads=self.n_heads,
+            dim_feedforward=48,
+            dropout=0.0,
+            attention_masks=attention_masks,
+            max_seq_length=self.seq_length
+        )
+        layer.eval()
+        _, attn = layer(self.test_input, return_attention=True)
+        pos = 10
+        # Head 0 uses donut: should have zero (or near-zero) mass at center and a gap of size ~gap around it
+        h0 = attn[0, 0, pos, :].detach().numpy()
+        # Check the central indices are zeroed: [pos-gap+1 .. pos+gap-1] roughly excludes +/-1 around center for gap=2
+        self.assertEqual(h0[pos], 0.0, "Donut mask should exclude self-attention at the query position")
+        self.assertEqual(h0[pos-1], 0.0, "Donut mask should exclude immediate upstream inside the gap")
+        self.assertEqual(h0[pos+1], 0.0, "Donut mask should exclude immediate downstream inside the gap")
+        # Upstream band should be non-zero
+        self.assertGreater(h0[pos-3], 0.0, "Upstream band should be allowed in donut mask")
+        # Downstream band should be non-zero
+        self.assertGreater(h0[pos+3], 0.0, "Downstream band should be allowed in donut mask")
     
     def test_edge_cases(self):
         """Test edge cases like position 0 and last position."""

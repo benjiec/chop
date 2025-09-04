@@ -50,7 +50,9 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                            use_class_weights: bool = False, start_weight: float = 10.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
-                           max_seq_length: int = 1000) -> dict:
+                           max_seq_length: int = 1000,
+                           use_focal: bool = False, focal_gamma: float = 2.0,
+                           focal_alpha: Optional[list] = None) -> dict:
 
     # Class weights for UTR-START detection
     # START codons are rare and important, UTR5 regions provide context
@@ -71,7 +73,10 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
         batch_size=batch_size,
         class_weights=class_weights,
         attention_masks=attention_masks,
-        kmer_size=kmer_size
+        kmer_size=kmer_size,
+        use_focal=use_focal,
+        focal_gamma=focal_gamma,
+        focal_alpha=focal_alpha,
     )
 
 
@@ -80,14 +85,17 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                     learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                     use_class_weights: bool = False, start_weight: float = 10.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
-                    max_seq_length: int = 1000):
+                    max_seq_length: int = 1000,
+                    use_focal: bool = False, focal_gamma: float = 2.0,
+                    focal_alpha: Optional[list] = None):
 
     # Create config
     config = create_utr_start_config(
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
         use_class_weights=use_class_weights, start_weight=start_weight,
-        attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length
+        attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
+        use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
     # Build layout per contig: [Random with ATG decoys] -> [UTR5 choice (mutated)] -> [ensure ATG] -> [Random with ATG decoys]
@@ -167,13 +175,17 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
-    parser.add_argument('--attention-masks', type=str, help='Head attention masks: symmetric "head:window" or asymmetric "head:before:after" (e.g., "0:1,1:200:0")')
+    parser.add_argument('--attention-masks', type=str, help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
     parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=default)')
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
+    # Focal loss options
+    parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
+    parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma (focusing parameter)')
+    parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
     
     args = parser.parse_args()
     
-    # Parse attention masks (support both symmetric and asymmetric)
+    # Parse attention masks (support symmetric, asymmetric, and donut)
     attention_masks = None
     if args.attention_masks:
         attention_masks = {}
@@ -188,8 +200,20 @@ def main():
                 # Asymmetric: head:before:after
                 before, after = int(parts[1]), int(parts[2])
                 attention_masks[head] = (before, after)
+            elif len(parts) == 4:
+                # Donut: head:before:gap:after
+                before, gap, after = int(parts[1]), int(parts[2]), int(parts[3])
+                attention_masks[head] = (before, gap, after)
             else:
-                raise ValueError(f"Invalid attention mask format: {mask_spec}. Use 'head:window' or 'head:before:after'")
+                raise ValueError(f"Invalid attention mask format: {mask_spec}. Use 'head:window', 'head:before:after', or 'head:before:gap:after'")
+
+    # Parse focal alpha list if provided
+    focal_alpha = None
+    if args.focal_alpha:
+        try:
+            focal_alpha = [float(x) for x in args.focal_alpha.split(',') if x.strip() != '']
+        except Exception as e:
+            raise ValueError(f"Invalid --focal-alpha '{args.focal_alpha}': must be comma-separated floats") from e
     
     # Run test
     output_dir = train_utr_start(
@@ -205,7 +229,10 @@ def main():
         start_weight=args.start_weight,
         attention_masks=attention_masks,
         kmer_size=args.kmer,
-        max_seq_length=args.max_seq_length
+        max_seq_length=args.max_seq_length,
+        use_focal=args.use_focal,
+        focal_gamma=args.focal_gamma,
+        focal_alpha=focal_alpha,
     )
 
 if __name__ == "__main__":
