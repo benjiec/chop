@@ -32,7 +32,7 @@ from utils.dataset import (
 )
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from utils.constants import GenePredictionClass as P
-from layout_detection.layout_model import LayoutDetectionModule
+from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -41,7 +41,7 @@ def load_trained_model(model_path: Path, device='cpu'):
 
     # First, try Lightning's native loader which restores saved hyperparameters
     try:
-        model = LayoutDetectionModule.load_from_checkpoint(model_path, map_location=device)
+        model = ModelModule.load_from_checkpoint(model_path, map_location=device)
         model.eval()
         model = model.to(device)
         cfg = getattr(model, 'config', None)
@@ -73,7 +73,7 @@ def load_trained_model(model_path: Path, device='cpu'):
         if config is None:
             raise RuntimeError("Checkpoint does not contain saved hyperparameters/config; cannot safely reconstruct model.")
 
-        model = LayoutDetectionModule(config)
+        model = ModelModule(config)
 
         # Load state dict, filtering out non-model parameters
         state_dict = checkpoint.get('state_dict', checkpoint)
@@ -99,7 +99,7 @@ def generate_test_data(num_sequences: int, layouts_per_contig: int = 1):
     """Generate fresh test data aligned to model length: one contig per sample with UTR layout."""
     print(f"Generating {num_sequences} test sequences...")
     # intentionally making this larger than what's used for training to see if model learned context not just position
-    background_len = 1000
+    background_len = 400
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
         RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 4),

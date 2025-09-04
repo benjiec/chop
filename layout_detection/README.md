@@ -38,7 +38,7 @@ all weight distribution is relative to the START position).
 
 ```
 # Extract attention ranges to TSV format
-python layout_detection/generate_attention_summary_visual.py --run-dir layout_detection/utr_start_test_run_<timestamp>
+python layout_detection/summarize_attention_weights.py --run-dir layout_detection/utr_start_test_run_<timestamp>
 ```
 
 Use the attention_dynamics.twb Tableau workbook to visualize the attention
@@ -75,22 +75,3 @@ Training runs generate comprehensive analysis data in timestamped directories
   - Top attended positions for each head when processing START positions
   - Upstream/local/downstream attention scores relative to START codons
   - Essential for spatial attention analysis (e.g., "Head 2 focuses 20-50 bases upstream of START")
-
-- `analysis_summary.json` - High-level attention statistics [START-SPECIFIC]
-  - Average importance scores across regions for START prediction
-  - START prediction accuracy summary
-
-- `layer_features.json` - Layer activation patterns [START-SPECIFIC]
-  - Mean/max/min activations per layer at START positions
-  - Feature evolution at START positions
-
-- `gradient_attribution.json` - Attribution analysis [START-SPECIFIC]
-  - Gradient-based feature importance for START prediction
-  - Position-wise attribution scores relative to START positions
-
-- `combined_analysis.png` - Visualization of attention patterns [START-SPECIFIC]
-  - Multi-panel plot showing attention evolution and patterns for START detection
-
-### Lightning Logs (`lightning_logs/`)
-- TensorBoard event files for training visualization
-- Hyperparameters and training configuration

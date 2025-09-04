@@ -18,13 +18,10 @@ import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import matplotlib.pyplot as plt
-import seaborn as sns
 from utils.constants import GenePredictionClass as P, DNAEmbed as D
 
 
 class LayerAnalyzer:
-    """Comprehensive analyzer for transformer layer behavior."""
-    
     def __init__(self, model, device='cpu'):
         self.model = model.to(device)
         self.device = device
@@ -35,42 +32,13 @@ class LayerAnalyzer:
         self.class_names = {P.INTERGENIC: 'INTERGENIC', P.UTR5: 'UTR5', P.START: 'START'}
 
     def analyze_all(self, data_loader, output_dir: Path, max_samples: int = 20):
-        """Run all analysis types and save results."""
         
-        print(f"Running comprehensive layer analysis on {max_samples} samples...")
         output_dir.mkdir(exist_ok=True)
-        
-        # Collect data for analysis
         sample_data = self._collect_sample_data(data_loader, max_samples)
-        
-        # 1. Attention weight analysis
-        print("1. Analyzing attention weights...")
         attention_data = self._analyze_attention_weights(sample_data)
         self._save_attention_analysis(attention_data, output_dir / "attention_weights.json")
-        
-        # 2. Layer-wise feature analysis
-        print("2. Analyzing layer-wise features...")
-        feature_data = self._analyze_layer_features(sample_data)
-        self._save_feature_analysis(feature_data, output_dir / "layer_features.json")
-        
-        # 3. Gradient-based attribution (simplified for now)
-        print("3. Analyzing gradient attribution...")
-        attribution_data = {'position_attributions': [], 'note': 'Gradient analysis temporarily disabled due to tensor type issues'}
-        self._save_attribution_analysis(attribution_data, output_dir / "gradient_attribution.json")
-        
-        # 4. Save sequences in clean format
-        print("4. Saving sequences and predictions...")
-        self._save_sequences_and_predictions(sample_data, output_dir / "sequences_and_predictions.json")
-        
-        # 5. Generate combined visualization
-        print("5. Creating combined visualization...")
-        self._create_combined_visualization(attention_data, feature_data, attribution_data, output_dir)
-        
-        print(f"Analysis complete! Results saved to: {output_dir}")
     
     def _collect_sample_data(self, data_loader, max_samples: int) -> List[Dict]:
-        """Collect sample data for analysis."""
-        
         samples = []
         sample_count = 0
         
@@ -133,8 +101,6 @@ class LayerAnalyzer:
         return samples
     
     def _analyze_attention_weights(self, sample_data: List[Dict]) -> Dict:
-        """Extract and analyze attention weights from each layer."""
-        
         attention_analysis = {
             'layer_attention_patterns': {},
             'start_position_attention': [],
@@ -251,281 +217,11 @@ class LayerAnalyzer:
         return attention_analysis
     
     def _forward_with_attention_capture(self, seq_tensor: torch.Tensor) -> Dict:
-        """Custom forward pass that captures attention weights from each layer."""
-        
         # Use the model's attention extraction capability
         logits, attention_weights = self.model.model(seq_tensor, return_attention=True)
         
         return attention_weights
     
-    def _analyze_layer_features(self, sample_data: List[Dict]) -> Dict:
-        """Analyze how features evolve through layers."""
-        
-        feature_analysis = {
-            'layer_activations': {},
-            'feature_evolution': [],
-            'start_position_features': []
-        }
-        
-        # Hook to capture intermediate layer outputs
-        layer_outputs = {}
-        
-        def feature_hook(layer_idx):
-            def hook(module, input, output):
-                layer_outputs[f'layer_{layer_idx}'] = output.detach().cpu()
-            return hook
-        
-        # Register hooks on transformer layers
-        hooks = []
-        for i, layer in enumerate(self.model.model.transformer_layers):
-            hook = layer.register_forward_hook(feature_hook(i))
-            hooks.append(hook)
-        
-        # Run inference to capture features
-        with torch.no_grad():
-            for sample in sample_data[:5]:  # Analyze first 5 samples
-                seq_tensor = sample['sequence_tensor'].unsqueeze(0).to(self.device)
-                
-                # Clear previous outputs
-                layer_outputs.clear()
-                
-                # Forward pass (triggers hooks)
-                _ = self.model(seq_tensor)
-                
-                # Analyze features at START positions
-                for atg in sample['atg_analysis']:
-                    if atg['target_class'] == P.START:  # Real START
-                        pos = atg['position']
-                        
-                        layer_features = {}
-                        for layer_name, output in layer_outputs.items():
-                            # Get feature vector at this position
-                            feature_vec = output[0, pos, :].numpy()  # (d_model,)
-                            layer_features[layer_name] = {
-                                'mean_activation': float(feature_vec.mean()),
-                                'max_activation': float(feature_vec.max()),
-                                'min_activation': float(feature_vec.min()),
-                                'std_activation': float(feature_vec.std())
-                            }
-                        
-                        feature_analysis['start_position_features'].append({
-                            'sample_index': sample['sample_index'],
-                            'position': pos,
-                            'predicted_correctly': atg['predicted_class'] == P.START,
-                            'layer_features': layer_features
-                        })
-        
-        # Remove hooks
-        for hook in hooks:
-            hook.remove()
-        
-        return feature_analysis
-    
-    def _analyze_gradient_attribution(self, sample_data: List[Dict]) -> Dict:
-        """Analyze gradient-based attribution for START predictions."""
-        
-        attribution_analysis = {
-            'position_attributions': [],
-            'upstream_importance': [],
-            'downstream_importance': []
-        }
-        
-        # Simplified gradient analysis - use embedding gradients
-        self.model.train()
-        
-        for sample in sample_data[:5]:  # Analyze first 5 samples to avoid complexity
-            seq_tensor = sample['sequence_tensor'].unsqueeze(0).to(self.device)
-            
-            # Hook to capture embedding gradients
-            embedding_grads = {}
-            
-            def embedding_hook(module, grad_input, grad_output):
-                if grad_output[0] is not None:
-                    embedding_grads['embeddings'] = grad_output[0].detach().cpu()
-            
-            # Register hook on embedding layer
-            hook = self.model.model.embedding.register_backward_hook(embedding_hook)
-            
-            try:
-                # Forward pass
-                logits = self.model(seq_tensor)
-                
-                # Find START positions for attribution
-                for atg in sample['atg_analysis']:
-                    if atg['target_class'] == P.START:  # Real START
-                        pos = atg['position']
-                        
-                        # Get gradient w.r.t. START class at this position
-                        start_logit = logits[0, pos, P.START]  # START class logit
-                        
-                        # Backward pass
-                        self.model.zero_grad()
-                        start_logit.backward(retain_graph=True)
-                        
-                        # Get attribution from embedding gradients
-                        if 'embeddings' in embedding_grads:
-                            emb_grad = embedding_grads['embeddings'][0]  # (seq_length, d_model)
-                            # Sum across embedding dimensions to get per-position attribution
-                            attribution = emb_grad.abs().sum(dim=1).numpy()
-                            
-                            # Analyze upstream vs downstream importance
-                            upstream_attr = attribution[max(0, pos-100):pos].mean() if pos >= 100 else attribution[:pos].mean()
-                            downstream_attr = attribution[pos+3:pos+53].mean() if pos+53 < len(attribution) else attribution[pos+3:].mean()
-                            local_attr = attribution[max(0, pos-5):pos+8].mean()
-                            
-                            attribution_analysis['position_attributions'].append({
-                                'sample_index': sample['sample_index'],
-                                'position': pos,
-                                'predicted_correctly': atg['predicted_class'] == P.START,
-                                'upstream_importance': float(upstream_attr),
-                                'downstream_importance': float(downstream_attr),
-                                'local_importance': float(local_attr),
-                                'full_attribution': attribution.tolist()
-                            })
-            
-            finally:
-                hook.remove()
-        
-        self.model.eval()
-        return attribution_analysis
-    
     def _save_attention_analysis(self, data: Dict, filepath: Path):
-        """Save attention analysis to JSON."""
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
-    
-    def _save_feature_analysis(self, data: Dict, filepath: Path):
-        """Save feature analysis to JSON."""
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
-    
-    def _save_attribution_analysis(self, data: Dict, filepath: Path):
-        """Save attribution analysis to JSON."""
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
-    
-    def _save_sequences_and_predictions(self, sample_data: List[Dict], filepath: Path):
-        """Save sequences and predictions in clean string format."""
-        
-        clean_data = []
-        for sample in sample_data:
-            clean_sample = {
-                'sample_index': sample['sample_index'],
-                'sequence': sample['sequence'],
-                'targets': sample['targets'],
-                'predictions': sample['predictions'],
-                'sequence_length': len(sample['sequence']),
-                'atg_analysis': sample['atg_analysis']
-            }
-            clean_data.append(clean_sample)
-        
-        with open(filepath, 'w') as f:
-            json.dump(clean_data, f, indent=2)
-    
-    def _create_combined_visualization(self, attention_data: Dict, feature_data: Dict, 
-                                     attribution_data: Dict, output_dir: Path):
-        """Create combined visualization of all analyses."""
-        
-        # Create summary plots
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('UTR-START Context Learning Analysis', fontsize=16)
-        
-        # Plot 1: START position attribution patterns
-        if attribution_data['position_attributions']:
-            upstream_importance = [item['upstream_importance'] for item in attribution_data['position_attributions']]
-            downstream_importance = [item['downstream_importance'] for item in attribution_data['position_attributions']]
-            local_importance = [item['local_importance'] for item in attribution_data['position_attributions']]
-            
-            axes[0, 0].bar(['Upstream\n(UTR context)', 'Local\n(ATG)', 'Downstream\n(CDS)'], 
-                          [np.mean(upstream_importance), np.mean(local_importance), np.mean(downstream_importance)])
-            axes[0, 0].set_title('Average Attribution by Region')
-            axes[0, 0].set_ylabel('Attribution Strength')
-        
-        # Plot 2: Layer feature evolution
-        if feature_data['start_position_features']:
-            layers = ['layer_0', 'layer_1', 'layer_2']
-            mean_activations = []
-            for layer in layers:
-                layer_means = []
-                for item in feature_data['start_position_features']:
-                    if layer in item['layer_features']:
-                        layer_means.append(item['layer_features'][layer]['mean_activation'])
-                mean_activations.append(np.mean(layer_means) if layer_means else 0)
-            
-            axes[0, 1].plot(range(len(layers)), mean_activations, 'o-')
-            axes[0, 1].set_title('Feature Evolution Across Layers')
-            axes[0, 1].set_xlabel('Layer')
-            axes[0, 1].set_ylabel('Mean Activation')
-            axes[0, 1].set_xticks(range(len(layers)))
-            axes[0, 1].set_xticklabels(['Layer 1', 'Layer 2', 'Layer 3'])
-        
-        # Plot 3: START prediction accuracy by context
-        correct_predictions = sum(1 for item in attribution_data['position_attributions'] if item['predicted_correctly'])
-        total_predictions = len(attribution_data['position_attributions'])
-        accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0
-        
-        axes[1, 0].bar(['START Context\nPrediction'], [accuracy])
-        axes[1, 0].set_title('START Prediction Accuracy')
-        axes[1, 0].set_ylabel('Accuracy')
-        axes[1, 0].set_ylim(0, 1)
-        
-        # Plot 4: Attribution heatmap for sample sequence
-        if attribution_data['position_attributions']:
-            sample_attr = attribution_data['position_attributions'][0]
-            attr_array = np.array(sample_attr['full_attribution']).reshape(1, -1)
-            
-            im = axes[1, 1].imshow(attr_array, aspect='auto', cmap='viridis')
-            axes[1, 1].set_title(f'Attribution Pattern (Sample {sample_attr["sample_index"]})')
-            axes[1, 1].set_xlabel('Sequence Position')
-            axes[1, 1].set_ylabel('Attribution')
-            plt.colorbar(im, ax=axes[1, 1])
-        
-        plt.tight_layout()
-        plt.savefig(output_dir / "combined_analysis.png", dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Save summary statistics
-        summary = {
-            'total_samples_analyzed': len(attribution_data['position_attributions']),
-            'start_prediction_accuracy': accuracy,
-            'average_upstream_importance': np.mean([item['upstream_importance'] for item in attribution_data['position_attributions']]),
-            'average_local_importance': np.mean([item['local_importance'] for item in attribution_data['position_attributions']]),
-            'average_downstream_importance': np.mean([item['downstream_importance'] for item in attribution_data['position_attributions']])
-        }
-        
-        with open(output_dir / "analysis_summary.json", 'w') as f:
-            json.dump(summary, f, indent=2)
-
-
-def run_layer_analysis(model_path: str, dataset, output_dir: Path, max_samples: int = 20):
-    """Run comprehensive layer analysis on a trained model."""
-    
-    # Load model
-    from layout_detection.layout_model import LayoutDetectionModule
-    model = LayoutDetectionModule.load_from_checkpoint(model_path)
-    
-    # Create data loader
-    from torch.utils.data import DataLoader, random_split
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-    
-    val_loader = DataLoader(val_dataset, batch_size=4, shuffle=False, num_workers=0)
-    
-    # Run analysis
-    analyzer = LayerAnalyzer(model)
-    analyzer.analyze_all(val_loader, output_dir, max_samples)
-
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Analyze transformer layers")
-    parser.add_argument('--model-path', required=True, help='Path to saved model checkpoint')
-    parser.add_argument('--output-dir', required=True, help='Output directory for analysis')
-    parser.add_argument('--max-samples', type=int, default=20, help='Number of samples to analyze')
-    
-    args = parser.parse_args()
-    
-    # Would need to recreate dataset here
-    print("Layer analysis tool - integrate with test drivers for full functionality")
