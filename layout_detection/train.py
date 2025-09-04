@@ -114,10 +114,10 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     background_len = 500
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
         RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
         AddATGGenerator(),
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
     ]
 
     # One sample per contig; enforce contig length <= max_seq_length

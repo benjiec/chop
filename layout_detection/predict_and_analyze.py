@@ -101,10 +101,10 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_cont
     background_len = 500
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
         RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
         AddATGGenerator(),
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
     ]
     dataset = GenomicSyntheticTestingDataset(
         max_sequence_length=max_seq_length,

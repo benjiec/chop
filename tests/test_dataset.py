@@ -2,6 +2,7 @@
 
 import unittest
 import numpy as np
+import random
 
 from utils.dataset import (
     GenomicSyntheticTestingDataset,
@@ -14,6 +15,10 @@ from utils.constants import GenePredictionClass as P
 
 
 class TestGenomicSyntheticDataset(unittest.TestCase):
+    def setUp(self):
+        # Seed RNGs for deterministic tests
+        random.seed(0)
+        np.random.seed(0)
     def test_max_length_enforced(self):
         max_len = 200
         layouts = [
@@ -63,6 +68,19 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
         self.assertEqual(len(seq), 100)
         self.assertEqual(len(tgt), 100)
         # At least one ATG likely present (probabilistic), but we won't assert it strictly
+
+    def test_random_min_length_range(self):
+        # RandomBasesGenerator should produce lengths within [random_min_length, length]
+        gen = RandomBasesGenerator(length=120, target=P.INTERGENIC, random_min_length=80)
+        lengths = set()
+        for _ in range(100):
+            seq, tgt = gen.generate(None)
+            lengths.add(len(seq))
+            self.assertEqual(len(seq), len(tgt))
+            self.assertGreaterEqual(len(seq), 80)
+            self.assertLessEqual(len(seq), 120)
+        # We should observe multiple distinct lengths in the range
+        self.assertGreaterEqual(len(lengths), 5)
 
     def test_random_choice_selects_multiple(self):
         gen = RandomChoiceGenerator(choices=["AAAA", "TTTT"], target=P.UTR5)

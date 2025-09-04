@@ -98,15 +98,19 @@ class GenomicSyntheticTestingDataset(Dataset):
 
 class RandomBasesGenerator(SequenceSegmentGeneratorBase):
 
-    def __init__(self, length, target: int = P.INTERGENIC, decoy: str = None, max_decoy: int = None):
+    def __init__(self, length, target: int = P.INTERGENIC, decoy: str = None, max_decoy: int = None, random_min_length: int = None):
         self.length = length
         self.target = target
         self.decoy = decoy
         self.max_decoy = max_decoy
+        self.random_min_length = random_min_length
 
     def generate(self, _) -> Tuple[str, List[int]]:
         bases = ['A', 'T', 'G', 'C']
-        sequence = [random.choice(bases) for _ in range(self.length)]
+        length = self.length
+        if self.random_min_length:
+            length = random.randint(self.random_min_length, self.length)
+        sequence = [random.choice(bases) for _ in range(length)]
 
         if self.max_decoy:
             assert self.decoy and len(self.decoy)
@@ -115,11 +119,11 @@ class RandomBasesGenerator(SequenceSegmentGeneratorBase):
             num_decoys = random.randint(min_decoy, max_decoy)
 
             for _ in range(num_decoys):
-                pos = random.randint(0, self.length - len(self.decoy))
+                pos = random.randint(0, length - len(self.decoy))
                 for j in range(0, len(self.decoy)):
                     sequence[pos+j] = self.decoy[j]
 
-        return "".join(sequence), [self.target] * self.length
+        return "".join(sequence), [self.target] * length
  
 
 class RandomChoiceGenerator(SequenceSegmentGeneratorBase):
