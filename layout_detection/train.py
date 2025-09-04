@@ -41,109 +41,11 @@ from layout_detection.layout_model import LayoutDetectionModule, create_base_con
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 
 
-def save_sample_data(train_loader, output_dir, original_dataset, num_samples=3):
-    """Save sample sequences and targets for manual verification."""
-    
-    print(f"  Saving {num_samples} sample contigs to {output_dir}/sample_data.json")
-    
-    # Convert indices back to nucleotides
-    idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
-    class_names = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START'}
-    
-    samples = []
-    batch_count = 0
-    
-    for batch_idx, batch in enumerate(train_loader):
-        sequences, targets = batch
-        
-        print(f"    Debug: Processing batch {batch_idx}")
-        
-        # Process first few sequences in this batch
-        for i in range(min(num_samples - len(samples), sequences.size(0))):
-            seq_indices = sequences[i].numpy()
-            target_labels = targets[i].numpy()
-            
-            # Convert to nucleotide string
-            sequence_str = ''.join([idx_to_nucleotide[idx] for idx in seq_indices])
-            
-            # Find all ATG positions and their classifications
-            atg_analysis = []
-            for pos in range(len(sequence_str) - 2):
-                if sequence_str[pos:pos+3] == 'ATG':
-                    atg_class = target_labels[pos]  # Check first position of ATG
-                    context_before = sequence_str[max(0, pos-20):pos] if pos >= 20 else sequence_str[:pos]
-                    context_after = sequence_str[pos+3:pos+23] if pos+23 < len(sequence_str) else sequence_str[pos+3:]
-                    
-                    atg_analysis.append({
-                        'position': pos,
-                        'classification': class_names[atg_class],
-                        'context_before': context_before,
-                        'context_after': context_after,
-                        'is_real_start': bool(atg_class == 2)  # Convert to Python bool
-                    })
-            
-            # Find UTR5 regions
-            utr5_regions = []
-            current_class = target_labels[0]
-            current_start = 0
-            
-            for pos in range(1, len(target_labels)):
-                if target_labels[pos] != current_class:
-                    if current_class == 1:  # UTR5 region ended
-                        utr5_regions.append({
-                            'start': current_start,
-                            'end': pos - 1,
-                            'length': pos - current_start,
-                            'sequence': sequence_str[current_start:pos]
-                        })
-                    current_class = target_labels[pos]
-                    current_start = pos
-            
-            # Handle last region
-            if current_class == 1:
-                utr5_regions.append({
-                    'start': current_start,
-                    'end': len(target_labels) - 1,
-                    'length': len(target_labels) - current_start,
-                    'sequence': sequence_str[current_start:]
-                })
-            
-            sample = {
-                'contig_index': len(samples),
-                'sequence_length': len(sequence_str),
-                'sequence_preview': sequence_str[:100] + '...',
-                'total_atgs': len(atg_analysis),
-                'real_starts': sum(1 for atg in atg_analysis if atg['is_real_start']),
-                'decoy_atgs': sum(1 for atg in atg_analysis if not atg['is_real_start']),
-                'utr5_regions': utr5_regions,
-                'atg_analysis': atg_analysis[:10]  # First 10 ATGs for inspection
-            }
-            
-            samples.append(sample)
-            
-            if len(samples) >= num_samples:
-                break
-        
-        batch_count += 1
-        if len(samples) >= num_samples or batch_count >= 3:
-            break
-    
-    # Save to file
-    sample_file = output_dir / "sample_data.json"
-    with open(sample_file, 'w') as f:
-        json.dump(samples, f, indent=2)
-    
-    # Print summary
-    print(f"  Saved {len(samples)} contigs:")
-    for i, sample in enumerate(samples):
-        print(f"    Contig {i}: {sample['total_atgs']} ATGs ({sample['real_starts']} real STARTs, {sample['decoy_atgs']} decoys)")
-        print(f"      UTR5 regions: {len(sample['utr5_regions'])}")
-
-
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                            use_class_weights: bool = False, start_weight: float = 10.0,
-                           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3) -> dict:
+                           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
+                           max_seq_length: int = 1000) -> dict:
     """Create configuration for the UTR-START context test."""
     
     # Class weights for UTR-START detection
@@ -164,7 +66,8 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
         batch_size=batch_size,
         class_weights=class_weights,
         attention_masks=attention_masks,
-        kmer_size=kmer_size
+        kmer_size=kmer_size,
+        max_seq_length=max_seq_length
     )
 
 
@@ -172,7 +75,8 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                       num_contigs: int = 20, layouts_per_contig: int = 10,
                       learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                       use_class_weights: bool = False, start_weight: float = 10.0,
-                      attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3):
+                      attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
+                      max_seq_length: int = 1000):
     """Run the UTR-START context learning test."""
     
     print(f"=" * 70)
@@ -194,17 +98,22 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
         use_class_weights=use_class_weights, start_weight=start_weight,
-        attention_masks=attention_masks, kmer_size=kmer_size
+        attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length
     )
     
     # Create dataset
     print("\n1. Creating UTR-START dataset...")
+    # Default dataset windowing based on max_seq_length
+    window_size = max_seq_length
+    window_stride = max(1, max_seq_length // 2)
+    if window_size < max_seq_length:
+        print(f"Warning: window_size ({window_size}) < max_seq_length ({max_seq_length})")
     dataset = UTRStartDataset(
         num_contigs=num_contigs,
         layouts_per_contig=layouts_per_contig,
         background_length=500,
-        window_size=2000,
-        window_stride=500
+        window_size=window_size,
+        window_stride=window_stride
     )
     
     # VERIFICATION: Check that full contigs have the expected number of real STARTs
@@ -264,12 +173,8 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     output_dir = Path(f"layout_detection/utr_start_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save sample data for verification BEFORE training
-    print("\n2. Saving sample data for verification...")
-    save_sample_data(train_loader, output_dir, dataset)
-    
     # Create model
-    print("\n3. Creating model...")
+    print("\n2. Creating model...")
     model = LayoutDetectionModule(config)
     
     total_params = sum(p.numel() for p in model.parameters())
@@ -279,7 +184,7 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     print(f"  Full configuration: {config}")
     
     # Create trainer
-    print("\n4. Starting training...")
+    print("\n3. Starting training...")
     
     callbacks = [
         pl.callbacks.ModelCheckpoint(
@@ -318,199 +223,15 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     trainer.fit(model, train_loader, val_loader)
     
     # Test model
-    print("\n5. Testing model...")
+    print("\n4. Testing model...")
     trainer.test(model, val_loader)
     
-    # Detailed analysis (skipped)
-    print("\n6. Detailed Analysis... (skipped; use predict_and_analyze.py)")
-    
     # Layer analysis
-    print("\n7. Comprehensive Layer Analysis...")
+    print("\n5. Comprehensive Layer Analysis...")
     run_comprehensive_layer_analysis(model, dataset, output_dir)
     
     print(f"\nResults saved to: {output_dir}")
     return output_dir
-
-
-def analyze_utr_start_predictions(model, data_loader, output_dir):
-    """Analyze UTR-START context learning."""
-    
-    model.eval()
-    device = next(model.parameters()).device
-    
-    all_predictions = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch in data_loader:
-            sequences, targets = batch
-            sequences = sequences.to(device)
-            targets = targets.to(device)
-            
-            # Get predictions
-            logits = model(sequences)
-            predictions = torch.argmax(logits, dim=-1)
-            
-            # Convert to numpy and collect
-            all_predictions.extend(predictions.cpu().numpy())
-            all_targets.extend(targets.cpu().numpy())
-    
-    # Flatten arrays
-    pred_flat = np.array(all_predictions).flatten()
-    target_flat = np.array(all_targets).flatten()
-    
-    # Calculate detailed metrics for each class
-    results = {}
-    class_names = ['INTERGENIC', 'UTR5', 'START']
-    
-    for class_idx, class_name in enumerate(class_names):
-        # True positives, false positives, false negatives, true negatives
-        tp = ((pred_flat == class_idx) & (target_flat == class_idx)).sum()
-        fp = ((pred_flat == class_idx) & (target_flat != class_idx)).sum()
-        fn = ((pred_flat != class_idx) & (target_flat == class_idx)).sum()
-        tn = ((pred_flat != class_idx) & (target_flat != class_idx)).sum()
-        
-        # Calculate metrics
-        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        
-        target_count = (target_flat == class_idx).sum()
-        pred_count = (pred_flat == class_idx).sum()
-        over_prediction_ratio = pred_count / target_count if target_count > 0 else float('inf')
-        
-        results[class_name] = {
-            'tp': int(tp),
-            'fp': int(fp), 
-            'fn': int(fn),
-            'tn': int(tn),
-            'sensitivity': sensitivity,
-            'specificity': specificity,
-            'precision': precision,
-            'target_count': int(target_count),
-            'pred_count': int(pred_count),
-            'over_prediction_ratio': over_prediction_ratio
-        }
-    
-    # Print detailed results
-    print(f"UTR-START CONTEXT TEST RESULTS:")
-    print(f"=" * 50)
-    
-    for class_name, metrics in results.items():
-        print(f"\n{class_name}:")
-        print(f"  TP: {metrics['tp']}, FP: {metrics['fp']}, FN: {metrics['fn']}, TN: {metrics['tn']}")
-        print(f"  Sensitivity: {metrics['sensitivity']:.3f}")
-        print(f"  Specificity: {metrics['specificity']:.3f}")
-        print(f"  Precision: {metrics['precision']:.3f}")
-        print(f"  Over-prediction: {metrics['over_prediction_ratio']:.1f}x")
-        print(f"  Targets: {metrics['target_count']}, Predictions: {metrics['pred_count']}")
-    
-    # Save detailed results
-    with open(output_dir / "detailed_results.json", 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    # Save detailed predictions for verification
-    save_detailed_predictions(all_predictions, all_targets, output_dir)
-    
-    # Critical assessment for context learning
-    start_precision = results['START']['precision']
-    start_sensitivity = results['START']['sensitivity']
-    
-    print(f"\n" + "=" * 50)
-    print("CRITICAL ASSESSMENT - CONTEXT LEARNING:")
-    
-    if start_precision > 0.8 and start_sensitivity > 0.8:
-        print("✅ SUCCESS: High precision + sensitivity suggests real context learning!")
-        print("   Model learned to distinguish real STARTs from decoy ATGs")
-    elif start_precision > 0.6 and start_sensitivity > 0.6:
-        print("🟡 PARTIAL: Moderate performance, some context learning")
-    else:
-        print("❌ FAILURE: Low performance suggests model cannot learn biological context")
-    
-    # Check if model is just finding all ATGs vs learning context
-    total_starts = results['START']['target_count']
-    total_predictions = results['START']['pred_count']
-    
-    if total_predictions > total_starts * 2:
-        print("⚠️  WARNING: Significant over-prediction - may be finding all ATGs, not just contextual ones")
-    
-    print(f"=" * 50)
-
-
-def save_detailed_predictions(all_predictions, all_targets, output_dir, max_windows=10):
-    """Save detailed predictions for manual verification."""
-    
-    print(f"  Saving detailed predictions for first {max_windows} windows...")
-    
-    # Convert indices back to nucleotides
-    idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
-    class_names = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START'}
-    
-    detailed_predictions = []
-    
-    for window_idx in range(min(max_windows, len(all_predictions))):
-        pred_array = all_predictions[window_idx]
-        target_array = all_targets[window_idx]
-        
-        # Convert sequences back to strings (this would require storing sequences too)
-        # For now, just save the predictions and targets
-        
-        # Find positions where predictions differ from targets
-        mismatches = []
-        matches = []
-        
-        for pos in range(len(pred_array)):
-            pred_class = pred_array[pos]
-            target_class = target_array[pos]
-            
-            if pred_class != target_class:
-                mismatches.append({
-                    'position': pos,
-                    'predicted': class_names[pred_class],
-                    'actual': class_names[target_class]
-                })
-            else:
-                matches.append({
-                    'position': pos,
-                    'class': class_names[pred_class]
-                })
-        
-        # Find START predictions specifically
-        start_predictions = []
-        start_targets = []
-        
-        for pos in range(len(pred_array)):
-            if pred_array[pos] == 2:  # Predicted START
-                start_predictions.append({
-                    'position': pos,
-                    'correct': bool(target_array[pos] == 2)
-                })
-            if target_array[pos] == 2:  # Actual START
-                start_targets.append({
-                    'position': pos,
-                    'predicted': bool(pred_array[pos] == 2)
-                })
-        
-        window_analysis = {
-            'window_index': window_idx,
-            'sequence_length': len(pred_array),
-            'total_mismatches': len(mismatches),
-            'accuracy': len(matches) / len(pred_array),
-            'start_predictions': start_predictions,
-            'start_targets': start_targets,
-            'mismatches': mismatches[:20],  # First 20 mismatches
-            'predictions': [int(x) for x in pred_array],  # Full prediction array
-            'targets': [int(x) for x in target_array]      # Full target array
-        }
-        
-        detailed_predictions.append(window_analysis)
-    
-    # Save to file
-    with open(output_dir / "detailed_predictions.json", 'w') as f:
-        json.dump(detailed_predictions, f, indent=2)
-    
-    print(f"    Saved predictions for {len(detailed_predictions)} windows")
-    print(f"    File: detailed_predictions.json")
 
 
 def run_comprehensive_layer_analysis(model, dataset, output_dir):
@@ -549,6 +270,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
     parser.add_argument('--attention-masks', type=str, help='Head attention masks: symmetric "head:window" or asymmetric "head:before:after" (e.g., "0:1,1:200:0")')
     parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=default)')
+    parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
     
     args = parser.parse_args()
     
@@ -583,7 +305,8 @@ def main():
         use_class_weights=args.class_weights,
         start_weight=args.start_weight,
         attention_masks=attention_masks,
-        kmer_size=args.kmer
+        kmer_size=args.kmer,
+        max_seq_length=args.max_seq_length
     )
     
     print(f"\nUTR-START context test completed! Results in: {output_dir}")
