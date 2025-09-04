@@ -36,7 +36,7 @@ import json
 import numpy as np
 from typing import Optional, Dict
 
-from utils.dataset import UTRStartDataset
+from utils.dataset_utr import UTRStartDataset
 from layout_detection.layout_model import LayoutDetectionModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 
@@ -103,17 +103,15 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create dataset
     print("\n1. Creating UTR-START dataset...")
-    # Default dataset windowing based on max_seq_length
-    window_size = max_seq_length
-    window_stride = max(1, max_seq_length // 2)
-    if window_size < max_seq_length:
-        print(f"Warning: window_size ({window_size}) < max_seq_length ({max_seq_length})")
+    # Simplified: one sample per contig, ensure sample length < max_seq_length
     dataset = UTRStartDataset(
         num_contigs=num_contigs,
-        layouts_per_contig=layouts_per_contig,
+        layouts_per_contig=1,
         background_length=500,
-        window_size=window_size,
-        window_stride=window_stride
+        window_size=max_seq_length - 1,
+        window_stride=max(1, (max_seq_length - 1) // 4),
+        max_seq_length=max_seq_length,
+        one_window_per_contig=True
     )
     
     # VERIFICATION: Check that full contigs have the expected number of real STARTs

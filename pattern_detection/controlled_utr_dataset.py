@@ -123,7 +123,7 @@ class ControlledUTRDataset(Dataset):
             # Choose a random UTR5 sequence
             utr5_seq = random.choice(self.utr5_sequences)
             # Potentially mutate it (10% chance)
-            utr5_seq = mutate_sequence(utr5_seq, mutation_rate=0.1)
+            utr5_seq = mutate_sequence(utr5_seq, mutation_prob=0.1)
             
             # Find a position that doesn't overlap with existing elements
             attempts = 0
@@ -149,7 +149,7 @@ class ControlledUTRDataset(Dataset):
             # Choose a random UTR3 sequence
             utr3_seq = random.choice(self.utr3_sequences)
             # Potentially mutate it (10% chance)
-            utr3_seq = mutate_sequence(utr3_seq, mutation_rate=0.1)
+            utr3_seq = mutate_sequence(utr3_seq, mutation_prob=0.1)
             
             # Find a position that doesn't overlap with existing elements
             attempts = 0

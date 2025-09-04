@@ -149,18 +149,18 @@ UTR3_COMPLETE_SEQUENCES = [
 # UTILITY FUNCTIONS
 # ==============================================================================
 
-def mutate_sequence(sequence: str, mutation_rate: float = 0.1) -> str:
+def mutate_sequence(sequence: str, mutation_prob: float = 0.1) -> str:
     """
     Randomly mutate 1-2 bases in a sequence with given probability.
     
     Args:
         sequence: DNA sequence to potentially mutate
-        mutation_rate: Probability of mutation (default 10%)
+        mutation_prob: Probability of mutation (default 10%)
         
     Returns:
         Potentially mutated sequence
     """
-    if random.random() > mutation_rate:
+    if random.random() > mutation_prob:
         return sequence  # No mutation
     
     sequence_list = list(sequence)

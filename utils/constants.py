@@ -7,7 +7,7 @@ class GenePredictionClass:
     STOP = 4
     UTR3 = 5
 
-class DNAClass:
+class DNAEmbed:
     A = 0
     T = 1
     G = 2

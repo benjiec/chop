@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
-from utils.constants import GenePredictionClass as P, DNAClass as D
+from utils.constants import GenePredictionClass as P, DNAEmbed as D
 
 
 class LayerAnalyzer:

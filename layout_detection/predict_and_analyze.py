@@ -24,7 +24,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
-from utils.dataset import UTRStartDataset
+from utils.dataset_utr import UTRStartDataset
 from layout_detection.layout_model import LayoutDetectionModule
 from torch.utils.data import DataLoader
 
@@ -88,23 +88,19 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int = 50, layouts_per_contig: int = 2):
-    """Generate fresh test data for analysis."""
-    
+def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
+    """Generate fresh test data aligned to model length: one window per contig, seq_len < max_seq_length."""
     print(f"Generating {num_sequences} test sequences...")
-    
-    # Create dataset
     dataset = UTRStartDataset(
         num_contigs=num_sequences,
         layouts_per_contig=layouts_per_contig,
         background_length=500,
-        window_size=2000,
-        window_stride=2000
+        window_size=max_seq_length - 1,
+        window_stride=max(1, (max_seq_length - 1) // 4),
+        max_seq_length=max_seq_length,
+        one_window_per_contig=True
     )
-    
-    # Create data loader
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
 
@@ -568,8 +564,14 @@ def main():
     if model is None:
         return
     
+    # Derive windowing from model config to match training
+    max_seq_length = None
+    if hasattr(model, 'config') and isinstance(getattr(model, 'config'), dict):
+        max_seq_length = model.config.get('model', {}).get('max_seq_length')
+    if not isinstance(max_seq_length, int) or max_seq_length <= 0:
+        max_seq_length = 1000
     # Generate test data
-    data_loader, dataset = generate_test_data(args.num_sequences)
+    data_loader, dataset = generate_test_data(args.num_sequences, max_seq_length)
     
     # Run predictions
     results = run_predictions(model, data_loader, args.device)

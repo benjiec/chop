@@ -34,4 +34,4 @@ that can be re-called as much as possible.
 
 11. Whenever possible, use constants in utils/constants.py. Specifically,
 always use the GenePredictionClass enums from that module to refer to training
-target values, and DNAClass enums to refer to embeddings.
+target values, and DNAEmbed enums to refer to embeddings.
