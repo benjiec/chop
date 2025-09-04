@@ -110,8 +110,8 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create dataset
     print("\n1. Creating UTR-START dataset...")
-    # Build layout per contig: [500bp BG with ATG decoys] -> [UTR5 choice (mutated)] -> [ensure ATG] -> [500bp BG with ATG decoys]
-    background_len = 500
+    # Build layout per contig: [Random with ATG decoys] -> [UTR5 choice (mutated)] -> [ensure ATG] -> [Random with ATG decoys]
+    background_len = 900
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
         RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),

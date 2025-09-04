@@ -95,19 +95,20 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
+def generate_test_data(num_sequences: int, layouts_per_contig: int = 1):
     """Generate fresh test data aligned to model length: one contig per sample with UTR layout."""
     print(f"Generating {num_sequences} test sequences...")
-    background_len = 500
+    # intentionally making this larger than what's used for training to see if model learned context not just position
+    background_len = 1000
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 4),
         RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
         AddATGGenerator(),
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 2),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 4),
     ]
     dataset = GenomicSyntheticTestingDataset(
-        max_sequence_length=max_seq_length,
+        max_sequence_length=background_len * 3,
         num_contigs=num_sequences,
         layouts_per_contig=1,
         layouts=layouts,
@@ -576,14 +577,8 @@ def main():
     if model is None:
         return
     
-    # Derive windowing from model config to match training
-    max_seq_length = None
-    if hasattr(model, 'config') and isinstance(getattr(model, 'config'), dict):
-        max_seq_length = model.config.get('model', {}).get('max_seq_length')
-    if not isinstance(max_seq_length, int) or max_seq_length <= 0:
-        max_seq_length = 1000
     # Generate test data
-    data_loader, dataset = generate_test_data(args.num_sequences, max_seq_length)
+    data_loader, dataset = generate_test_data(args.num_sequences)
     
     # Run predictions
     results = run_predictions(model, data_loader, args.device)
