@@ -36,7 +36,14 @@ import json
 import numpy as np
 from typing import Optional, Dict
 
-from utils.dataset_utr import UTRStartDataset
+from utils.dataset import (
+    GenomicSyntheticTestingDataset,
+    RandomBasesGenerator,
+    RandomUTR5Generator,
+    AddATGGenerator,
+)
+from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
+from utils.constants import GenePredictionClass as P
 from layout_detection.layout_model import LayoutDetectionModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 
@@ -103,15 +110,22 @@ def run_utr_start_test(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     
     # Create dataset
     print("\n1. Creating UTR-START dataset...")
-    # Simplified: one sample per contig, ensure sample length < max_seq_length
-    dataset = UTRStartDataset(
+    # Build layout per contig: [500bp BG with ATG decoys] -> [UTR5 choice (mutated)] -> [ensure ATG] -> [500bp BG with ATG decoys]
+    background_len = 500
+    utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
+    layouts = [
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
+        AddATGGenerator(),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+    ]
+
+    # One sample per contig; enforce contig length <= max_seq_length
+    dataset = GenomicSyntheticTestingDataset(
+        max_sequence_length=max_seq_length,
         num_contigs=num_contigs,
         layouts_per_contig=1,
-        background_length=500,
-        window_size=max_seq_length - 1,
-        window_stride=max(1, (max_seq_length - 1) // 4),
-        max_seq_length=max_seq_length,
-        one_window_per_contig=True
+        layouts=layouts,
     )
     
     # VERIFICATION: Check that full contigs have the expected number of real STARTs

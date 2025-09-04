@@ -24,7 +24,14 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
-from utils.dataset_utr import UTRStartDataset
+from utils.dataset import (
+    GenomicSyntheticTestingDataset,
+    RandomBasesGenerator,
+    RandomUTR5Generator,
+    AddATGGenerator,
+)
+from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
+from utils.constants import GenePredictionClass as P
 from layout_detection.layout_model import LayoutDetectionModule
 from torch.utils.data import DataLoader
 
@@ -89,16 +96,21 @@ def load_trained_model(model_path: Path, device='cpu'):
         return None
 
 def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
-    """Generate fresh test data aligned to model length: one window per contig, seq_len < max_seq_length."""
+    """Generate fresh test data aligned to model length: one contig per sample with UTR layout."""
     print(f"Generating {num_sequences} test sequences...")
-    dataset = UTRStartDataset(
+    background_len = 500
+    utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
+    layouts = [
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+        RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
+        AddATGGenerator(),
+        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5),
+    ]
+    dataset = GenomicSyntheticTestingDataset(
+        max_sequence_length=max_seq_length,
         num_contigs=num_sequences,
-        layouts_per_contig=layouts_per_contig,
-        background_length=500,
-        window_size=max_seq_length - 1,
-        window_stride=max(1, (max_seq_length - 1) // 4),
-        max_seq_length=max_seq_length,
-        one_window_per_contig=True
+        layouts_per_contig=1,
+        layouts=layouts,
     )
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")

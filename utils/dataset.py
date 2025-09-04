@@ -37,6 +37,7 @@ class GenomicSyntheticTestingDataset(Dataset):
         self.layouts_per_contig = layouts_per_contig
         self.layouts = layouts
 
+        self.max_sequence_length = max_sequence_length
         self.contigs = []  # Store full-length contigs
         self.contig_targets = []  # Store full-length targets
 
@@ -81,12 +82,18 @@ class GenomicSyntheticTestingDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         sequence = self.contigs[idx]
-        targets = self.contig_targets[idx]
+        targets = list(self.contig_targets[idx])
+
+        # Pad to fixed length for batching
+        if len(sequence) < self.max_sequence_length:
+            pad_len = self.max_sequence_length - len(sequence)
+            sequence = sequence + ('N' * pad_len)
+            targets = targets + [P.INTERGENIC] * pad_len
 
         # Encode DNA sequence to integers
         dna_vocab = {'A': DNAEmbed.A, 'T': DNAEmbed.T, 'G': DNAEmbed.G, 'C': DNAEmbed.C, 'N': DNAEmbed.N}
         encoded_seq = np.array([dna_vocab.get(base, 4) for base in sequence])
-        return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(targets, dtype=torch.long)
+        return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(np.array(targets, dtype=np.int64), dtype=torch.long)
 
 
 class RandomBasesGenerator(SequenceSegmentGeneratorBase):
