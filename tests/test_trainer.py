@@ -76,6 +76,51 @@ class TestTrainer(unittest.TestCase):
             # Callback should have been attached and run
             self.assertTrue(cb.seen_val_loader or True)  # Allow non-strict since 1 epoch may skip
 
+    def test_checkpoint_filename_formatting(self):
+        # Ensure monitored metric shows in filename without duplication
+        utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
+        layouts = [
+            RandomBasesGenerator(length=50, target=P.INTERGENIC),
+            RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.0),
+            AddATGGenerator(),
+            RandomBasesGenerator(length=50, target=P.INTERGENIC),
+        ]
+        dataset = GenomicSyntheticTestingDataset(
+            max_sequence_length=200,
+            num_contigs=10,
+            layouts_per_contig=1,
+            layouts=layouts,
+        )
+        config = create_base_config(
+            max_seq_length=200,
+            num_classes=3,
+            class_names=['INTERGENIC', 'UTR5', 'START'],
+            d_model=16,
+            n_layers=1,
+            n_heads=4,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=2,
+            class_weights=[1.0, 1.0, 1.0],
+            attention_masks={0: 2},
+            kmer_size=0,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outdir = Path(tmpdir)
+            train_fn(
+                dataset,
+                config,
+                outdir,
+                additional_callback_generator=lambda v: [],
+                monitor_metric='val_accuracy',
+                monitor_mode='max',
+            )
+            ckpts = list((outdir / 'checkpoints').glob('model_epoch=*_val_accuracy=*.ckpt'))
+            self.assertTrue(len(ckpts) >= 1)
+            # Ensure no duplicated tokens in name
+            self.assertFalse(any('epoch=epoch=' in p.name for p in ckpts))
+            self.assertFalse(any('val_accuracy=val_accuracy=' in p.name for p in ckpts))
+
 
 if __name__ == '__main__':
     unittest.main()

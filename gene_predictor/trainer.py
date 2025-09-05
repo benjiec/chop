@@ -89,14 +89,19 @@ def train(
     print(f"trainable parameters: {trainable_params:,}")
     print(f"full configuration: {config}")
     
+    # Build filename that reflects the monitored metric for clarity/DRYness
+    metric_key = monitor_metric
+    filename = f"model_epoch={{epoch:02d}}_{metric_key}={{{metric_key}:.3f}}"
+
     callbacks = [
         pl.callbacks.ModelCheckpoint(
             dirpath=output_dir / "checkpoints",
-            filename='model_{epoch:02d}_{val_loss:.3f}',
+            filename=filename,
             monitor=monitor_metric,
             mode=monitor_mode,
             save_top_k=3,
-            save_last=True
+            save_last=True,
+            auto_insert_metric_name=False,
         ),
         BestCheckpointAlias(output_dir / "checkpoints"),
         pl.callbacks.EarlyStopping(monitor=monitor_metric, patience=8, mode=monitor_mode),
