@@ -50,7 +50,7 @@ from layout_detection.start_sensitivity_callback import StartSensitivityCallback
 
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
-                           use_class_weights: bool = False, start_weight: float = 10.0,
+                           use_class_weights: bool = False, start_weight: float = 10.0, utr_weight: float = 3.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                            max_seq_length: int = 1000,
                            use_focal: bool = False, focal_gamma: float = 2.0,
@@ -59,7 +59,7 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
     # Class weights for UTR-START detection
     # START codons are rare and important, UTR5 regions provide context
     if use_class_weights:
-        class_weights = [1.0, 3.0, start_weight]  # [INTERGENIC, UTR5, START]
+        class_weights = [1.0, utr_weight, start_weight]  # [INTERGENIC, UTR5, START]
     else:
         class_weights = None
     
@@ -85,7 +85,7 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
 def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                     num_contigs: int = 20, layouts_per_contig: int = 1,
                     learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
-                    use_class_weights: bool = False, start_weight: float = 10.0,
+                    use_class_weights: bool = False, start_weight: float = 10.0, utr_weight: float = 3.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
                     use_focal: bool = False, focal_gamma: float = 2.0,
@@ -95,7 +95,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     config = create_utr_start_config(
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
-        use_class_weights=use_class_weights, start_weight=start_weight,
+        use_class_weights=use_class_weights, start_weight=start_weight, utr_weight=utr_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
@@ -188,6 +188,7 @@ def main():
     parser.add_argument('--layouts', type=int, default=1, help='Layouts per contig')
     parser.add_argument('--class-weights', action='store_true', help='Use class weights')
     parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
+    parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
@@ -243,6 +244,7 @@ def main():
         batch_size=args.batch_size,
         use_class_weights=args.class_weights,
         start_weight=args.start_weight,
+        utr_weight=args.utr_weight,
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
