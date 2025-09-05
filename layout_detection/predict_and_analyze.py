@@ -113,6 +113,12 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_cont
             RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
             RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
         ],
+        # adding a second layout that are just negatives with decoys to test FP
+        [ 
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
+            RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=3),
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
+        ]
     ]
 
     dataset = GenomicSyntheticTestingDataset(
@@ -130,16 +136,17 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_cont
         utr5_positions = np.sum(full_targets == 1)
         total_atgs = 0
         real_start_atgs = 0
+        real_start_coords = []
         for i in range(len(full_sequence) - 2):
             if full_sequence[i:i+3] == 'ATG':
                 total_atgs += 1
                 if full_targets[i] == 2:  # Check if this ATG is labeled as START
                     if i > 0 and full_targets[i-1] != 2:
-                        print(f"contig {contig_idx}: START ATG at {i}")
+                        real_start_coords.append(i)
                     real_start_atgs += 1
         
-        print(f"contig {contig_idx}: {real_start_atgs} real START ATGs, {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
-        assert real_start_atgs == layouts_per_contig
+        print(f"contig {contig_idx}: {real_start_atgs} real START ATGs ({real_start_coords}), {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
+        assert real_start_atgs == layouts_per_contig or real_start_atgs == 0
 
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")
@@ -304,7 +311,7 @@ def analyze_all_predictions(results_data):
         predictions = result['predictions']
         probabilities = result['probabilities']
         
-        print(f"Sequence {seq_idx}: length {len(sequence)}")
+        # print(f"Sequence {seq_idx}: length {len(sequence)}")
         
         # Find all ATG positions and analyze each one
         atg_count = 0
@@ -375,9 +382,9 @@ def analyze_all_predictions(results_data):
 
                 all_predictions.append(prediction_data)
 
-                print(f"    ATG at {pos}: {classification}, target: {target_name}, prob: {prob_pos:.3f}")
+                # print(f"    ATG at {pos}: {classification}, target: {target_name}, prob: {prob_pos:.3f}")
         
-        print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
+        # print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
     
     return all_predictions
 
@@ -479,13 +486,16 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     context_line = upstream_60 + codon + downstream_20
                     marker_line = " " * len(upstream_60) + f"^^^ TP {prob:.2f}"
 
-                    # Per-position predictions for window [-60..+20]
+                    # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
                     end_idx = min(len(sequence), pos + 3 + 20)
+                    targets_window = result['targets'][start_idx:end_idx].tolist()
+                    targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
                     preds_line = ''.join(str(int(x)) for x in preds_window)
                     
                     f.write(f"{header}\n")
+                    f.write(f"{targets_line}\n")
                     f.write(f"{context_line}\n")
                     f.write(f"{preds_line}\n")
                     f.write(f"{marker_line}\n")
@@ -514,13 +524,16 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     context_line = upstream_60 + codon + downstream_20
                     marker_line = " " * len(upstream_60) + f"^^^ FP {prob:.2f}"
 
-                    # Per-position predictions for window [-60..+20]
+                    # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
                     end_idx = min(len(sequence), pos + 3 + 20)
+                    targets_window = result['targets'][start_idx:end_idx].tolist()
+                    targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
                     preds_line = ''.join(str(int(x)) for x in preds_window)
                     
                     f.write(f"{header}\n")
+                    f.write(f"{targets_line}\n")
                     f.write(f"{context_line}\n")
                     f.write(f"{preds_line}\n")
                     f.write(f"{marker_line}\n")
@@ -549,13 +562,16 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     context_line = upstream_60 + codon + downstream_20
                     marker_line = " " * len(upstream_60) + f"^^^ FN {prob:.2f}"
 
-                    # Per-position predictions for window [-60..+20]
+                    # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
                     end_idx = min(len(sequence), pos + 3 + 20)
+                    targets_window = result['targets'][start_idx:end_idx].tolist()
+                    targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
                     preds_line = ''.join(str(int(x)) for x in preds_window)
                     
                     f.write(f"{header}\n")
+                    f.write(f"{targets_line}\n")
                     f.write(f"{context_line}\n")
                     f.write(f"{preds_line}\n")
                     f.write(f"{marker_line}\n")
