@@ -108,7 +108,7 @@ def generate_test_data(num_sequences: int, layouts_per_contig: int = 1):
         RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
         AddATGGenerator(),
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, avoid="ATG"),
-        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=1, random_min_length=background_len // 4),
+        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
     ]
     dataset = GenomicSyntheticTestingDataset(
         max_sequence_length=background_len * 3,
