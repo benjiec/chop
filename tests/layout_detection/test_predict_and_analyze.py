@@ -73,6 +73,35 @@ class TestPredictAndAnalyze(unittest.TestCase):
         self.assertEqual(metrics['fn'], 1)
         self.assertEqual(metrics['fp'], 0)
 
+    def test_triplet_aware_needed(self):
+        # One ATG at pos 4; target marks whole triplet as START, prediction fires at pos+1 only
+        dna = "NNNNATGNNNN"
+        tokens = encode_sequence(dna)
+
+        targets = np.zeros(len(dna), dtype=np.int64)
+        # Mark whole triplet as START
+        targets[4] = 2; targets[5] = 2; targets[6] = 2
+
+        predictions = np.zeros(len(dna), dtype=np.int64)
+        # Model predicts START only at pos+1 within the ATG triplet
+        predictions[5] = 2
+
+        probs = np.zeros((len(dna), 3), dtype=np.float32)
+        probs[5, 2] = 0.9
+
+        results_data = [{
+            'sequence_index': 0,
+            'sequence_tokens': tokens,
+            'targets': targets,
+            'predictions': predictions,
+            'probabilities': probs,
+        }]
+
+        # Under triplet-aware logic, this should be counted as TP (not FN)
+        metrics = calculate_metrics(results_data)
+        self.assertEqual(metrics['tp'], 1)
+        self.assertEqual(metrics['fn'], 0)
+
 
 
 
