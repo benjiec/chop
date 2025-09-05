@@ -93,12 +93,12 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
 
     def test_full_sequence_targets_from_generators(self):
         # Layout: 5 intergenic, UTR5 (ends with ATG), AddATG (no-op), 4 intergenic
-        layouts = [
+        layouts = [[
             RandomBasesGenerator(length=5, target=P.INTERGENIC),
             RandomUTR5Generator(choices=["CCCCTGATG"], target=P.UTR5),  # length 9, ends with ATG
             AddATGGenerator(),
             RandomBasesGenerator(length=4, target=P.INTERGENIC),
-        ]
+        ]]
         ds = GenomicSyntheticTestingDataset(
             max_sequence_length=32,
             num_contigs=1,
@@ -115,6 +115,30 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
         self.assertEqual(list(tgt[5+6:5+9]), [P.START, P.START, P.START])
         # Trailing intergenic 4
         self.assertTrue(all(t == P.INTERGENIC for t in tgt[-4:]))
+
+    def test_multiple_layout_variants_round_robin_and_shuffle(self):
+        # Two distinct layouts, round-robin assignment across contigs
+        layout1 = [
+            RandomBasesGenerator(length=5, target=P.INTERGENIC),
+            RandomUTR5Generator(choices=["AAAATG"], target=P.UTR5),
+            AddATGGenerator(),
+        ]
+        layout2 = [
+            RandomBasesGenerator(length=6, target=P.INTERGENIC),
+            RandomUTR5Generator(choices=["CCCCATG"], target=P.UTR5),
+            AddATGGenerator(),
+        ]
+        ds = GenomicSyntheticTestingDataset(
+            max_sequence_length=64,
+            num_contigs=6,
+            layouts_per_contig=1,
+            layouts=[layout1, layout2],
+        )
+        # We can't assert exact order due to shuffle, but we can assert counts
+        lengths = [len(ds.contigs[i]) for i in range(len(ds))]
+        self.assertEqual(len(lengths), 6)
+        # Both layouts produce lengths >= their first segment lengths
+        self.assertTrue(all(l >= 5 for l in lengths))
 
     def test_decoy_arbitrary_token_inserted(self):
         # Use a non-ATGCN decoy and verify it can appear

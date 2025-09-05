@@ -35,14 +35,23 @@ class GenomicSyntheticTestingDataset(Dataset):
 
         self.num_contigs = num_contigs
         self.layouts_per_contig = layouts_per_contig
-        self.layouts = layouts
+        # Support multiple layout variants: accept either a single list of segment
+        # generators or a list of lists (each inner list is a layout variant).
+        if len(layouts) > 0 and isinstance(layouts[0], list):
+            # type: ignore[unreachable]
+            self.layout_variants: List[List[SequenceSegmentGeneratorBase]] = layouts  # type: ignore[assignment]
+        else:
+            # Single layout provided
+            self.layout_variants = [layouts]  # type: ignore[list-item]
 
         self.max_sequence_length = max_sequence_length
         self.contigs = []  # Store full-length contigs
         self.contig_targets = []  # Store full-length targets
 
         for contig_idx in range(num_contigs):
-            seq, targets = self._generate_contig()
+            # Round-robin select layout variant
+            current_layout = self.layout_variants[contig_idx % len(self.layout_variants)]
+            seq, targets = self._generate_contig(current_layout)
             self.contigs.append(seq)
             self.contig_targets.append(targets)
             assert len(seq) <= max_sequence_length, f"Each contig cannot be larger than {max_sequence_length}"
@@ -51,12 +60,18 @@ class GenomicSyntheticTestingDataset(Dataset):
         total_contig_positions = sum(len(seq) for seq in self.contigs)
         print(f"total contigs: {num_contigs}")
 
-    def _generate_contig(self) -> Tuple[str, np.ndarray]:
+        # Shuffle contigs to avoid ordering bias across layout variants
+        order = list(range(len(self.contigs)))
+        random.shuffle(order)
+        self.contigs = [self.contigs[i] for i in order]
+        self.contig_targets = [self.contig_targets[i] for i in order]
+
+    def _generate_contig(self, layout: List[SequenceSegmentGeneratorBase]) -> Tuple[str, np.ndarray]:
         full_sequence = []
         full_targets = []
 
         for layout_idx in range(self.layouts_per_contig):
-            layout_seq, layout_targets = self._generate_layout()
+            layout_seq, layout_targets = self._generate_layout(layout)
             full_sequence.append(layout_seq)
             full_targets.extend(layout_targets)
 
@@ -64,12 +79,12 @@ class GenomicSyntheticTestingDataset(Dataset):
         targets_array = np.array(full_targets, dtype=np.int64)
         return sequence_str, targets_array
 
-    def _generate_layout(self) -> Tuple[str, List[int]]:
+    def _generate_layout(self, layout: List[SequenceSegmentGeneratorBase]) -> Tuple[str, List[int]]:
         sequence = []
         targets = []        
 
         last_sequence = None
-        for segment_generator in self.layouts:
+        for segment_generator in layout:
             seq, tar = segment_generator.generate(last_sequence)
             sequence.append(seq)
             targets.extend(tar)

@@ -96,23 +96,27 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int, layouts_per_contig: int = 1):
-    """Generate fresh test data aligned to model length: one contig per sample with UTR layout."""
+def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
+    """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
-    background_len = 450
+    # Choose background length conservatively so total contig length stays ≤ max_seq_length
+    # The layout uses four background half-segments around UTR/ATG; cap by model limit
+    background_len = min(450, max_seq_length // 2)
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
-        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-        RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
-        AddATGGenerator(),
-        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
+        [
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
+            RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
+            AddATGGenerator(),
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
+            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
+        ],
     ]
 
     dataset = GenomicSyntheticTestingDataset(
-        max_sequence_length=background_len * 3,
+        max_sequence_length=max_seq_length,
         num_contigs=num_sequences,
         layouts_per_contig=1,
         layouts=layouts,
@@ -838,8 +842,15 @@ def main():
     if model is None:
         return
     
-    # Generate test data
-    data_loader, dataset = generate_test_data(args.num_sequences)
+    # Generate test data, aligned to model's max_seq_length
+    model_max_len = getattr(getattr(model, 'config', {}).get('model', {}), 'get', lambda k, d=None: None)('max_seq_length', None)
+    if model_max_len is None:
+        # Fallback: try to read attribute directly from embedding
+        try:
+            model_max_len = int(model.model.embedding.max_seq_length)
+        except Exception:
+            model_max_len = 1000
+    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len)
     
     # Run predictions
     results = run_predictions(model, data_loader, args.device)
