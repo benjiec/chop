@@ -329,6 +329,14 @@ def analyze_all_predictions(results_data):
             target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
             pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
             prob_pos = probabilities[pos, 2] if pos < len(probabilities) else 0.0
+            # Triplet probabilities around the ATG site for START class
+            if pos + 2 < probabilities.shape[0]:
+                prob_triplet_vec = probabilities[pos:pos+3, 2]
+                prob_triplet_max = float(np.max(prob_triplet_vec))
+                prob_triplet_avg = float(np.mean(prob_triplet_vec))
+            else:
+                prob_triplet_max = float(prob_pos)
+                prob_triplet_avg = float(prob_pos)
 
             is_target_start = bool((target_triplet == 2).any())
             is_predicted_start = bool((pred_triplet == 2).any())
@@ -372,6 +380,8 @@ def analyze_all_predictions(results_data):
                     'classification': classification,
                     'target_class': target_name,
                     'start_probability': float(prob_pos),
+                    'start_prob_max_triplet': float(prob_triplet_max),
+                    'start_prob_avg_triplet': float(prob_triplet_avg),
                     'upstream_20': upstream,
                     'downstream_20': downstream,
                     'kozak_score': kozak_analysis['score'],
@@ -469,7 +479,8 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         for i, tp in enumerate(tps):  # Show all TPs
             seq_idx = tp['sequence_index']
             pos = tp['atg_position']
-            prob = tp['start_probability']
+            prob_max = tp.get('start_prob_max_triplet', tp.get('start_probability', 0.0))
+            prob_avg = tp.get('start_prob_avg_triplet', tp.get('start_probability', 0.0))
             
             # Get full context from original sequence
             for result in results_data:
@@ -484,7 +495,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     
                     # Create visual line
                     context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ TP {prob:.2f}"
+                    marker_line = " " * len(upstream_60) + f"^^^ TP max={prob_max:.2f} avg={prob_avg:.2f}"
 
                     # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
@@ -507,7 +518,8 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         for i, fp in enumerate(fps):  # Show all FPs
             seq_idx = fp['sequence_index']
             pos = fp['atg_position']
-            prob = fp['start_probability']
+            prob_max = fp.get('start_prob_max_triplet', fp.get('start_probability', 0.0))
+            prob_avg = fp.get('start_prob_avg_triplet', fp.get('start_probability', 0.0))
             
             # Get full context from original sequence
             for result in results_data:
@@ -522,7 +534,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     
                     # Create visual line
                     context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ FP {prob:.2f}"
+                    marker_line = " " * len(upstream_60) + f"^^^ FP max={prob_max:.2f} avg={prob_avg:.2f}"
 
                     # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
@@ -545,7 +557,8 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         for i, fn in enumerate(fns):  # Show all FNs
             seq_idx = fn['sequence_index']
             pos = fn['atg_position']
-            prob = fn['start_probability']
+            prob_max = fn.get('start_prob_max_triplet', fn.get('start_probability', 0.0))
+            prob_avg = fn.get('start_prob_avg_triplet', fn.get('start_probability', 0.0))
             
             # Get full context from original sequence
             for result in results_data:
@@ -560,7 +573,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     
                     # Create visual line
                     context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ FN {prob:.2f}"
+                    marker_line = " " * len(upstream_60) + f"^^^ FN max={prob_max:.2f} avg={prob_avg:.2f}"
 
                     # Per-position targets/predictions for window [-60..+20]
                     start_idx = max(0, pos - 60)
