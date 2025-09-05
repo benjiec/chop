@@ -61,7 +61,14 @@ class TestTrainer(unittest.TestCase):
             return [cb]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model, val_loader = train_fn(dataset, config, Path(tmpdir), cb_gen)
+            model, val_loader = train_fn(
+                dataset,
+                config,
+                Path(tmpdir),
+                cb_gen,
+                monitor_metric='val_loss',
+                monitor_mode='min',
+            )
             # Sanity checks
             self.assertIsNotNone(model)
             self.assertTrue(hasattr(val_loader, '__iter__'))

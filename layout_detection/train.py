@@ -44,6 +44,8 @@ from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
+from utils.constants import GenePredictionClass as P
+from layout_detection.start_sensitivity_callback import StartSensitivityCallback
 
 
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
@@ -138,16 +140,26 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     output_dir = Path(f"layout_detection/utr_start_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # StartSensitivityCallback now imported from layout_detection.start_sensitivity_callback
+
     def mk_training_dynamic_cb(val_loader):
         return [
             TrainingDynamicsCallback(
                 val_loader=val_loader,
                 output_dir=output_dir / "training_dynamics",
-                analysis_frequency=5  # Analyze every 5 epochs
-            )
+                analysis_frequency=5
+            ),
+            StartSensitivityCallback(val_loader),
         ]
     
-    model, val_loader = train(dataset, config, output_dir, mk_training_dynamic_cb)
+    model, val_loader = train(
+        dataset,
+        config,
+        output_dir,
+        mk_training_dynamic_cb,
+        monitor_metric='val_start_sensitivity_atg',
+        monitor_mode='max',
+    )
 
     print("running layer analysis")
     run_comprehensive_layer_analysis(model, val_loader, output_dir)

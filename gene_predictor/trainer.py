@@ -45,7 +45,14 @@ class BestCheckpointAlias(pl.Callback):
                 pass
 
 
-def train(dataset, config, output_dir: Path, additional_callback_generator: Optional[Callable[[DataLoader], List[pl.Callback]]] = None):
+def train(
+    dataset,
+    config,
+    output_dir: Path,
+    additional_callback_generator: Optional[Callable[[DataLoader], List[pl.Callback]]] = None,
+    monitor_metric: str = 'val_loss',
+    monitor_mode: str = 'min',
+):
 
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -86,17 +93,13 @@ def train(dataset, config, output_dir: Path, additional_callback_generator: Opti
         pl.callbacks.ModelCheckpoint(
             dirpath=output_dir / "checkpoints",
             filename='model_{epoch:02d}_{val_loss:.3f}',
-            monitor='val_loss',
-            mode='min',
+            monitor=monitor_metric,
+            mode=monitor_mode,
             save_top_k=3,
             save_last=True
         ),
         BestCheckpointAlias(output_dir / "checkpoints"),
-        pl.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=8,
-            mode='min'
-        ),
+        pl.callbacks.EarlyStopping(monitor=monitor_metric, patience=8, mode=monitor_mode),
         pl.callbacks.LearningRateMonitor(logging_interval='epoch')
     ]
 
