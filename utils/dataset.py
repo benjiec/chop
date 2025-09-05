@@ -98,12 +98,13 @@ class GenomicSyntheticTestingDataset(Dataset):
 
 class RandomBasesGenerator(SequenceSegmentGeneratorBase):
 
-    def __init__(self, length, target: int = P.INTERGENIC, decoy: str = None, max_decoy: int = None, random_min_length: int = None):
+    def __init__(self, length, target: int = P.INTERGENIC, decoy: str = None, max_decoy: int = None, random_min_length: int = None, avoid: str = None):
         self.length = length
         self.target = target
         self.decoy = decoy
         self.max_decoy = max_decoy
         self.random_min_length = random_min_length
+        self.avoid = avoid
 
     def generate(self, _) -> Tuple[str, List[int]]:
         bases = ['A', 'T', 'G', 'C']
@@ -123,7 +124,12 @@ class RandomBasesGenerator(SequenceSegmentGeneratorBase):
                 for j in range(0, len(self.decoy)):
                     sequence[pos+j] = self.decoy[j]
 
-        return "".join(sequence), [self.target] * length
+        sequence = "".join(sequence)
+        if self.avoid:
+            while self.avoid in sequence:
+                sequence = sequence.replace(self.avoid, "")
+
+        return sequence, [self.target] * len(sequence)
  
 
 class RandomChoiceGenerator(SequenceSegmentGeneratorBase):

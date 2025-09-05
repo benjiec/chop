@@ -100,13 +100,15 @@ def generate_test_data(num_sequences: int, layouts_per_contig: int = 1):
     """Generate fresh test data aligned to model length: one contig per sample with UTR layout."""
     print(f"Generating {num_sequences} test sequences...")
     # intentionally making this larger than what's used for training to see if model learned context not just position
-    background_len = 400
+    background_len = 450
     utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 4),
+        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
+        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, avoid="ATG"),
         RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
         AddATGGenerator(),
-        RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=5, random_min_length=background_len // 4),
+        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, avoid="ATG"),
+        RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=1, random_min_length=background_len // 4),
     ]
     dataset = GenomicSyntheticTestingDataset(
         max_sequence_length=background_len * 3,

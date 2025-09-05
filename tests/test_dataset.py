@@ -127,6 +127,14 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
                 break
         self.assertTrue(found, "Expected at least one generated sequence to contain the decoy 'MMM'")
 
+    def test_random_bases_avoid_motif(self):
+        # Ensure avoid removes the specified motif from the generated sequence
+        gen = RandomBasesGenerator(length=10000, target=P.INTERGENIC, avoid="ATG")
+        for _ in range(20):
+            seq, tgt = gen.generate(None)
+            self.assertNotIn("ATG", seq)
+            self.assertEqual(len(seq), len(tgt))
+
     def test_assertion_on_max_sequence_violation(self):
         # Force violation by setting max length too small for layout
         layouts = [
