@@ -35,6 +35,7 @@ from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
@@ -776,6 +777,79 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
 
     # Run validations and print a short footer to stdout for confidence
     validate_predictions(results_data, predictions)
+
+    # Threshold sweeps for avg and max triplet probabilities
+    def _sweep_thresholds(preds: List[Dict], key: str, num_steps: int = 101):
+        thresholds = np.linspace(0.0, 1.0, num_steps)
+        rows = []
+        for t in thresholds:
+            tp = fp = fn = 0
+            for p in preds:
+                gt_pos = p.get('classification') in ('TP', 'FN')
+                prob = float(p.get(f'start_prob_{key}_triplet', p.get('start_probability', 0.0)))
+                pred_pos = prob >= t
+                if pred_pos and gt_pos:
+                    tp += 1
+                elif pred_pos and not gt_pos:
+                    fp += 1
+                elif (not pred_pos) and gt_pos:
+                    fn += 1
+            sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            denom = (prec + sens)
+            f1 = (2 * prec * sens / denom) if denom > 0 else 0.0
+            rows.append({'threshold': float(t), 'tp': tp, 'fp': fp, 'fn': fn, 'sensitivity': sens, 'precision': prec, 'f1': f1})
+        return rows
+
+    def _write_tsv(path: Path, rows: List[Dict]):
+        with path.open('w') as f:
+            f.write('threshold\ttp\tfp\tfn\tsensitivity\tprecision\tf1\n')
+            for r in rows:
+                f.write(f"{r['threshold']:.2f}\t{r['tp']}\t{r['fp']}\t{r['fn']}\t{r['sensitivity']:.4f}\t{r['precision']:.4f}\t{r['f1']:.4f}\n")
+
+    def _plot(path: Path, rows: List[Dict], title: str):
+        try:
+            thresholds = [r['threshold'] for r in rows]
+            tp = [r['tp'] for r in rows]
+            fp = [r['fp'] for r in rows]
+            fn = [r['fn'] for r in rows]
+            sens = [r['sensitivity'] for r in rows]
+            prec = [r['precision'] for r in rows]
+            f1 = [r.get('f1', 0.0) for r in rows]
+
+            fig, ax1 = plt.subplots(figsize=(12, 6))
+            ax1.bar(thresholds, fn, width=0.01, color='#f2dede', label='FN')
+            ax1.bar(thresholds, tp, bottom=fn, width=0.01, color='#d9edf7', label='TP')
+            ax1.bar(thresholds, fp, bottom=[fn[i] + tp[i] for i in range(len(fn))], width=0.01, color='#fcf8e3', label='FP')
+            ax1.set_xlabel('Threshold')
+            ax1.set_ylabel('Counts (TP/FP/FN)')
+
+            ax2 = ax1.twinx()
+            ax2.plot(thresholds, sens, color='#d9534f', label='Sensitivity')
+            ax2.plot(thresholds, prec, color='#5cb85c', label='Precision')
+            ax2.set_ylabel('Sensitivity / Precision / F1')
+            ax2.set_ylim(0, 1)
+
+            # Add F1 line
+            ax2.plot(thresholds, f1, color='#337ab7', label='F1')
+
+            ax1.legend(loc='upper left')
+            ax2.legend(loc='upper right')
+            plt.title(title)
+            plt.tight_layout()
+            fig.savefig(path)
+            plt.close(fig)
+        except Exception:
+            # Plotting optional; skip on headless environments without matplotlib backend
+            pass
+
+    # Prepare rows and write outputs
+    rows_avg = _sweep_thresholds(predictions, key='avg')
+    rows_max = _sweep_thresholds(predictions, key='max')
+    _write_tsv(output_dir / f"{base_name}_threshold_sweep_avg.tsv", rows_avg)
+    _write_tsv(output_dir / f"{base_name}_threshold_sweep_max.tsv", rows_max)
+    _plot(output_dir / f"{base_name}_threshold_curves_avg.png", rows_avg, title=f"Threshold sweep (avg) for {base_name}")
+    _plot(output_dir / f"{base_name}_threshold_curves_max.png", rows_max, title=f"Threshold sweep (max) for {base_name}")
 
 def print_summary(predictions: List[Dict], metrics: Dict):
     """Print concise summary of position-level metrics only."""
