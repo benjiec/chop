@@ -1,1 +1,1 @@
-python layout_detection/predict_and_analyze.py --model-path $1/checkpoints/last.ckpt --output-dir $1 --num-sequences 500
+python layout_detection/predict_and_analyze.py --run-dir $1 --num-sequences 500

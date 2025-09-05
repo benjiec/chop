@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fresh START prediction analysis with new test data.
+START prediction analysis with new test data.
 
 Creates new test sequences, runs predictions, and analyzes:
 - True positives vs false positives with sensitivity/precision/specificity
@@ -15,9 +15,10 @@ import torch
 import numpy as np
 import json
 import argparse
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import hashlib
+import re
 
 # Add project paths
 project_root = Path(__file__).parent.parent
@@ -510,6 +511,164 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
     
     print(f"✓ Visual analysis saved to: {output_path}")
 
+
+# -----------------------------
+# Breakdown (integrated)
+# -----------------------------
+
+def _build_parent_catalog() -> List[Dict]:
+    catalog: List[Dict] = []
+    for cat, seqs in (
+        ('KOZAK', KOZAK_SEQUENCES),
+        ('UTR5', UTR5_REAL_SEQUENCES),
+        ('IRES', IRES_SEQUENCES),
+    ):
+        for idx, parent in enumerate(seqs):
+            parent_up = parent[:-3] if parent.endswith('ATG') else parent
+            catalog.append({
+                'category': cat,
+                'parent_index': idx,
+                'parent_sequence': parent,
+                'parent_upstream': parent_up,
+                'parent_len': len(parent),
+            })
+    return catalog
+
+
+def _hamming_distance(a: str, b: str) -> int:
+    assert len(a) == len(b)
+    return sum(1 for x, y in zip(a, b) if x != y)
+
+
+def _match_upstream_to_parent(upstream_60: str, catalog: List[Dict]) -> Tuple[Optional[Dict], float, int]:
+    best = None
+    best_rate = 1.0
+    best_len = 0
+    for entry in catalog:
+        parent_up = entry['parent_upstream']
+        if not parent_up:
+            continue
+        L = min(len(parent_up), len(upstream_60), 60)
+        if L == 0:
+            continue
+        a = upstream_60[-L:]
+        b = parent_up[-L:]
+        dist = _hamming_distance(a, b)
+        rate = dist / L
+        if rate < best_rate or (rate == best_rate and L > best_len):
+            best = entry
+            best_rate = rate
+            best_len = L
+    return best, best_rate, best_len
+
+
+def _write_breakdown_tsv(output_path: Path, rows: List[Dict]):
+    header = [
+        'category', 'parent_index', 'parent_sequence', 'parent_len',
+        'match_len', 'mismatch_rate', 'tp_count', 'fn_count', 'tp_mutated', 'fn_mutated'
+    ]
+    with open(output_path, 'w') as f:
+        f.write('\t'.join(header) + '\n')
+        for r in rows:
+            f.write('\t'.join([
+                str(r['category']),
+                str(r['parent_index']),
+                str(r['parent_sequence']),
+                str(r['parent_len']),
+                str(r['match_len']),
+                f"{r['mismatch_rate']:.3f}",
+                str(r['tp_count']),
+                str(r['fn_count']),
+                str(r['tp_mutated']),
+                str(r['fn_mutated']),
+            ]) + '\n')
+
+
+def _build_entries_from_predictions(predictions: List[Dict], results_data: List[Dict]) -> List[Dict]:
+    # Map sequence indices to raw sequence strings for quick slicing
+    seq_map = {r['sequence_index']: convert_tokens_to_sequence(r['sequence_tokens']) for r in results_data}
+    entries: List[Dict] = []
+    for p in predictions:
+        if p.get('classification') not in ('TP', 'FN'):
+            continue
+        seq_idx = p['sequence_index']
+        pos = p['atg_position']
+        sequence = seq_map[seq_idx]
+        upstream_60 = sequence[max(0, pos-60):pos]
+        codon = sequence[pos:pos+3]
+        downstream_20 = sequence[pos+3:pos+23]
+        entries.append({
+            'sequence_id': f'sequence_{seq_idx}',
+            'position': str(pos),
+            'classification': p['classification'],
+            'upstream_60': upstream_60,
+            'codon': codon,
+            'downstream_20': downstream_20,
+        })
+    return entries
+
+
+def generate_breakdown_tsv(predictions: List[Dict], results_data: List[Dict], output_report_path: Path, mismatch_threshold: float = 0.15) -> Path:
+    """Create breakdown TSV next to the report using prediction data directly."""
+    entries = _build_entries_from_predictions(predictions, results_data)
+    catalog = _build_parent_catalog()
+    aggregates: Dict[Tuple[str, int], Dict] = {}
+
+    for e in entries:
+        best, rate, match_len = _match_upstream_to_parent(e['upstream_60'], catalog)
+        if best is None or rate > mismatch_threshold:
+            key = ('Unknown', -1)
+            if key not in aggregates:
+                aggregates[key] = {
+                    'category': 'Unknown',
+                    'parent_index': -1,
+                    'parent_sequence': '',
+                    'parent_len': 0,
+                    'match_len': 0,
+                    'mismatch_rate': 1.0,
+                    'tp_count': 0,
+                    'fn_count': 0,
+                    'tp_mutated': 0,
+                    'fn_mutated': 0,
+                }
+            agg = aggregates[key]
+        else:
+            key = (best['category'], best['parent_index'])
+            if key not in aggregates:
+                aggregates[key] = {
+                    'category': best['category'],
+                    'parent_index': best['parent_index'],
+                    'parent_sequence': best['parent_sequence'],
+                    'parent_len': best['parent_len'],
+                    'match_len': match_len,
+                    'mismatch_rate': rate,
+                    'tp_count': 0,
+                    'fn_count': 0,
+                    'tp_mutated': 0,
+                    'fn_mutated': 0,
+                }
+            agg = aggregates[key]
+            if rate < agg['mismatch_rate'] or (rate == agg['mismatch_rate'] and match_len > agg['match_len']):
+                agg['mismatch_rate'] = rate
+                agg['match_len'] = match_len
+
+        if e['classification'] == 'TP':
+            agg['tp_count'] += 1
+            if best is None or rate > 0:
+                agg['tp_mutated'] += 1
+        elif e['classification'] == 'FN':
+            agg['fn_count'] += 1
+            if best is None or rate > 0:
+                agg['fn_mutated'] += 1
+
+    rows = list(aggregates.values())
+    rows.sort(key=lambda r: (r['category'], -(r['tp_count'] + r['fn_count'])))
+
+    out_path = output_report_path.with_name(output_report_path.stem + '_breakdown.tsv')
+    _write_breakdown_tsv(out_path, rows)
+    print(f"✓ Breakdown written to: {out_path}")
+    return out_path
+
 def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: List[Dict], output_dir: Path):
     """Save analysis results with timestamped filenames."""
     
@@ -552,28 +711,82 @@ def print_summary(predictions: List[Dict], metrics: Dict):
     print(f"  Precision: {metrics['precision']:.1%}")
     print(f"  Specificity: {metrics['specificity']:.1%}")
 
+def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
+    """Select a checkpoint to use.
+    Priority: legacy --model-path > run_dir/checkpoints/model_file > best (lowest val_loss) in run_dir/checkpoints.
+    """
+    if legacy_model_path:
+        return Path(legacy_model_path)
+    ckpt_dir = run_dir / 'checkpoints'
+    if model_file:
+        return ckpt_dir / model_file
+    # Prefer explicit best alias if present
+    best_alias = ckpt_dir / 'best.ckpt'
+    if best_alias.exists():
+        return best_alias
+    # Find best by lowest val_loss encoded as a trailing number before .ckpt
+    candidates = list(ckpt_dir.glob('*.ckpt'))
+    best_path = None
+    best_val = None
+    for p in candidates:
+        fname = p.name  # include extension for regex
+        m = re.search(r'([0-9]+(?:\.[0-9]+)?)\.ckpt$', fname)
+        if not m:
+            continue
+        try:
+            val = float(m.group(1))
+        except ValueError:
+            continue
+        if best_val is None or val < best_val:
+            best_val = val
+            best_path = p
+    if best_path is not None:
+        return best_path
+    # Fallback to last.ckpt
+    last = ckpt_dir / 'last.ckpt'
+    if last.exists():
+        return last
+    raise FileNotFoundError(f"No checkpoints found under {ckpt_dir}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description='Fresh START prediction analysis')
-    parser.add_argument('--model-path', type=str, required=True,
-                       help='Path to trained model checkpoint')
-    parser.add_argument('--output-dir', type=str, required=True,
-                       help='Output directory for analysis results')
+    parser = argparse.ArgumentParser(description='START prediction analysis')
+    parser.add_argument('--run-dir', type=str, required=True,
+                       help='Run directory (parent of checkpoints). Outputs will be written here by default.')
+    parser.add_argument('--model-file', type=str, default=None,
+                       help='Specific checkpoint filename within run_dir/checkpoints to use (overrides best-by-val_loss selection).')
+    # Back-compat: allow explicit model path; if provided, overrides run-dir selection
+    parser.add_argument('--model-path', type=str, default=None,
+                       help='[Deprecated] Explicit path to a model checkpoint; overrides --run-dir/--model-file selection.')
+    parser.add_argument('--output-dir', type=str, default=None,
+                       help='Output directory for analysis results. If omitted, defaults to --run-dir.')
     parser.add_argument('--num-sequences', type=int, default=50,
                        help='Number of test sequences to generate')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
+    parser.add_argument('--mismatch-threshold', type=float, default=0.15,
+                       help='Max mismatch rate (0..1) for parent assignment in breakdown TSV')
     
     args = parser.parse_args()
-    
-    model_path = Path(args.model_path)
-    output_dir = Path(args.output_dir)
+
+    run_dir = Path(args.run_dir)
+    output_dir = Path(args.output_dir) if args.output_dir else run_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print("🧬 Fresh START Prediction Analysis")
+    print("🧬 START Prediction Analysis")
     print("=" * 50)
     
+    # Resolve checkpoint
+    try:
+        ckpt_path = _select_checkpoint(run_dir, args.model_file, args.model_path)
+    except Exception as e:
+        print(f"Error selecting checkpoint: {e}")
+        return
+
+    print(f"Selected checkpoint: {ckpt_path}")
+
     # Load model
-    model = load_trained_model(model_path, args.device)
+    model = load_trained_model(ckpt_path, args.device)
     if model is None:
         return
     
@@ -589,8 +802,17 @@ def main():
     # Analyze predictions
     predictions = analyze_all_predictions(results)
     
-    # Save results
+    # Save results (FASTA + visual report)
     save_analysis_results(predictions, metrics, results, output_dir)
+    # Generate breakdown TSV next to the report
+    # Use the last generated report path (deterministic naming inside save function)
+    # Recompute the same base name to know the report location
+    # Note: generate_breakdown_tsv expects the report path to add _breakdown.tsv
+    # We reuse the most recent report by listing matching files
+    reports = sorted(output_dir.glob('prediction_*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].txt'))
+    if reports:
+        last_report = reports[-1]
+        generate_breakdown_tsv(predictions, results, last_report, mismatch_threshold=args.mismatch_threshold)
     
     # Print summary
     print_summary(predictions, metrics)
