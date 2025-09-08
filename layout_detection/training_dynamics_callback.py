@@ -20,6 +20,7 @@ import numpy as np
 import json
 from pathlib import Path
 from typing import Dict, List, Any
+from utils.constants import DNAEmbed
 
 class TrainingDynamicsCallback(pl.Callback):
     """Callback to track training dynamics and attention evolution."""
@@ -39,7 +40,7 @@ class TrainingDynamicsCallback(pl.Callback):
         self.epoch_data = []
         
         # Convert indices back to nucleotides
-        self.idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
+        self.idx_to_nucleotide = DNAEmbed.idx_to_bp
         
         # Dynamic layer count (will be set when first model is analyzed)
         self.num_layers = None

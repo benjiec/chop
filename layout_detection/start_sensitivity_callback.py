@@ -2,7 +2,7 @@
 
 import pytorch_lightning as pl
 import torch
-from utils.constants import GenePredictionClass as P
+from utils.constants import GenePredictionClass as P, DNAEmbed
 
 
 class StartSensitivityCallback(pl.Callback):
@@ -25,7 +25,7 @@ class StartSensitivityCallback(pl.Callback):
         false_negatives = 0
 
         # index->base mapping used throughout the project
-        idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
+        idx_to_nucleotide = DNAEmbed.idx_to_bp
 
         for sequences, targets in self.val_loader:
             sequences = sequences.to(device)

@@ -19,21 +19,16 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import hashlib
 import re
+from utils.constants import DNAEmbed, GenePredictionClass
 
 # Add project paths
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
-from utils.dataset import (
-    GenomicSyntheticTestingDataset,
-    RandomBasesGenerator,
-    RandomUTR5Generator,
-    AddATGGenerator,
-)
-from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
-from utils.constants import GenePredictionClass as P
+from utils.dataset import GenomicSyntheticTestingDataset
 from gene_predictor.model import GenePredictorModule as ModelModule
+from layout_detection.layouts import utr5_start_random_decoy_flanks, decoy_random_decopy_flanks
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
@@ -101,25 +96,10 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_cont
     """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
-    # Choose background length conservatively so total contig length stays ≤ max_seq_length
-    # The layout uses four background half-segments around UTR/ATG; cap by model limit
-    background_len = min(450, max_seq_length // 2)
-    utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        [
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-            RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
-            AddATGGenerator(),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
-        ],
-        # adding a second layout that are just negatives with decoys to test FP
-        [ 
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
-            RandomBasesGenerator(length=background_len, target=P.INTERGENIC, decoy="ATG", max_decoy=3),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
-        ]
+        utr5_start_random_decoy_flanks(),
+        # add contig with just decoys and no UTRs, to assess FPs
+        decoy_random_decopy_flanks()
     ]
 
     dataset = GenomicSyntheticTestingDataset(
@@ -200,7 +180,7 @@ def run_predictions(model, data_loader, device='cpu'):
 
 def convert_tokens_to_sequence(tokens):
     """Convert token indices back to DNA sequence."""
-    idx_to_nucleotide = {0: 'A', 1: 'T', 2: 'G', 3: 'C', 4: 'N'}
+    idx_to_nucleotide = DNAEmbed.idx_to_bp
     return ''.join([idx_to_nucleotide.get(int(token), 'N') for token in tokens])
 
 def analyze_kozak_pattern(upstream: str, atg_codon: str):
@@ -370,7 +350,7 @@ def analyze_all_predictions(results_data):
 
                 # Determine target class name (at pos)
                 target_class = targets[pos] if pos < len(targets) else -1
-                target_name = {0: 'INTERGENIC', 1: 'UTR5', 2: 'START', -1: 'UNKNOWN'}[int(target_class)]
+                target_name = GenePredictionClass.idx_to_cls[int(target_class)]
 
                 prediction_data = {
                     'sequence_index': seq_idx,

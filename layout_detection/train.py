@@ -34,18 +34,13 @@ import numpy as np
 from typing import Optional, Dict
 
 
-from utils.dataset import (
-    GenomicSyntheticTestingDataset,
-    RandomBasesGenerator,
-    RandomUTR5Generator,
-    AddATGGenerator,
-)
-from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
+from utils.dataset import GenomicSyntheticTestingDataset
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
 from layout_detection.start_sensitivity_callback import StartSensitivityCallback
+from layout_detection.layouts import utr5_start_random_decoy_flanks
 
 
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
@@ -100,18 +95,8 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
-    # Build layout per contig: [Random with ATG decoys] -> [UTR5 choice (mutated)] -> [ensure ATG] -> [Random with ATG decoys]
-    background_len = 450
-    utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
     layouts = [
-        [
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-            RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
-            AddATGGenerator(),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-            RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, decoy="ATG", max_decoy=3, random_min_length=background_len // 4),
-        ],
+        utr5_start_random_decoy_flanks()
     ]
 
     # One sample per contig; enforce contig length <= max_seq_length
