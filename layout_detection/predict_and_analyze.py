@@ -19,7 +19,6 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import hashlib
 import re
-from utils.constants import DNAEmbed, GenePredictionClass
 
 # Add project paths
 project_root = Path(__file__).parent.parent
@@ -27,6 +26,7 @@ sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
 from utils.dataset import GenomicSyntheticTestingDataset
+from utils.constants import DNAEmbed, GenePredictionClass
 from gene_predictor.model import GenePredictorModule as ModelModule
 from layout_detection.layouts import utr5_start_random_decoy_flanks, decoy_random_decopy_flanks
 from torch.utils.data import DataLoader
