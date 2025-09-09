@@ -96,9 +96,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
     )
     
     layouts = [
-        utr5_start_random_decoy_flanks(),
-        # add contig with just decoys and no UTRs, to introduce FPs
-        decoy_random_decopy_flanks()
+        utr5_start_random_decoy_flanks()
     ]
 
     # One sample per contig; enforce contig length <= max_seq_length
