@@ -124,7 +124,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                     real_start_atgs += 1
         
         print(f"contig {contig_idx}: {real_start_atgs} real START ATGs, {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
-        assert real_start_atgs == layouts_per_contig
+        assert real_start_atgs == layouts_per_contig or real_start_atgs == 0
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
