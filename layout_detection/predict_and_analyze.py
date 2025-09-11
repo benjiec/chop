@@ -25,19 +25,13 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
-from utils.dataset import GenomicSyntheticTestingDataset
 from utils.constants import DNAEmbed, GenePredictionClass
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from layout_detection.layouts import generate_dataset
 
-from layout_detection.layouts import (
-    utr5_start_random_decoy_flanks,
-    utr5_spacer_start_random_decoy_flanks,
-    blind_utr5_spacer_start_random_decoy_flanks,
-    decoy_random_decopy_flanks,
-)
 
 def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
@@ -103,49 +97,7 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layout_version: 
     """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
-    utr5_start_layout = None
-    if layout_version == 1:
-        utr5_start_layout = utr5_start_random_decoy_flanks()
-    elif layout_version == 2:
-        utr5_start_layout = utr5_spacer_start_random_decoy_flanks() 
-    elif layout_version == 3:
-        utr5_start_layout = blind_utr5_spacer_start_random_decoy_flanks()
-    else:
-        assert False, "Unknown layout"
-
-    layouts = [
-        utr5_start_layout,
-        # add contig with just decoys and no UTRs, to assess FPs
-        decoy_random_decopy_flanks()
-    ]
-
-    dataset = GenomicSyntheticTestingDataset(
-        max_sequence_length=max_seq_length,
-        num_contigs=num_sequences,
-        layouts_per_contig=1,
-        layouts=layouts,
-    )
-
-    # Sanity check 
-    for contig_idx in range(dataset.num_contigs):
-        full_sequence = dataset.contigs[contig_idx]
-        full_targets = dataset.contig_targets[contig_idx]
-        
-        utr5_positions = np.sum(full_targets == 1)
-        total_atgs = 0
-        real_start_atgs = 0
-        real_start_coords = []
-        for i in range(len(full_sequence) - 2):
-            if full_sequence[i:i+3] == 'ATG':
-                total_atgs += 1
-                if full_targets[i] == 2:  # Check if this ATG is labeled as START
-                    if i > 0 and full_targets[i-1] != 2:
-                        real_start_coords.append(i)
-                    real_start_atgs += 1
-        
-        print(f"contig {contig_idx}: {real_start_atgs} real START ATGs ({real_start_coords}), {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
-        assert real_start_atgs == layouts_per_contig or real_start_atgs == 0
-
+    dataset = generate_dataset(num_sequences, max_seq_length, layout_version, layouts_per_contig=layouts_per_contig)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
