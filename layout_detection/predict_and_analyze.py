@@ -436,7 +436,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_60 = sequence[max(0, pos-60):pos]
+                    upstream_200 = sequence[max(0, pos-200):pos]
                     codon = sequence[pos:pos+3]
                     downstream_20 = sequence[pos+3:pos+23]
                     
@@ -444,11 +444,11 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ TP max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_20
+                    marker_line = " " * len(upstream_200) + f"^^^ TP max={prob_max:.2f} avg={prob_avg:.2f}"
 
-                    # Per-position targets/predictions for window [-60..+20]
-                    start_idx = max(0, pos - 60)
+                    # Per-position targets/predictions for window [-200..+20]
+                    start_idx = max(0, pos - 200)
                     end_idx = min(len(sequence), pos + 3 + 20)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
@@ -475,7 +475,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_60 = sequence[max(0, pos-60):pos]
+                    upstream_200 = sequence[max(0, pos-200):pos]
                     codon = sequence[pos:pos+3]
                     downstream_20 = sequence[pos+3:pos+23]
                     
@@ -483,11 +483,11 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ FP max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_20
+                    marker_line = " " * len(upstream_200) + f"^^^ FP max={prob_max:.2f} avg={prob_avg:.2f}"
 
-                    # Per-position targets/predictions for window [-60..+20]
-                    start_idx = max(0, pos - 60)
+                    # Per-position targets/predictions for window [-200..+20]
+                    start_idx = max(0, pos - 200)
                     end_idx = min(len(sequence), pos + 3 + 20)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
@@ -514,7 +514,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_60 = sequence[max(0, pos-60):pos]
+                    upstream_200 = sequence[max(0, pos-200):pos]
                     codon = sequence[pos:pos+3]
                     downstream_20 = sequence[pos+3:pos+23]
                     
@@ -522,11 +522,11 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_60 + codon + downstream_20
-                    marker_line = " " * len(upstream_60) + f"^^^ FN max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_20
+                    marker_line = " " * len(upstream_200) + f"^^^ FN max={prob_max:.2f} avg={prob_avg:.2f}"
 
-                    # Per-position targets/predictions for window [-60..+20]
-                    start_idx = max(0, pos - 60)
+                    # Per-position targets/predictions for window [-200..+20]
+                    start_idx = max(0, pos - 200)
                     end_idx = min(len(sequence), pos + 3 + 20)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
@@ -571,7 +571,7 @@ def _hamming_distance(a: str, b: str) -> int:
     return sum(1 for x, y in zip(a, b) if x != y)
 
 
-def _match_upstream_to_parent(upstream_60: str, catalog: List[Dict]) -> Tuple[Optional[Dict], float, int]:
+def _match_upstream_to_parent(upstream_200: str, catalog: List[Dict]) -> Tuple[Optional[Dict], float, int]:
     best = None
     best_rate = 1.0
     best_len = 0
@@ -579,10 +579,10 @@ def _match_upstream_to_parent(upstream_60: str, catalog: List[Dict]) -> Tuple[Op
         parent_up = entry['parent_upstream']
         if not parent_up:
             continue
-        L = min(len(parent_up), len(upstream_60), 60)
+        L = min(len(parent_up), len(upstream_200), 200)
         if L == 0:
             continue
-        a = upstream_60[-L:]
+        a = upstream_200[-L:]
         b = parent_up[-L:]
         dist = _hamming_distance(a, b)
         rate = dist / L
@@ -625,14 +625,14 @@ def _build_entries_from_predictions(predictions: List[Dict], results_data: List[
         seq_idx = p['sequence_index']
         pos = p['atg_position']
         sequence = seq_map[seq_idx]
-        upstream_60 = sequence[max(0, pos-60):pos]
+        upstream_200 = sequence[max(0, pos-200):pos]
         codon = sequence[pos:pos+3]
         downstream_20 = sequence[pos+3:pos+23]
         entries.append({
             'sequence_id': f'sequence_{seq_idx}',
             'position': str(pos),
             'classification': p['classification'],
-            'upstream_60': upstream_60,
+            'upstream_200': upstream_200,
             'codon': codon,
             'downstream_20': downstream_20,
         })
@@ -646,7 +646,7 @@ def generate_breakdown_tsv(predictions: List[Dict], results_data: List[Dict], ou
     aggregates: Dict[Tuple[str, int], Dict] = {}
 
     for e in entries:
-        best, rate, match_len = _match_upstream_to_parent(e['upstream_60'], catalog)
+        best, rate, match_len = _match_upstream_to_parent(e['upstream_200'], catalog)
         if best is None or rate > mismatch_threshold:
             key = ('Unknown', -1)
             if key not in aggregates:

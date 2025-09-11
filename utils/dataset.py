@@ -124,7 +124,7 @@ class RandomBasesGenerator(SequenceSegmentGeneratorBase):
     def generate(self, _) -> Tuple[str, List[int]]:
         bases = ['A', 'T', 'G', 'C']
         length = self.length
-        if self.random_min_length:
+        if self.random_min_length is not None:
             length = random.randint(self.random_min_length, self.length)
         sequence = [random.choice(bases) for _ in range(length)]
 
