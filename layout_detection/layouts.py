@@ -95,7 +95,7 @@ def generate_dataset(num_sequences: int, max_seq_length: int, layout_version: in
     dataset = GenomicSyntheticTestingDataset(
         max_sequence_length=max_seq_length,
         num_contigs=num_sequences,
-        layouts_per_contig=1,
+        layouts_per_contig=layouts_per_contig,
         layouts=layouts,
     )
 

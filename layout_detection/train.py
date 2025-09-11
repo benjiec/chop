@@ -34,13 +34,12 @@ import numpy as np
 from typing import Optional, Dict
 
 
-from utils.dataset import GenomicSyntheticTestingDataset
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
 from layout_detection.start_sensitivity_callback import StartSensitivityCallback
-from layout_detection.layouts import utr5_start_random_decoy_flanks, decoy_random_decopy_flanks
+from layout_detection.layouts import generate_dataset
 
 
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
@@ -95,34 +94,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
-    layouts = [
-        utr5_start_random_decoy_flanks()
-    ]
-
-    # One sample per contig; enforce contig length <= max_seq_length
-    dataset = GenomicSyntheticTestingDataset(
-        max_sequence_length=max_seq_length,
-        num_contigs=num_contigs,
-        layouts_per_contig=layouts_per_contig,
-        layouts=layouts,
-    )
-   
-    # Sanity check 
-    for contig_idx in range(dataset.num_contigs):
-        full_sequence = dataset.contigs[contig_idx]
-        full_targets = dataset.contig_targets[contig_idx]
-        
-        utr5_positions = np.sum(full_targets == 1)
-        total_atgs = 0
-        real_start_atgs = 0
-        for i in range(len(full_sequence) - 2):
-            if full_sequence[i:i+3] == 'ATG':
-                total_atgs += 1
-                if full_targets[i] == 2:  # Check if this ATG is labeled as START
-                    real_start_atgs += 1
-        
-        print(f"contig {contig_idx}: {real_start_atgs} real START ATGs, {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
-        assert real_start_atgs == layouts_per_contig or real_start_atgs == 0
+    dataset = generate_dataset(num_contigs, max_seq_length, 2, layouts_per_contig)
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
