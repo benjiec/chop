@@ -29,9 +29,15 @@ from utils.dataset import GenomicSyntheticTestingDataset
 from utils.constants import DNAEmbed, GenePredictionClass
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from gene_predictor.model import GenePredictorModule as ModelModule
-from layout_detection.layouts import utr5_start_random_decoy_flanks, decoy_random_decopy_flanks
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+
+from layout_detection.layouts import (
+    utr5_start_random_decoy_flanks,
+    utr5_spacer_start_random_decoy_flanks,
+    blind_utr5_spacer_start_random_decoy_flanks,
+    decoy_random_decopy_flanks,
+)
 
 def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
@@ -93,12 +99,22 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
+def generate_test_data(num_sequences: int, max_seq_length: int, layout_version: int, layouts_per_contig: int = 1):
     """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
+    utr5_start_layout = None
+    if layout_version == 1:
+        utr5_start_layout = utr5_start_random_decoy_flanks()
+    elif layout_version == 2:
+        utr5_start_layout = utr5_spacer_start_random_decoy_flanks() 
+    elif layout_version == 3:
+        utr5_start_layout = blind_utr5_spacer_start_random_decoy_flanks()
+    else:
+        assert False, "Unknown layout"
+
     layouts = [
-        utr5_start_random_decoy_flanks(),
+        utr5_start_layout,
         # add contig with just decoys and no UTRs, to assess FPs
         decoy_random_decopy_flanks()
     ]
@@ -902,6 +918,8 @@ def main():
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--mismatch-threshold', type=float, default=0.15,
                        help='Max mismatch rate (0..1) for parent assignment in breakdown TSV')
+    parser.add_argument('--layout-version', type=int, default=2,
+                       help='Contig layout version, 1=utr5-start, 2=utr5-spacer-start, 3=unmarked_utr5-spacer-start')
     
     args = parser.parse_args()
 
@@ -910,7 +928,6 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("🧬 START Prediction Analysis")
-    print("=" * 50)
     
     # Resolve checkpoint
     try:
@@ -934,7 +951,7 @@ def main():
             model_max_len = int(model.model.embedding.max_seq_length)
         except Exception:
             model_max_len = 1000
-    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len)
+    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len, args.layout_version)
     
     # Run predictions
     results = run_predictions(model, data_loader, args.device)
