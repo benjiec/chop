@@ -800,6 +800,62 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     _plot(output_dir / f"{base_name}_threshold_curves_avg.png", rows_avg, title=f"Threshold sweep (avg) for {base_name}")
     _plot(output_dir / f"{base_name}_threshold_curves_max.png", rows_max, title=f"Threshold sweep (max) for {base_name}")
 
+    # Distance-binned analysis (replaces parent-sequence breakdown)
+    def _compute_gap_bins(preds: List[Dict], results: List[Dict]):
+        # Map sequence indices to targets for quick lookup
+        target_map = {r['sequence_index']: r['targets'] for r in results}
+        # Default bins aligned to mask-style windows: 0–11, 12–49, 50–89, 90–139, 140–199
+        bins = [(0, 12), (12, 50), (50, 90), (90, 140), (140, 200)]
+        labels = ['0-11', '12-49', '50-89', '90-139', '140-199']
+        tp = {k: 0 for k in labels}
+        fn = {k: 0 for k in labels}
+        def _label_for(gap: int) -> str:
+            for (lo, hi), name in zip(bins, labels):
+                if lo <= gap < hi or (name == '140-199' and gap == 199) or (name == '0-11' and gap == 11):
+                    return name
+            return None
+        for p in preds:
+            cls = p.get('classification')
+            if cls not in ('TP', 'FN'):
+                continue
+            sid = p['sequence_index']
+            pos = int(p['atg_position'])
+            targets = target_map.get(sid)
+            if targets is None:
+                continue
+            # Find last UTR5 (class index 1) immediately upstream of ATG
+            last_idx = -1
+            for j in range(min(pos - 1, len(targets) - 1), -1, -1):
+                if int(targets[j]) == int(GenePredictionClass.UTR5):
+                    last_idx = j
+                    break
+            if last_idx == -1:
+                continue
+            gap = pos - (last_idx + 1)
+            name = _label_for(gap)
+            if name is None:
+                continue
+            if cls == 'TP':
+                tp[name] += 1
+            else:
+                fn[name] += 1
+        rows = []
+        for name in labels:
+            t = tp[name]
+            f = fn[name]
+            sens = (t / (t + f)) if (t + f) > 0 else 0.0
+            rows.append({'distance_bin': name, 'tp': t, 'fn': f, 'sensitivity': sens})
+        return rows
+
+    def _write_distance_bins_tsv(path: Path, rows: List[Dict]):
+        with path.open('w') as f:
+            f.write('distance_bin\ttp\tfn\tsensitivity\n')
+            for r in rows:
+                f.write(f"{r['distance_bin']}\t{r['tp']}\t{r['fn']}\t{r['sensitivity']:.4f}\n")
+
+    rows_bins = _compute_gap_bins(predictions, results_data)
+    _write_distance_bins_tsv(output_dir / f"{base_name}_distance_bins.tsv", rows_bins)
+
 def print_summary(predictions: List[Dict], metrics: Dict):
     """Print concise summary of position-level metrics only."""
     print(f"\n{'='*60}")
