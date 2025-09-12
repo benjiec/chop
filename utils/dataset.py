@@ -8,10 +8,7 @@ from typing import Tuple, List
 import sys
 from pathlib import Path
 
-from utils.sequences import (
-    KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES,
-    mutate_sequence
-)
+from utils.sequences import mutate_sequence
 from utils.constants import DNAEmbed, GenePredictionClass as P
 
 
@@ -163,12 +160,27 @@ class RandomChoiceGenerator(SequenceSegmentGeneratorBase):
 
 class RandomUTR5Generator(RandomChoiceGenerator):
 
+    def __init__(self, *args, **kwargs):
+        super(RandomUTR5Generator, self).__init__(*args, **kwargs)
+        self.mask_ending_atg = False
+
+    def mask_ending_atgs(self):
+        """
+        Don't allow mutation to end an UTR5 sequence with ATG
+        """
+        self.mask_ending_atg = True
+        return self
+
     def generate(self, _) -> Tuple[str, List[int]]:
         sequence, targets = super().generate(_)
         if sequence.upper().endswith("ATG"):
-            targets[-3] = P.START
-            targets[-2] = P.START
-            targets[-1] = P.START
+            if self.mask_ending_atg:
+                # Strings are immutable; rebuild to avoid ending with ATG
+                sequence = sequence[:-1] + 'T'
+            else:
+                targets[-3] = P.START
+                targets[-2] = P.START
+                targets[-1] = P.START
         return sequence, targets
 
 

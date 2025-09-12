@@ -41,7 +41,7 @@ def utr5_spacer_start_random_decoy_flanks():
     layout = [
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-        RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1),
+        RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.1).mask_ending_atgs(),
         RandomBasesGenerator(length=200, target=P.INTERGENIC, random_min_length=0, avoid="ATG"),
         AddATGGenerator(),
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
@@ -56,7 +56,7 @@ def blind_utr5_spacer_start_random_decoy_flanks():
     layout = [
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
-        RandomUTR5Generator(choices=utr_choices, target=P.INTERGENIC, mutation_prob=0.1),
+        RandomUTR5Generator(choices=utr_choices, target=P.INTERGENIC, mutation_prob=0.1).mask_ending_atgs(),
         RandomBasesGenerator(length=200, target=P.INTERGENIC, random_min_length=0, avoid="ATG"),
         AddATGGenerator(),
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4, avoid="ATG"),
@@ -117,6 +117,8 @@ def generate_dataset(num_sequences: int, max_seq_length: int, layout_version: in
                     real_start_atgs += 1
         
         print(f"contig {contig_idx}: {real_start_atgs} real START ATGs ({real_start_coords}), {utr5_positions} UTR5 positions, {total_atgs} total ATGs, {len(full_sequence)} bps")
+        if real_start_atgs > 1:
+            print(full_targets)
         assert real_start_atgs == layouts_per_contig or real_start_atgs == 0
 
     return dataset

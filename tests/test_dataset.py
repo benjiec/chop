@@ -50,6 +50,17 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
         self.assertEqual(seq[-3:], "ATG")
         self.assertEqual(tgt[-3:], [P.START, P.START, P.START])
 
+    def test_random_utr5_masks_ending_atg_when_enabled(self):
+        # Ensure that when mask_ending_atgs is enabled, an ending ATG is prevented
+        gen = RandomUTR5Generator(choices=["CCCCTGATG"], target=P.UTR5, mutation_prob=0)
+        # Enable masking of ending ATG
+        gen.mask_ending_atgs()
+        seq, tgt = gen.generate(None)
+        # Should not end with ATG anymore
+        self.assertNotEqual(seq[-3:], "ATG")
+        # Last three targets should remain UTR5 (not START)
+        self.assertEqual(tgt[-3:], [P.UTR5, P.UTR5, P.UTR5])
+
     def test_add_atg_generator(self):
         g = AddATGGenerator()
         # When last ends with ATG, no addition
