@@ -258,7 +258,8 @@ class GenePredictorModel(nn.Module):
                  n_heads: int = 6,
                  dropout: float = 0.1, 
                  attention_masks: Optional[Dict[int, int]] = None,
-                 kmer_size: int = 0):
+                 kmer_size: int = 0,
+                 class_conditional_readouts: Optional[Dict[str, Any]] = None):
 
         super().__init__()
 
@@ -270,6 +271,7 @@ class GenePredictorModel(nn.Module):
         self.attention_masks = attention_masks or {}
         self.n_heads = n_heads
         self.max_seq_length = max_seq_length
+        self.class_conditional_readouts = class_conditional_readouts or {'enabled': False}
         
         # DNA embedding
         self.embedding = DNAEmbedding(vocab_size=vocab_size, d_model=d_model, max_seq_length=max_seq_length, kmer_size=kmer_size)
@@ -291,6 +293,36 @@ class GenePredictorModel(nn.Module):
         
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
+
+        # Optional generic class-conditional readouts
+        self.use_cc_readouts: bool = bool(self.class_conditional_readouts.get('enabled', False))
+        self.cc_entries: List[Dict[str, Any]] = []
+        if self.use_cc_readouts:
+            entries = self.class_conditional_readouts.get('entries')
+            # Backward-compat: if legacy START/STOP keys provided, synthesize entries
+            if not entries:
+                entries = []
+                if 'start_before' in self.class_conditional_readouts or 'start_after' in self.class_conditional_readouts:
+                    entries.append({'class': 'START', 'before': int(self.class_conditional_readouts.get('start_before', 200)), 'after': int(self.class_conditional_readouts.get('start_after', 0))})
+                if 'stop_before' in self.class_conditional_readouts or 'stop_after' in self.class_conditional_readouts:
+                    entries.append({'class': 'STOP', 'before': int(self.class_conditional_readouts.get('stop_before', 0)), 'after': int(self.class_conditional_readouts.get('stop_after', 200))})
+            # Build modules per entry
+            self.cc_q = nn.ModuleList()
+            self.cc_k = nn.ModuleList()
+            self.cc_v = nn.ModuleList()
+            self.cc_proj = nn.ModuleList()
+            for e in entries or []:
+                self.cc_q.append(nn.Linear(d_model, d_model))
+                self.cc_k.append(nn.Linear(d_model, d_model))
+                self.cc_v.append(nn.Linear(d_model, d_model))
+                self.cc_proj.append(nn.Linear(2 * d_model, 1))
+                # Store params per entry
+                self.cc_entries.append({
+                    'class': e.get('class'),
+                    'before': int(e.get('before', 0)),
+                    'after': int(e.get('after', 0)),
+                    'gap': int(e.get('gap', 0)),
+                })
         
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         # Embed DNA sequence
@@ -308,8 +340,72 @@ class GenePredictorModel(nn.Module):
         # Apply dropout
         x = self.dropout(x)
         
-        # Classify each position
+        # Classify each position (base logits)
         logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
+
+        # If enabled, compute class-conditional readout logits and add to respective class columns
+        if self.use_cc_readouts and self.cc_entries:
+            B, L, D = x.shape
+            scale = math.sqrt(D)
+
+            # Helper: build relative donut/asymmetric mask [L, L]
+            def build_rel_mask(before: int, gap: int, after: int) -> torch.Tensor:
+                m = torch.zeros(L, L, dtype=torch.bool, device=x.device)
+                for i in range(L):
+                    # upstream
+                    if before > 0:
+                        s1 = max(0, i - before)
+                        e1 = max(0, i - max(0, gap))
+                        if e1 > s1:
+                            m[i, s1:e1] = True
+                    # downstream
+                    if after > 0:
+                        s2 = min(L, i + max(1, gap))
+                        e2 = min(L, i + after + 1)
+                        if e2 > s2:
+                            m[i, s2:e2] = True
+                    # pure local (no before/after)
+                    if before == 0 and after == 0:
+                        m[i, i] = True
+                return m
+
+            # Resolve class indices map if provided via config
+            name_to_idx = {}
+            try:
+                # Prefer config class_names if present
+                # self.class_names is available only in LightningModule, not here. So use constants if available.
+                from utils.constants import GenePredictionClass as P
+                name_to_idx = {v: k for k, v in P.idx_to_cls.items()}
+            except Exception:
+                name_to_idx = {}
+
+            for idx, entry in enumerate(self.cc_entries):
+                cls_spec = entry.get('class')
+                if isinstance(cls_spec, str):
+                    cls_idx = name_to_idx.get(cls_spec.upper(), None)
+                else:
+                    try:
+                        cls_idx = int(cls_spec)
+                    except Exception:
+                        cls_idx = None
+                if cls_idx is None or cls_idx >= logits.size(-1):
+                    continue
+                before = int(entry.get('before', 0))
+                after = int(entry.get('after', 0))
+                gap = int(entry.get('gap', 0))
+                mask = build_rel_mask(before, gap, after)
+
+                q = self.cc_q[idx](x)
+                k = self.cc_k[idx](x)
+                v = self.cc_v[idx](x)
+                scores = torch.matmul(q, k.transpose(1, 2)) / scale
+                scores = scores.masked_fill(~mask.unsqueeze(0), float('-inf'))
+                attn = F.softmax(scores, dim=-1)
+                # Replace NaNs (can happen if mask row has no allowed positions)
+                attn = torch.where(torch.isnan(attn), torch.zeros_like(attn), attn)
+                c = torch.matmul(attn, v)
+                logit_delta = self.cc_proj[idx](torch.cat([x, c], dim=-1)).squeeze(-1)  # (B,L)
+                logits[..., cls_idx] = logits[..., cls_idx] + logit_delta
         
         if return_attention:
             return logits, layer_attention_weights
@@ -339,7 +435,8 @@ class GenePredictorModule(pl.LightningModule):
             n_heads=model_config['n_heads'],
             dropout=model_config['dropout'],
             attention_masks=model_config.get('attention_masks'),
-            kmer_size=model_config.get('kmer_size', 0)
+            kmer_size=model_config.get('kmer_size', 0),
+            class_conditional_readouts=model_config.get('class_conditional_readouts')
         )
 
         # Loss function configuration
