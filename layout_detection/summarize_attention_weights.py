@@ -13,7 +13,83 @@ import json
 import numpy as np
 from pathlib import Path
 import argparse
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, Tuple
+from pathlib import Path
+
+def _select_checkpoint(run_dir: Path) -> Optional[Path]:
+    ckpt_dir = run_dir / 'checkpoints'
+    if not ckpt_dir.exists():
+        return None
+    best = ckpt_dir / 'best.ckpt'
+    if best.exists():
+        return best
+    # try lowest val encoded at end
+    candidates = list(ckpt_dir.glob('*.ckpt'))
+    best_path = None
+    best_val = None
+    import re
+    for p in candidates:
+        m = re.search(r'([0-9]+(?:\.[0-9]+)?)\.ckpt$', p.name)
+        if not m:
+            continue
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        if best_val is None or v < best_val:
+            best_val = v
+            best_path = p
+    if best_path is not None:
+        return best_path
+    last = ckpt_dir / 'last.ckpt'
+    return last if last.exists() else None
+
+def _load_attention_masks_from_ckpt(run_dir: Path) -> Dict[int, Any]:
+    """Load per-head attention mask config from checkpoint hyperparameters, if present."""
+    try:
+        ckpt = _select_checkpoint(run_dir)
+        if ckpt is None:
+            return {}
+        import torch
+        data = torch.load(ckpt, map_location='cpu')
+        for hp_key in ('hyper_parameters', 'hparams'):
+            if hp_key in data:
+                hp = data[hp_key]
+                cfg = hp.get('config', hp) if isinstance(hp, dict) else None
+                if isinstance(cfg, dict):
+                    model_cfg = cfg.get('model', {})
+                    am = model_cfg.get('attention_masks', {})
+                    if isinstance(am, dict):
+                        # keys may be strings
+                        masks: Dict[int, Any] = {}
+                        for k, v in am.items():
+                            try:
+                                ki = int(k)
+                            except Exception:
+                                continue
+                            masks[ki] = tuple(v) if isinstance(v, list) else v
+                        return masks
+        return {}
+    except Exception:
+        return {}
+
+def _mask_windows(mask_cfg: Any) -> Dict[str, Optional[Tuple[int, int]]]:
+    """Map a head's mask config to upstream/local/downstream relative windows (inclusive, relative to query pos)."""
+    if isinstance(mask_cfg, int):
+        w = int(mask_cfg)
+        return { 'upstream': None, 'local': (-w, w), 'downstream': None }
+    if isinstance(mask_cfg, tuple) and len(mask_cfg) == 2:
+        before, after = int(mask_cfg[0]), int(mask_cfg[1])
+        up = (-before, 0) if before > 0 else None
+        dn = (0, after) if after > 0 else None
+        return { 'upstream': up, 'local': None, 'downstream': dn }
+    if isinstance(mask_cfg, tuple) and len(mask_cfg) == 3:
+        before, gap, after = int(mask_cfg[0]), int(mask_cfg[1]), int(mask_cfg[2])
+        up = (-before, -(max(0, gap) + 1)) if before > 0 else None
+        dn_start = max(1, gap)
+        dn = (dn_start, after) if after > 0 and after >= dn_start else None
+        return { 'upstream': up, 'local': None, 'downstream': dn }
+    return { 'upstream': None, 'local': None, 'downstream': None }
 
 def load_training_data(base_dir: Path):
     """Load training dynamics and final attention data."""
@@ -381,13 +457,16 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
     
     import csv
     
-    # Get global ranges
+    # Get global ranges and per-head masks (if available)
     global_ranges = None
     if attention_data and 'global_ranges' in attention_data:
         global_ranges = attention_data['global_ranges']
         local_boundary = global_ranges['local_boundary']
     else:
         local_boundary = 10
+    # Attempt to load mask config from the run dir inferred from output_path
+    run_dir = output_path.parent
+    attention_masks = _load_attention_masks_from_ckpt(run_dir)
     
     rows = []
     
@@ -422,16 +501,15 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                             local_focus = float(head_data['avg_local_focus'])
                             downstream_focus = float(head_data['avg_downstream_focus'])
                             
-                            # Add ranges based on attention focus (estimated for training epochs)
+                            # Add ranges using per-head mask windows when available; fallback to dynamic boundaries
                             range_idx = 0  # Range index counter for this head
                             
-                            if upstream_focus > 0.0001:
-                                if global_ranges:
-                                    start_pos = global_ranges['upstream_extent'][0]
-                                    end_pos = global_ranges['upstream_extent'][1]
+                            mw = _mask_windows(attention_masks.get(head_idx)) if attention_masks else {'upstream': None, 'local': None, 'downstream': None}
+                            if upstream_focus > 0.0001 and mw['upstream'] is not None:
+                                if mw['upstream'] is not None:
+                                    start_pos, end_pos = mw['upstream']
                                 else:
-                                    start_pos = -50
-                                    end_pos = -local_boundary
+                                    pass
                                 
                                 rows.append({
                                     'epoch': epoch,
@@ -444,25 +522,27 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                 })
                                 range_idx += 1
                             
-                            if local_focus > 0.0001:
+                            if local_focus > 0.0001 and mw['local'] is not None:
+                                if mw['local'] is not None:
+                                    ls, le = mw['local']
+                                else:
+                                    ls, le = -local_boundary, local_boundary
                                 rows.append({
                                     'epoch': epoch,
                                     'layer': layer_idx,
                                     'head': head_idx,
                                     'range_index': range_idx,
-                                    'range_start': -local_boundary,
-                                    'range_end': local_boundary,
+                                    'range_start': ls,
+                                    'range_end': le,
                                     'average_attention_weight': local_focus
                                 })
                                 range_idx += 1
                             
-                            if downstream_focus > 0.0001:
-                                if global_ranges:
-                                    start_pos = global_ranges['downstream_extent'][0]
-                                    end_pos = global_ranges['downstream_extent'][1]
+                            if downstream_focus > 0.0001 and mw['downstream'] is not None:
+                                if mw['downstream'] is not None:
+                                    start_pos, end_pos = mw['downstream']
                                 else:
-                                    start_pos = local_boundary
-                                    end_pos = 50
+                                    pass
                                 
                                 rows.append({
                                     'epoch': epoch,
@@ -513,8 +593,9 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                             # Range index counter for this head
                             range_idx = 0
                             
-                            # Cluster upstream positions
-                            if upstream_positions and upstream_score > 0.0001:
+                            # Cluster upstream positions (only if mask allows upstream)
+                            mw = _mask_windows(attention_masks.get(head_idx)) if attention_masks else {'upstream': None, 'local': None, 'downstream': None}
+                            if mw.get('upstream') is not None and upstream_positions and upstream_score > 0.0001:
                                 upstream_clusters = cluster_positions(upstream_positions)
                                 if not upstream_clusters:  # If no clusters, use full range
                                     upstream_clusters = [(min(upstream_positions), max(upstream_positions))]
@@ -531,21 +612,22 @@ def extract_attention_ranges_to_tsv(dynamics_data, attention_data, output_path: 
                                     })
                                     range_idx += 1
                             
-                            # Local range (always one range)
-                            if local_score > 0.0001:
+                            # Local range (use mask if present)
+                            if mw.get('local') is not None and local_score > 0.0001:
+                                ls, le = (mw['local'] if mw.get('local') is not None else (-local_boundary, local_boundary))
                                 rows.append({
                                     'epoch': 'final',
                                     'layer': layer_idx,
                                     'head': head_idx,
                                     'range_index': range_idx,
-                                    'range_start': -local_boundary,
-                                    'range_end': local_boundary,
+                                    'range_start': ls,
+                                    'range_end': le,
                                     'average_attention_weight': local_score
                                 })
                                 range_idx += 1
                             
-                            # Cluster downstream positions
-                            if downstream_positions and downstream_score > 0.0001:
+                            # Cluster downstream positions (only if mask allows downstream)
+                            if mw.get('downstream') is not None and downstream_positions and downstream_score > 0.0001:
                                 downstream_clusters = cluster_positions(downstream_positions)
                                 if not downstream_clusters:  # If no clusters, use full range
                                     downstream_clusters = [(min(downstream_positions), max(downstream_positions))]

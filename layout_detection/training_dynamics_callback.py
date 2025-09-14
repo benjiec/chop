@@ -44,6 +44,8 @@ class TrainingDynamicsCallback(pl.Callback):
         
         # Dynamic layer count (will be set when first model is analyzed)
         self.num_layers = None
+        # Cache per-head mask config if available from the Lightning module config
+        self.attention_masks = None
         
     def on_validation_epoch_end(self, trainer, pl_module):
         """Analyze model state at the end of each validation epoch."""
@@ -73,6 +75,11 @@ class TrainingDynamicsCallback(pl.Callback):
         if self.num_layers is None:
             self.num_layers = len(model.model.transformer_layers)
             print(f"    Detected {self.num_layers} layers in model")
+            # Try to read masks from module config
+            try:
+                self.attention_masks = model.config.get('model', {}).get('attention_masks', {})
+            except Exception:
+                self.attention_masks = {}
         
         # Collect data from a few validation samples
         attention_summaries = []
@@ -126,10 +133,35 @@ class TrainingDynamicsCallback(pl.Callback):
                                             for head_idx in range(num_heads):
                                                 head_attention = layer_attention[i, head_idx, pos, :].cpu().numpy()
                                                 
-                                                # Calculate attention focus regions for this head
-                                                upstream_attn = head_attention[max(0, pos-100):pos].mean() if pos >= 100 else head_attention[:pos].mean()
-                                                downstream_attn = head_attention[pos+3:pos+53].mean() if pos+53 < len(head_attention) else head_attention[pos+3:].mean()
-                                                local_attn = head_attention[max(0, pos-5):pos+8].mean()
+                                                # Calculate attention focus with mask-aware windows when available
+                                                mask_cfg = None
+                                                if isinstance(self.attention_masks, dict) and head_idx in self.attention_masks:
+                                                    mask_cfg = self.attention_masks[head_idx]
+                                                def _window_from_mask(cfg):
+                                                    if cfg is None:
+                                                        return {'up':(-100, -1), 'loc':(-5, 8), 'dn':(3, 53)}
+                                                    if isinstance(cfg, int):
+                                                        w = int(cfg)
+                                                        return {'up':(-100, -1), 'loc':(-w, w+1), 'dn':(3, 53)}
+                                                    if isinstance(cfg, tuple) and len(cfg)==2:
+                                                        before, after = int(cfg[0]), int(cfg[1])
+                                                        up = (-before, 0) if before>0 else None
+                                                        dn = (3, 3+after) if after>0 else None
+                                                        return {'up': up or (-100,-1), 'loc':(0,1), 'dn': dn or (3,53)}
+                                                    if isinstance(cfg, tuple) and len(cfg)==3:
+                                                        before, gap, after = int(cfg[0]), int(cfg[1]), int(cfg[2])
+                                                        up = (-before, -(max(0,gap))) if before>0 else None
+                                                        dn_start = max(3, gap+3)
+                                                        dn = (dn_start, dn_start+after) if after>0 and after>=gap else None
+                                                        return {'up': up or (-100,-1), 'loc':(0,1), 'dn': dn or (3,53)}
+                                                    return {'up':(-100,-1), 'loc':(-5,8), 'dn':(3,53)}
+                                                w = _window_from_mask(mask_cfg)
+                                                us, ue = w['up']
+                                                ds, de = w['dn']
+                                                ls, le = w['loc']
+                                                upstream_attn = head_attention[max(0, pos+us):max(0, pos+ue)].mean() if pos+ue > 0 else head_attention[:pos].mean()
+                                                downstream_attn = head_attention[min(len(head_attention), pos+ds):min(len(head_attention), pos+de)].mean() if pos+ds < len(head_attention) else 0.0
+                                                local_attn = head_attention[max(0, pos+ls):min(len(head_attention), pos+le)].mean()
                                                 
                                                 layer_head_summary[f'head_{head_idx}'] = {
                                                     'upstream_focus': float(upstream_attn),
