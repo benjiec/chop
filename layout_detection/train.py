@@ -94,7 +94,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
-    dataset = generate_dataset(num_contigs, max_seq_length, 2, layouts_per_contig)
+    dataset = generate_dataset(num_contigs, max_seq_length, 3, layouts_per_contig)
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

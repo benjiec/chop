@@ -926,7 +926,7 @@ def main():
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--mismatch-threshold', type=float, default=0.15,
                        help='Max mismatch rate (0..1) for parent assignment in breakdown TSV')
-    parser.add_argument('--layout-version', type=int, default=2,
+    parser.add_argument('--layout-version', type=int, default=3,
                        help='Contig layout version, 1=utr5-start, 2=utr5-spacer-start, 3=unmarked_utr5-spacer-start')
     
     args = parser.parse_args()
