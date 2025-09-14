@@ -299,13 +299,9 @@ class GenePredictorModel(nn.Module):
         self.cc_entries: List[Dict[str, Any]] = []
         if self.use_cc_readouts:
             entries = self.class_conditional_readouts.get('entries')
-            # Backward-compat: if legacy START/STOP keys provided, synthesize entries
-            if not entries:
+            # Require explicit entries; if missing or empty, no readouts are created
+            if not isinstance(entries, list):
                 entries = []
-                if 'start_before' in self.class_conditional_readouts or 'start_after' in self.class_conditional_readouts:
-                    entries.append({'class': 'START', 'before': int(self.class_conditional_readouts.get('start_before', 200)), 'after': int(self.class_conditional_readouts.get('start_after', 0))})
-                if 'stop_before' in self.class_conditional_readouts or 'stop_after' in self.class_conditional_readouts:
-                    entries.append({'class': 'STOP', 'before': int(self.class_conditional_readouts.get('stop_before', 0)), 'after': int(self.class_conditional_readouts.get('stop_after', 200))})
             # Build modules per entry
             self.cc_q = nn.ModuleList()
             self.cc_k = nn.ModuleList()
