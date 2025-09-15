@@ -120,7 +120,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         config,
         output_dir,
         mk_training_dynamic_cb,
-        monitor_metric='val_event_sensitivity',
+        monitor_metric='val_event_ss',
         monitor_mode='max',
     )
 

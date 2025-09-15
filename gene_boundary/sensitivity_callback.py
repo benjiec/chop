@@ -9,9 +9,9 @@ class BoundarySensitivityCallback(pl.Callback):
     """Compute triplet-aware START and STOP sensitivity on the validation loader.
 
     Logs per-epoch metrics:
-      - val_start_sensitivity_atg
-      - val_stop_sensitivity_taa_tag_tga
-      - val_event_sensitivity (mean of START/STOP sensitivities)
+      - val_start_ss
+      - val_stop_ss
+      - val_event_ss (mean of START/STOP sensitivities)
     """
 
     def __init__(self, val_loader):
