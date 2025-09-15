@@ -20,7 +20,7 @@ def decoy_random_decopy_flanks():
 
 
 def blind_kozak_start_random_decoy_flanks():
-    background_len = 450
+    background_len = 400
     utr_choices = KOZAK_SEQUENCES
     layout = [
         RandomBasesGenerator(length=background_len // 2, target=P.INTERGENIC, random_min_length=background_len // 4),
