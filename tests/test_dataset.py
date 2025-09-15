@@ -10,6 +10,7 @@ from utils.dataset import (
     RandomChoiceGenerator,
     RandomUTR5Generator,
     AddATGGenerator,
+    AddStopGenerator,
 )
 from utils.constants import GenePredictionClass as P
 
@@ -170,6 +171,25 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
             self.assertNotIn("ATG", seq)
             self.assertEqual(len(seq), len(tgt))
 
+    def test_decoy_list_selection_and_avoid_list(self):
+        # Decoys provided as list; ensure any chosen decoy can appear
+        gen_decoy_list = RandomBasesGenerator(length=200, target=P.INTERGENIC, decoy=["AAA", "TTTT", "GG"], max_decoy=5)
+        seen_any = False
+        for _ in range(25):
+            seq, _ = gen_decoy_list.generate(None)
+            if any(d in seq for d in ("AAA", "TTTT", "GG")):
+                seen_any = True
+                break
+        self.assertTrue(seen_any, "Expected at least one chosen decoy from list to appear")
+
+        # Avoid provided as list; ensure none of the motifs appear
+        gen_avoid_list = RandomBasesGenerator(length=5000, target=P.INTERGENIC, avoid=["ATG", "TAG", "TGA"])
+        for _ in range(10):
+            seq, _ = gen_avoid_list.generate(None)
+            self.assertNotIn("ATG", seq)
+            self.assertNotIn("TAG", seq)
+            self.assertNotIn("TGA", seq)
+
     def test_assertion_on_max_sequence_violation(self):
         # Force violation by setting max length too small for layout
         layouts = [
@@ -184,6 +204,15 @@ class TestGenomicSyntheticDataset(unittest.TestCase):
                 layouts_per_contig=1,
                 layouts=layouts,
             )
+
+
+class TestAddStopGenerator(unittest.TestCase):
+    def test_add_stop_generator_emits_valid_stop_and_targets(self):
+        gen = AddStopGenerator()
+        seq, targets = gen.generate(last_segment_sequence="ACGT")
+        self.assertIn(seq, ("TAA", "TAG", "TGA"))
+        self.assertEqual(len(seq), 3)
+        self.assertEqual(targets, [P.STOP, P.STOP, P.STOP])
 
 
 if __name__ == '__main__':

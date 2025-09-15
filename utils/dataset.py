@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from utils.sequences import mutate_sequence
-from utils.constants import DNAEmbed, GenePredictionClass as P
+from utils.constants import DNAEmbed, GenePredictionClass as P, ConventionalStopCodons
 
 
 class SequenceSegmentGeneratorBase(object):
@@ -126,20 +126,46 @@ class RandomBasesGenerator(SequenceSegmentGeneratorBase):
         sequence = [random.choice(bases) for _ in range(length)]
 
         if self.max_decoy:
-            assert self.decoy and len(self.decoy)
+            # Support decoy as str or list/tuple/set of str
+            assert self.decoy is not None
+            decoy_choices: List[str]
+            if isinstance(self.decoy, (list, tuple, set)):
+                decoy_choices = [d for d in self.decoy if isinstance(d, str) and len(d) > 0]
+            else:
+                decoy_choices = [self.decoy]
+            assert len(decoy_choices) > 0
+
             min_decoy = 1
             max_decoy = max(1, self.max_decoy)
             num_decoys = random.randint(min_decoy, max_decoy)
 
             for _ in range(num_decoys):
-                pos = random.randint(0, length - len(self.decoy))
-                for j in range(0, len(self.decoy)):
-                    sequence[pos+j] = self.decoy[j]
+                chosen = random.choice(decoy_choices)
+                if not chosen:
+                    continue
+                span = len(chosen)
+                if span > length:
+                    continue
+                pos = random.randint(0, length - span)
+                for j in range(0, span):
+                    sequence[pos + j] = chosen[j]
 
         sequence = "".join(sequence)
         if self.avoid:
-            while self.avoid in sequence:
-                sequence = sequence.replace(self.avoid, "")
+            # Support avoid as str or list/tuple/set of str
+            avoid_list: List[str]
+            if isinstance(self.avoid, (list, tuple, set)):
+                avoid_list = [m for m in self.avoid if isinstance(m, str) and len(m) > 0]
+            else:
+                avoid_list = [self.avoid]
+            # Iteratively remove until no avoid motif remains, accounting for overlaps
+            changed = True
+            while changed:
+                changed = False
+                for motif in avoid_list:
+                    if motif and motif in sequence:
+                        sequence = sequence.replace(motif, "")
+                        changed = True
 
         return sequence, [self.target] * len(sequence)
  
@@ -192,3 +218,10 @@ class AddATGGenerator(SequenceSegmentGeneratorBase):
             return "", []
         else:
             return "ATG", [P.START] * 3
+
+
+class AddStopGenerator(SequenceSegmentGeneratorBase):
+
+    def generate(self, last_segment_sequence) -> Tuple[str, List[int]]:
+        stop = random.choice(tuple(ConventionalStopCodons))
+        return stop, [P.STOP] * len(stop)

@@ -11,10 +11,10 @@ from datetime import datetime
 import hashlib
 import re
 
-from utils.constants import DNAEmbed, GenePredictionClass
+from utils.constants import DNAEmbed, GenePredictionClass, ConventionalStopCodons as stop_codons
 from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
-from layout_detection.layouts import generate_dataset
+from gene_boundary.layouts import generate_dataset
 
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -77,11 +77,11 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int, max_seq_length: int, layout_version: int, layouts_per_contig: int = 1):
+def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
     """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
-    dataset = generate_dataset(num_sequences, max_seq_length, layout_version, layouts_per_contig=layouts_per_contig)
+    dataset = generate_dataset(num_sequences, max_seq_length, layouts_per_contig=layouts_per_contig, add_negatives=True)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
@@ -188,7 +188,6 @@ def _calculate_metrics_for_triplets(all_predictions, codons: set, class_idx: int
 
 def calculate_start_stop_metrics(all_predictions):
     start_codons = {'ATG'}
-    stop_codons = {'TAA', 'TAG', 'TGA'}
     start_metrics = _calculate_metrics_for_triplets(all_predictions, start_codons, GenePredictionClass.START)
     stop_metrics = _calculate_metrics_for_triplets(all_predictions, stop_codons, GenePredictionClass.STOP)
     return start_metrics, stop_metrics
@@ -285,7 +284,6 @@ def analyze_all_predictions(results_data):
                 all_predictions.append(prediction_data)
 
         # Analyze STOP sites (TAA/TAG/TGA)
-        stop_codons = {'TAA', 'TAG', 'TGA'}
         seen_positions_stop = set()
         for pos in range(len(sequence) - 2):
             triplet = sequence[pos:pos+3]
@@ -363,7 +361,6 @@ def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
         target_map[seq_idx] = result['targets']
 
     seen = set()
-    stop_codons = {'TAA', 'TAG', 'TGA'}
     for p in predictions:
         seq_idx = p['sequence_index']
         pos = p['atg_position']
@@ -702,9 +699,6 @@ def main():
                        help='Number of test sequences to generate')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
-    # Removed: mismatch threshold (no breakdown TSV)
-    parser.add_argument('--layout-version', type=int, default=3,
-                       help='Contig layout version, 1=utr5-start, 2=utr5-spacer-start, 3=unmarked_utr5-spacer-start')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
     
@@ -738,7 +732,7 @@ def main():
             model_max_len = int(model.model.embedding.max_seq_length)
         except Exception:
             model_max_len = 1000
-    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len, args.layout_version)
+    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len)
     
     # Run predictions (with attention if requested)
     results = run_predictions(model, data_loader, args.device, return_attention=True)

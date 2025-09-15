@@ -16,7 +16,7 @@ from gene_predictor.model import GenePredictorModule, create_base_config
 from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
 from gene_boundary.sensitivity_callback import BoundarySensitivityCallback
-from layout_detection.layouts import generate_dataset
+from gene_boundary.layouts import generate_dataset
 
 
 def create_boundary_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
@@ -31,7 +31,7 @@ def create_boundary_config(d_model: int = 504, n_layers: int = 3, n_heads: int =
     # START/STOP codons are rare and important, UTR5 regions provide context
     if use_class_weights:
         # Order must match GenePredictionClass indices
-        # [INTERGENIC, UTR5, START, GENE_BODY, STOP, UTR3]
+        # [INTERGENIC, UTR5, START, GENE, STOP, UTR3]
         class_weights = [1.0, utr_weight, start_weight, 1.0, stop_weight, 1.0]
     else:
         class_weights = None
@@ -73,7 +73,7 @@ def train_boundaries(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
-    dataset = generate_dataset(num_contigs, max_seq_length, 3, layouts_per_contig)
+    dataset = generate_dataset(num_contigs, max_seq_length, layouts_per_contig)
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -108,7 +108,7 @@ def train_boundaries(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
 def main():
     parser = argparse.ArgumentParser(description="Train START/STOP boundary detection")
     parser.add_argument('--d-model', type=int, default=504, help='Model dimension')
-    parser.add_argument('--layers', type=int, default=3, help='Number of transformer layers')
+    parser.add_argument('--layers', type=int, default=4, help='Number of transformer layers')
     parser.add_argument('--heads', type=int, default=6, help='Number of attention heads')
     parser.add_argument('--contigs', type=int, default=1000, help='Number of contigs')
     parser.add_argument('--layouts', type=int, default=1, help='Layouts per contig')

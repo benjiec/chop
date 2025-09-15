@@ -2,7 +2,7 @@
 
 import pytorch_lightning as pl
 import torch
-from utils.constants import GenePredictionClass as P, DNAEmbed
+from utils.constants import GenePredictionClass as P, DNAEmbed, ConventionalStopCodons as stop_codons
 
 
 class BoundarySensitivityCallback(pl.Callback):
@@ -29,7 +29,6 @@ class BoundarySensitivityCallback(pl.Callback):
         stop_fn = 0
 
         idx_to_nucleotide = DNAEmbed.idx_to_bp
-        stop_codons = {"TAA", "TAG", "TGA"}
 
         for sequences, targets in self.val_loader:
             sequences = sequences.to(device)
