@@ -454,8 +454,8 @@ class GenePredictorModule(pl.LightningModule):
         # Save hyperparameters for logging
         self.save_hyperparameters(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
+    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
+        return self.model(x, return_attention=return_attention)
     
     def _calculate_metrics(self, logits: torch.Tensor, targets: torch.Tensor) -> Dict[str, float]:
         """Calculate accuracy metrics for each class."""

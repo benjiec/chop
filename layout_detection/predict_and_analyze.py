@@ -26,10 +26,9 @@ sys.path.append(str(project_root))
 sys.path.append(str(project_root / "layout_detection"))
 
 from utils.constants import DNAEmbed, GenePredictionClass
-from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
+# Removed: parent-sequence catalogs (KOZAK/UTR5/IRES) no longer used
 from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 from layout_detection.layouts import generate_dataset
 
 
@@ -102,8 +101,8 @@ def generate_test_data(num_sequences: int, max_seq_length: int, layout_version: 
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
 
-def run_predictions(model, data_loader, device='cpu'):
-    """Run predictions on test data."""
+def run_predictions(model, data_loader, device='cpu', return_attention: bool = False):
+    """Run predictions on test data. Optionally return encoder attention per layer."""
     
     print("Running predictions on test data...")
     
@@ -115,14 +114,19 @@ def run_predictions(model, data_loader, device='cpu'):
             targets = targets.to(device)
             
             # Run model
-            outputs = model(sequences)
+            outputs = model(sequences, return_attention=return_attention)
             
             # Handle both dictionary and tensor outputs
             if isinstance(outputs, dict):
                 gene_boundaries = outputs['gene_boundaries']
+                layer_attn = outputs.get('attentions') if 'attentions' in outputs else None
             else:
-                # Model returns tensor directly
-                gene_boundaries = outputs
+                # Model returns tensor or (logits, attentions)
+                if return_attention and isinstance(outputs, tuple) and len(outputs) == 2:
+                    gene_boundaries, layer_attn = outputs
+                else:
+                    gene_boundaries = outputs
+                    layer_attn = None
             
             predictions = torch.argmax(gene_boundaries, dim=-1)
             probabilities = torch.softmax(gene_boundaries, dim=-1)
@@ -133,13 +137,24 @@ def run_predictions(model, data_loader, device='cpu'):
             pred_np = predictions[0].cpu().numpy()
             prob_np = probabilities[0].cpu().numpy()
             
-            all_results.append({
+            result_entry = {
                 'sequence_index': batch_idx,
                 'sequence_tokens': seq_np,
                 'targets': target_np,
                 'predictions': pred_np,
                 'probabilities': prob_np
-            })
+            }
+            if return_attention and layer_attn is not None:
+                # Convert attention dict to per-layer numpy arrays for this sequence
+                attn_dict = {}
+                for layer_name, attn_tensor in layer_attn.items():
+                    if attn_tensor is None:
+                        continue
+                    # attn_tensor: (batch, heads, L, L)
+                    attn_dict[layer_name] = attn_tensor[0].cpu().numpy()
+                result_entry['attentions'] = attn_dict
+
+            all_results.append(result_entry)
             
             if (batch_idx + 1) % 10 == 0:
                 print(f"  Processed {batch_idx + 1} sequences...")
@@ -543,162 +558,46 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
     print(f"✓ Visual analysis saved to: {output_path}")
 
 
-# -----------------------------
-# Breakdown (integrated)
-# -----------------------------
+def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
+    """Dump top-k attended sequence fragments around predicted START sites to FASTA.
 
-def _build_parent_catalog() -> List[Dict]:
-    catalog: List[Dict] = []
-    for cat, seqs in (
-        ('KOZAK', KOZAK_SEQUENCES),
-        ('UTR5', UTR5_REAL_SEQUENCES),
-        ('IRES', IRES_SEQUENCES),
-    ):
-        for idx, parent in enumerate(seqs):
-            parent_up = parent[:-3] if parent.endswith('ATG') else parent
-            catalog.append({
-                'category': cat,
-                'parent_index': idx,
-                'parent_sequence': parent,
-                'parent_upstream': parent_up,
-                'parent_len': len(parent),
-            })
-    return catalog
-
-
-def _hamming_distance(a: str, b: str) -> int:
-    assert len(a) == len(b)
-    return sum(1 for x, y in zip(a, b) if x != y)
-
-
-def _match_upstream_to_parent(upstream_200: str, catalog: List[Dict]) -> Tuple[Optional[Dict], float, int]:
-    best = None
-    best_rate = 1.0
-    best_len = 0
-    for entry in catalog:
-        parent_up = entry['parent_upstream']
-        if not parent_up:
-            continue
-        L = min(len(parent_up), len(upstream_200), 200)
-        if L == 0:
-            continue
-        a = upstream_200[-L:]
-        b = parent_up[-L:]
-        dist = _hamming_distance(a, b)
-        rate = dist / L
-        if rate < best_rate or (rate == best_rate and L > best_len):
-            best = entry
-            best_rate = rate
-            best_len = L
-    return best, best_rate, best_len
+    - For each predicted START (classification=='TP' or 'FP'), for each layer/head, pick top-k attention positions
+      from attentions['layer_i'][head, pos, :].
+    - Extract a sequence slice [j-window .. j+window] around each top index j.
+    - Write FASTA entries named: >input-sequence_layer{L}_head{H}_{weight:.3f}_{j}
+    """
+    with open(output_fasta, 'w') as f:
+        # Build sequence map for quick slicing
+        seq_map = {r['sequence_index']: convert_tokens_to_sequence(r['sequence_tokens']) for r in results_data}
+        attn_map = {r['sequence_index']: r.get('attentions') for r in results_data}
+        for p in predictions:
+            if p.get('classification') not in ('TP', 'FP'):
+                continue
+            sid = p['sequence_index']
+            pos = p['atg_position']
+            seq = seq_map.get(sid)
+            layer_attn = attn_map.get(sid)
+            if seq is None or not layer_attn:
+                continue
+            L = len(seq)
+            # For each layer
+            for layer_name, att in layer_attn.items():
+                # att: (heads, L, L)
+                for h in range(att.shape[0]):
+                    row = att[h, pos, :]
+                    # Get top-k indices and weights
+                    top_idx = row.argsort()[-k:][::-1]
+                    for j in top_idx:
+                        w = float(row[j])
+                        s = max(0, j - window)
+                        e = min(L, j + window + 1)
+                        frag = seq[s:e]
+                        header = f">sequence_{sid}_{layer_name}_head_{h}_bp_{j}_weight_{1000*w:.0f}\n"
+                        f.write(header)
+                        f.write(f"{frag}\n")
 
 
-def _write_breakdown_tsv(output_path: Path, rows: List[Dict]):
-    header = [
-        'category', 'parent_index', 'parent_sequence', 'parent_len',
-        'match_len', 'mismatch_rate', 'tp_count', 'fn_count', 'tp_mutated', 'fn_mutated'
-    ]
-    with open(output_path, 'w') as f:
-        f.write('\t'.join(header) + '\n')
-        for r in rows:
-            f.write('\t'.join([
-                str(r['category']),
-                str(r['parent_index']),
-                str(r['parent_sequence']),
-                str(r['parent_len']),
-                str(r['match_len']),
-                f"{r['mismatch_rate']:.3f}",
-                str(r['tp_count']),
-                str(r['fn_count']),
-                str(r['tp_mutated']),
-                str(r['fn_mutated']),
-            ]) + '\n')
-
-
-def _build_entries_from_predictions(predictions: List[Dict], results_data: List[Dict]) -> List[Dict]:
-    # Map sequence indices to raw sequence strings for quick slicing
-    seq_map = {r['sequence_index']: convert_tokens_to_sequence(r['sequence_tokens']) for r in results_data}
-    entries: List[Dict] = []
-    for p in predictions:
-        if p.get('classification') not in ('TP', 'FN'):
-            continue
-        seq_idx = p['sequence_index']
-        pos = p['atg_position']
-        sequence = seq_map[seq_idx]
-        upstream_200 = sequence[max(0, pos-200):pos]
-        codon = sequence[pos:pos+3]
-        downstream_20 = sequence[pos+3:pos+23]
-        entries.append({
-            'sequence_id': f'sequence_{seq_idx}',
-            'position': str(pos),
-            'classification': p['classification'],
-            'upstream_200': upstream_200,
-            'codon': codon,
-            'downstream_20': downstream_20,
-        })
-    return entries
-
-
-def generate_breakdown_tsv(predictions: List[Dict], results_data: List[Dict], output_report_path: Path, mismatch_threshold: float = 0.15) -> Path:
-    """Create breakdown TSV next to the report using prediction data directly."""
-    entries = _build_entries_from_predictions(predictions, results_data)
-    catalog = _build_parent_catalog()
-    aggregates: Dict[Tuple[str, int], Dict] = {}
-
-    for e in entries:
-        best, rate, match_len = _match_upstream_to_parent(e['upstream_200'], catalog)
-        if best is None or rate > mismatch_threshold:
-            key = ('Unknown', -1)
-            if key not in aggregates:
-                aggregates[key] = {
-                    'category': 'Unknown',
-                    'parent_index': -1,
-                    'parent_sequence': '',
-                    'parent_len': 0,
-                    'match_len': 0,
-                    'mismatch_rate': 1.0,
-                    'tp_count': 0,
-                    'fn_count': 0,
-                    'tp_mutated': 0,
-                    'fn_mutated': 0,
-                }
-            agg = aggregates[key]
-        else:
-            key = (best['category'], best['parent_index'])
-            if key not in aggregates:
-                aggregates[key] = {
-                    'category': best['category'],
-                    'parent_index': best['parent_index'],
-                    'parent_sequence': best['parent_sequence'],
-                    'parent_len': best['parent_len'],
-                    'match_len': match_len,
-                    'mismatch_rate': rate,
-                    'tp_count': 0,
-                    'fn_count': 0,
-                    'tp_mutated': 0,
-                    'fn_mutated': 0,
-                }
-            agg = aggregates[key]
-            if rate < agg['mismatch_rate'] or (rate == agg['mismatch_rate'] and match_len > agg['match_len']):
-                agg['mismatch_rate'] = rate
-                agg['match_len'] = match_len
-
-        if e['classification'] == 'TP':
-            agg['tp_count'] += 1
-            if best is None or rate > 0:
-                agg['tp_mutated'] += 1
-        elif e['classification'] == 'FN':
-            agg['fn_count'] += 1
-            if best is None or rate > 0:
-                agg['fn_mutated'] += 1
-
-    rows = list(aggregates.values())
-    rows.sort(key=lambda r: (r['category'], -(r['tp_count'] + r['fn_count'])))
-
-    out_path = output_report_path.with_name(output_report_path.stem + '_breakdown.tsv')
-    _write_breakdown_tsv(out_path, rows)
-    print(f"✓ Breakdown written to: {out_path}")
-    return out_path
+# ... existing code ...
 
 def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: List[Dict], output_dir: Path):
     """Save analysis results with timestamped filenames."""
@@ -727,140 +626,15 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     # Run validations and print a short footer to stdout for confidence
     validate_predictions(results_data, predictions)
 
-    # Threshold sweeps for avg and max triplet probabilities
-    def _sweep_thresholds(preds: List[Dict], key: str, num_steps: int = 101):
-        thresholds = np.linspace(0.0, 1.0, num_steps)
-        rows = []
-        for t in thresholds:
-            tp = fp = fn = 0
-            for p in preds:
-                gt_pos = p.get('classification') in ('TP', 'FN')
-                prob = float(p.get(f'start_prob_{key}_triplet', p.get('start_probability', 0.0)))
-                pred_pos = prob >= t
-                if pred_pos and gt_pos:
-                    tp += 1
-                elif pred_pos and not gt_pos:
-                    fp += 1
-                elif (not pred_pos) and gt_pos:
-                    fn += 1
-            sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            denom = (prec + sens)
-            f1 = (2 * prec * sens / denom) if denom > 0 else 0.0
-            rows.append({'threshold': float(t), 'tp': tp, 'fp': fp, 'fn': fn, 'sensitivity': sens, 'precision': prec, 'f1': f1})
-        return rows
+    # Simplified: no threshold sweeps
 
-    def _write_tsv(path: Path, rows: List[Dict]):
-        with path.open('w') as f:
-            f.write('threshold\ttp\tfp\tfn\tsensitivity\tprecision\tf1\n')
-            for r in rows:
-                f.write(f"{r['threshold']:.2f}\t{r['tp']}\t{r['fp']}\t{r['fn']}\t{r['sensitivity']:.4f}\t{r['precision']:.4f}\t{r['f1']:.4f}\n")
+    # Return base_name so callers can dump additional artifacts named consistently
+    return base_name
 
-    def _plot(path: Path, rows: List[Dict], title: str):
-        try:
-            thresholds = [r['threshold'] for r in rows]
-            tp = [r['tp'] for r in rows]
-            fp = [r['fp'] for r in rows]
-            fn = [r['fn'] for r in rows]
-            sens = [r['sensitivity'] for r in rows]
-            prec = [r['precision'] for r in rows]
-            f1 = [r.get('f1', 0.0) for r in rows]
-
-            fig, ax1 = plt.subplots(figsize=(12, 6))
-            ax1.bar(thresholds, fn, width=0.01, color='#f2dede', label='FN')
-            ax1.bar(thresholds, tp, bottom=fn, width=0.01, color='#d9edf7', label='TP')
-            ax1.bar(thresholds, fp, bottom=[fn[i] + tp[i] for i in range(len(fn))], width=0.01, color='#fcf8e3', label='FP')
-            ax1.set_xlabel('Threshold')
-            ax1.set_ylabel('Counts (TP/FP/FN)')
-
-            ax2 = ax1.twinx()
-            ax2.plot(thresholds, sens, color='#d9534f', label='Sensitivity')
-            ax2.plot(thresholds, prec, color='#5cb85c', label='Precision')
-            ax2.set_ylabel('Sensitivity / Precision / F1')
-            ax2.set_ylim(0, 1)
-
-            # Add F1 line
-            ax2.plot(thresholds, f1, color='#337ab7', label='F1')
-
-            ax1.legend(loc='upper left')
-            ax2.legend(loc='upper right')
-            plt.title(title)
-            plt.tight_layout()
-            fig.savefig(path)
-            plt.close(fig)
-        except Exception:
-            # Plotting optional; skip on headless environments without matplotlib backend
-            pass
-
-    # Prepare rows and write outputs
-    rows_avg = _sweep_thresholds(predictions, key='avg')
-    rows_max = _sweep_thresholds(predictions, key='max')
-    _write_tsv(output_dir / f"{base_name}_threshold_sweep_avg.tsv", rows_avg)
-    _write_tsv(output_dir / f"{base_name}_threshold_sweep_max.tsv", rows_max)
-    _plot(output_dir / f"{base_name}_threshold_curves_avg.png", rows_avg, title=f"Threshold sweep (avg) for {base_name}")
-    _plot(output_dir / f"{base_name}_threshold_curves_max.png", rows_max, title=f"Threshold sweep (max) for {base_name}")
-
-    # Distance-binned analysis (replaces parent-sequence breakdown)
-    def _compute_gap_bins(preds: List[Dict], results: List[Dict]):
-        # Map sequence indices to targets for quick lookup
-        target_map = {r['sequence_index']: r['targets'] for r in results}
-        # Default bins aligned to mask-style windows: 0–11, 12–49, 50–89, 90–139, 140–199
-        bins = [(0, 12), (12, 50), (50, 90), (90, 140), (140, 200)]
-        labels = ['0-11', '12-49', '50-89', '90-139', '140-199']
-        tp = {k: 0 for k in labels}
-        fn = {k: 0 for k in labels}
-        def _label_for(gap: int) -> str:
-            for (lo, hi), name in zip(bins, labels):
-                if lo <= gap < hi or (name == '140-199' and gap == 199) or (name == '0-11' and gap == 11):
-                    return name
-            return None
-        for p in preds:
-            cls = p.get('classification')
-            if cls not in ('TP', 'FN'):
-                continue
-            sid = p['sequence_index']
-            pos = int(p['atg_position'])
-            targets = target_map.get(sid)
-            if targets is None:
-                continue
-            # Find last UTR5 (class index 1) immediately upstream of ATG
-            last_idx = -1
-            for j in range(min(pos - 1, len(targets) - 1), -1, -1):
-                if int(targets[j]) == int(GenePredictionClass.UTR5):
-                    last_idx = j
-                    break
-            if last_idx == -1:
-                continue
-            gap = pos - (last_idx + 1)
-            name = _label_for(gap)
-            if name is None:
-                continue
-            if cls == 'TP':
-                tp[name] += 1
-            else:
-                fn[name] += 1
-        rows = []
-        for name in labels:
-            t = tp[name]
-            f = fn[name]
-            sens = (t / (t + f)) if (t + f) > 0 else 0.0
-            rows.append({'distance_bin': name, 'tp': t, 'fn': f, 'sensitivity': sens})
-        return rows
-
-    def _write_distance_bins_tsv(path: Path, rows: List[Dict]):
-        with path.open('w') as f:
-            f.write('distance_bin\ttp\tfn\tsensitivity\n')
-            for r in rows:
-                f.write(f"{r['distance_bin']}\t{r['tp']}\t{r['fn']}\t{r['sensitivity']:.4f}\n")
-
-    rows_bins = _compute_gap_bins(predictions, results_data)
-    _write_distance_bins_tsv(output_dir / f"{base_name}_distance_bins.tsv", rows_bins)
+    # Simplified: no distance-binned analysis
 
 def print_summary(predictions: List[Dict], metrics: Dict):
     """Print concise summary of position-level metrics only."""
-    print(f"\n{'='*60}")
-    print("COMPREHENSIVE START PREDICTION ANALYSIS")
-    print(f"{'='*60}")
     print(f"\nMETRICS (Position-level):")
     print(f"  True Positives: {metrics['tp']}")
     print(f"  False Positives: {metrics['fp']}")
@@ -924,10 +698,11 @@ def main():
                        help='Number of test sequences to generate')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
-    parser.add_argument('--mismatch-threshold', type=float, default=0.15,
-                       help='Max mismatch rate (0..1) for parent assignment in breakdown TSV')
+    # Removed: mismatch threshold (no breakdown TSV)
     parser.add_argument('--layout-version', type=int, default=3,
                        help='Contig layout version, 1=utr5-start, 2=utr5-spacer-start, 3=unmarked_utr5-spacer-start')
+    parser.add_argument('--dump-attention-k', type=int, default=3, help='Top-k attention positions per layer/head')
+    parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
     
     args = parser.parse_args()
 
@@ -935,7 +710,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else run_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print("🧬 START Prediction Analysis")
+    print("START Prediction Analysis")
     
     # Resolve checkpoint
     try:
@@ -961,8 +736,8 @@ def main():
             model_max_len = 1000
     data_loader, dataset = generate_test_data(args.num_sequences, model_max_len, args.layout_version)
     
-    # Run predictions
-    results = run_predictions(model, data_loader, args.device)
+    # Run predictions (with attention if requested)
+    results = run_predictions(model, data_loader, args.device, return_attention=True)
     
     # Calculate position-level metrics
     metrics = calculate_metrics(results)
@@ -971,21 +746,15 @@ def main():
     predictions = analyze_all_predictions(results)
     
     # Save results (FASTA + visual report)
-    save_analysis_results(predictions, metrics, results, output_dir)
-    # Generate breakdown TSV next to the report
-    # Use the last generated report path (deterministic naming inside save function)
-    # Recompute the same base name to know the report location
-    # Note: generate_breakdown_tsv expects the report path to add _breakdown.tsv
-    # We reuse the most recent report by listing matching files
-    reports = sorted(output_dir.glob('prediction_*[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].txt'))
-    if reports:
-        last_report = reports[-1]
-        generate_breakdown_tsv(predictions, results, last_report, mismatch_threshold=args.mismatch_threshold)
+    base_name = save_analysis_results(predictions, metrics, results, output_dir)
+    
+    # Dump attention fragments to FASTA
+    attn_fa = output_dir / f"{base_name}_attn.fa"
+    dump_attention_fragments(results, predictions, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
+    print(f"✓ Attention fragments written to: {attn_fa}")
     
     # Print summary
     print_summary(predictions, metrics)
-    
-    print(f"\n✅ Analysis complete! Results saved to: {output_dir}")
 
 if __name__ == "__main__":
     main()
