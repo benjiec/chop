@@ -25,7 +25,11 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
                            use_focal: bool = False, focal_gamma: float = 2.0,
-                           focal_alpha: Optional[list] = None) -> dict:
+                           focal_alpha: Optional[list] = None,
+                           cc_enabled: bool = True,
+                           start_before: int = 300, start_after: int = 0,
+                           stop_before: int = 0, stop_after: int = 300,
+                           cc_gap: int = 0) -> dict:
 
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
@@ -36,7 +40,7 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
     else:
         class_weights = None
     
-    return create_base_config(
+    cfg = create_base_config(
         max_seq_length=max_seq_length,
         num_classes=6,
         class_names=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())],
@@ -54,6 +58,17 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
         focal_alpha=focal_alpha,
     )
 
+    if cc_enabled:
+        cfg['model']['class_conditional_readouts'] = {
+            'enabled': True,
+            'entries': [
+                {'class': 'START', 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
+                {'class': 'STOP', 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
+            ]
+        }
+
+    return cfg
+
 
 def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     num_contigs: int = 20, layouts_per_contig: int = 1,
@@ -62,7 +77,11 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
                     use_focal: bool = False, focal_gamma: float = 2.0,
-                    focal_alpha: Optional[list] = None):
+                    focal_alpha: Optional[list] = None,
+                    cc_enabled: bool = True,
+                    start_before: int = 300, start_after: int = 0,
+                    stop_before: int = 0, stop_after: int = 300,
+                    cc_gap: int = 0):
 
     # Create config
     config = create_boundary_config(
@@ -71,6 +90,10 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         use_class_weights=use_class_weights, start_weight=start_weight, stop_weight=stop_weight, utr_weight=utr_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
+        cc_enabled=cc_enabled,
+        start_before=start_before, start_after=start_after,
+        stop_before=stop_before, stop_after=stop_after,
+        cc_gap=cc_gap,
     )
     
     dataset = generate_dataset(num_contigs, max_seq_length, layouts_per_contig)
@@ -126,6 +149,13 @@ def main():
     parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
     parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma (focusing parameter)')
     parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
+    # Class-conditional readouts
+    parser.add_argument('--cc-enabled', action='store_true', default=True, help='Enable class-conditional readouts for START/STOP (enabled by default)')
+    parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
+    parser.add_argument('--start-after', type=int, default=0, help='CC downstream window for START')
+    parser.add_argument('--stop-before', type=int, default=0, help='CC upstream window for STOP')
+    parser.add_argument('--stop-after', type=int, default=300, help='CC downstream window for STOP')
+    parser.add_argument('--cc-gap', type=int, default=0, help='Relative donut gap for CC masks')
     
     args = parser.parse_args()
     
@@ -179,6 +209,12 @@ def main():
         use_focal=args.use_focal,
         focal_gamma=args.focal_gamma,
         focal_alpha=focal_alpha,
+        cc_enabled=args.cc_enabled,
+        start_before=args.start_before,
+        start_after=args.start_after,
+        stop_before=args.stop_before,
+        stop_after=args.stop_after,
+        cc_gap=args.cc_gap,
     )
 
 if __name__ == "__main__":

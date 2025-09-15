@@ -65,8 +65,8 @@ class BoundarySensitivityCallback(pl.Callback):
         stop_sens = (stop_tp / (stop_tp + stop_fn)) if (stop_tp + stop_fn) > 0 else 0.0
         event_sens = (start_sens + stop_sens) / 2.0
 
-        pl_module.log('val_start_sensitivity_atg', start_sens, prog_bar=True, on_epoch=True)
-        pl_module.log('val_stop_sensitivity_taa_tag_tga', stop_sens, prog_bar=True, on_epoch=True)
-        pl_module.log('val_event_sensitivity', event_sens, prog_bar=True, on_epoch=True)
+        pl_module.log('val_start_ss', start_sens, prog_bar=True, on_epoch=True)
+        pl_module.log('val_stop_ss', stop_sens, prog_bar=True, on_epoch=True)
+        pl_module.log('val_event_ss', event_sens, prog_bar=True, on_epoch=True)
 
 

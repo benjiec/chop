@@ -63,10 +63,10 @@ class TestBoundarySensitivityCallback(unittest.TestCase):
         mod = DummyModule(logits)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
-        self.assertIn('val_start_sensitivity_atg', mod.logged)
-        self.assertIn('val_stop_sensitivity_taa_tag_tga', mod.logged)
-        self.assertAlmostEqual(mod.logged['val_start_sensitivity_atg'], 1.0, places=6)
-        self.assertAlmostEqual(mod.logged['val_stop_sensitivity_taa_tag_tga'], 1.0, places=6)
+        self.assertIn('val_start_ss', mod.logged)
+        self.assertIn('val_stop_ss', mod.logged)
+        self.assertAlmostEqual(mod.logged['val_start_ss'], 1.0, places=6)
+        self.assertAlmostEqual(mod.logged['val_stop_ss'], 1.0, places=6)
 
     def test_triplet_awareness_for_stop_codons(self):
         # DNA with STOP TGA at pos 6..8; predict only at center position
@@ -87,7 +87,7 @@ class TestBoundarySensitivityCallback(unittest.TestCase):
         mod = DummyModule(logits)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
-        self.assertGreaterEqual(mod.logged['val_stop_sensitivity_taa_tag_tga'], 1.0)
+        self.assertGreaterEqual(mod.logged['val_stop_ss'], 1.0)
 
 
 if __name__ == '__main__':

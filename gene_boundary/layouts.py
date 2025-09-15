@@ -104,6 +104,7 @@ def generate_dataset(num_sequences: int, max_seq_length: int, layouts_per_contig
         blind_kozak_start_random_decoy_flanks(),
         blind_stop_utr3_random_decoy_flanks(),
         blind_stop_spacer_utr3_random_decoy_flanks(),
+        blind_full_gene(),
         blind_full_gene()
     ]
 
