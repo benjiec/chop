@@ -19,9 +19,9 @@ from gene_boundary.sensitivity_callback import BoundarySensitivityCallback
 from gene_boundary.layouts import generate_dataset
 
 
-def create_boundary_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
-                           use_class_weights: bool = False, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+                           use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
                            use_focal: bool = False, focal_gamma: float = 2.0,
@@ -32,7 +32,7 @@ def create_boundary_config(d_model: int = 504, n_layers: int = 3, n_heads: int =
     if use_class_weights:
         # Order must match GenePredictionClass indices
         # [INTERGENIC, UTR5, START, GENE, STOP, UTR3]
-        class_weights = [1.0, utr_weight, start_weight, 1.0, stop_weight, 1.0]
+        class_weights = [1.0, utr_weight, start_weight, 1.0, stop_weight, utr_weight]
     else:
         class_weights = None
     
@@ -55,10 +55,10 @@ def create_boundary_config(d_model: int = 504, n_layers: int = 3, n_heads: int =
     )
 
 
-def train_boundaries(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
+def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     num_contigs: int = 20, layouts_per_contig: int = 1,
                     learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
-                    use_class_weights: bool = False, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+                    use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
                     use_focal: bool = False, focal_gamma: float = 2.0,
@@ -107,12 +107,12 @@ def train_boundaries(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
 
 def main():
     parser = argparse.ArgumentParser(description="Train START/STOP boundary detection")
-    parser.add_argument('--d-model', type=int, default=504, help='Model dimension')
+    parser.add_argument('--d-model', type=int, default=512, help='Model dimension')
     parser.add_argument('--layers', type=int, default=4, help='Number of transformer layers')
-    parser.add_argument('--heads', type=int, default=6, help='Number of attention heads')
+    parser.add_argument('--heads', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--contigs', type=int, default=1000, help='Number of contigs')
     parser.add_argument('--layouts', type=int, default=1, help='Layouts per contig')
-    parser.add_argument('--class-weights', action='store_true', help='Use class weights')
+    parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
     parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
     parser.add_argument('--stop-weight', type=float, default=10.0, help='Weight for STOP class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
@@ -169,7 +169,7 @@ def main():
         learning_rate=args.learning_rate,
         max_epochs=args.epochs,
         batch_size=args.batch_size,
-        use_class_weights=args.class_weights,
+        use_class_weights=not args.disable_class_weights,
         start_weight=args.start_weight,
         stop_weight=args.stop_weight,
         utr_weight=args.utr_weight,
