@@ -1,13 +1,4 @@
 #!/usr/bin/env python3
-"""
-START prediction analysis with new test data.
-
-Creates new test sequences, runs predictions, and analyzes:
-- True positives vs false positives with sensitivity/precision/specificity
-- Sequence context around all predictions
-- Kozak patterns and biological features
-- Actual codons at predicted positions
-"""
 
 import sys
 from pathlib import Path
@@ -161,47 +152,30 @@ def convert_tokens_to_sequence(tokens):
     idx_to_nucleotide = DNAEmbed.idx_to_bp
     return ''.join([idx_to_nucleotide.get(int(token), 'N') for token in tokens])
 
-def calculate_metrics(all_predictions):
-    """Calculate sensitivity, precision, and specificity for ATG-based START detection.
-
-    Triplet-aware: for each ATG starting at pos, consider START predicted/true if any
-    of positions pos,pos+1,pos+2 are START.
-    """
-    
-    # Count ATG-level metrics (only positions with actual ATG codons)
-    tp_positions = 0
-    fp_positions = 0
-    fn_positions = 0
-    tn_positions = 0
-    
+def _calculate_metrics_for_triplets(all_predictions, codons: set, class_idx: int):
+    """Calculate sensitivity, precision, specificity restricted to triplets in codons set for given class_idx."""
+    tp_positions = fp_positions = fn_positions = tn_positions = 0
     for result in all_predictions:
         targets = result['targets']
         predictions = result['predictions']
         sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-        
-        # Only analyze positions that could contain ATG (sequence length - 2)
-        for pos in range(len(targets) - 2):
-            if pos + 2 >= len(sequence):
+        L = min(len(sequence), len(targets), len(predictions))
+        for pos in range(0, max(0, L - 2)):
+            if sequence[pos:pos+3] not in codons:
                 continue
-            if sequence[pos:pos+3] != 'ATG':
-                continue
-            # Triplet-aware START flags
-            target_is_start = bool((targets[pos:pos+3] == 2).any())
-            pred_is_start = bool((predictions[pos:pos+3] == 2).any())
-            if pred_is_start and target_is_start:
+            target_is_cls = bool((targets[pos:pos+3] == class_idx).any())
+            pred_is_cls = bool((predictions[pos:pos+3] == class_idx).any())
+            if pred_is_cls and target_is_cls:
                 tp_positions += 1
-            elif pred_is_start and not target_is_start:
+            elif pred_is_cls and not target_is_cls:
                 fp_positions += 1
-            elif (not pred_is_start) and target_is_start:
+            elif (not pred_is_cls) and target_is_cls:
                 fn_positions += 1
             else:
                 tn_positions += 1
-    
-    # Calculate metrics
     sensitivity = tp_positions / (tp_positions + fn_positions) if (tp_positions + fn_positions) > 0 else 0
     precision = tp_positions / (tp_positions + fp_positions) if (tp_positions + fp_positions) > 0 else 0
     specificity = tn_positions / (tn_positions + fp_positions) if (tn_positions + fp_positions) > 0 else 0
-    
     return {
         'tp': tp_positions,
         'fp': fp_positions,
@@ -212,14 +186,17 @@ def calculate_metrics(all_predictions):
         'specificity': specificity
     }
 
-def analyze_all_predictions(results_data):
-    """Analyze all START predictions with sequence context using direct ATG-based approach.
+def calculate_start_stop_metrics(all_predictions):
+    start_codons = {'ATG'}
+    stop_codons = {'TAA', 'TAG', 'TGA'}
+    start_metrics = _calculate_metrics_for_triplets(all_predictions, start_codons, GenePredictionClass.START)
+    stop_metrics = _calculate_metrics_for_triplets(all_predictions, stop_codons, GenePredictionClass.STOP)
+    return start_metrics, stop_metrics
 
-    Triplet-aware: classify per ATG start by whether any position within the ATG triplet
-    is predicted/true START.
-    """
+def analyze_all_predictions(results_data):
+    """Analyze START and STOP predictions with sequence context (triplet-aware)."""
     
-    print("Analyzing all START predictions...")
+    print("Analyzing START/STOP predictions...")
     
     all_predictions = []
     
@@ -232,7 +209,7 @@ def analyze_all_predictions(results_data):
         
         # print(f"Sequence {seq_idx}: length {len(sequence)}")
         
-        # Find all ATG positions and analyze each one
+        # Analyze START sites (ATG)
         atg_count = 0
         tp_count = 0
         fp_count = 0
@@ -244,10 +221,10 @@ def analyze_all_predictions(results_data):
                 continue
             atg_count += 1
 
-            # Triplet-aware signals
+            # Triplet-aware signals (START)
             target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
             pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
-            prob_pos = probabilities[pos, 2] if pos < len(probabilities) else 0.0
+            prob_pos = probabilities[pos, GenePredictionClass.START] if pos < len(probabilities) else 0.0
             # Triplet probabilities around the ATG site for START class
             if pos + 2 < probabilities.shape[0]:
                 prob_triplet_vec = probabilities[pos:pos+3, 2]
@@ -257,8 +234,8 @@ def analyze_all_predictions(results_data):
                 prob_triplet_max = float(prob_pos)
                 prob_triplet_avg = float(prob_pos)
 
-            is_target_start = bool((target_triplet == 2).any())
-            is_predicted_start = bool((pred_triplet == 2).any())
+            is_target_start = bool((target_triplet == GenePredictionClass.START).any())
+            is_predicted_start = bool((pred_triplet == GenePredictionClass.START).any())
 
             # Only include ATGs that were either predicted as START or should be START
             if is_predicted_start or is_target_start:
@@ -292,6 +269,7 @@ def analyze_all_predictions(results_data):
                     'region_positions': [pos],
                     'atg_position': pos,
                     'actual_codon': 'ATG',
+                    'site_type': 'start',
                     'is_true_positive': (classification == 'TP'),
                     'classification': classification,
                     'target_class': target_name,
@@ -306,17 +284,75 @@ def analyze_all_predictions(results_data):
 
                 all_predictions.append(prediction_data)
 
-                # print(f"    ATG at {pos}: {classification}, target: {target_name}, prob: {prob_pos:.3f}")
+        # Analyze STOP sites (TAA/TAG/TGA)
+        stop_codons = {'TAA', 'TAG', 'TGA'}
+        seen_positions_stop = set()
+        for pos in range(len(sequence) - 2):
+            triplet = sequence[pos:pos+3]
+            if triplet not in stop_codons:
+                continue
+            target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
+            pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
+            prob_pos = probabilities[pos, GenePredictionClass.STOP] if pos < len(probabilities) else 0.0
+            if pos + 2 < probabilities.shape[0]:
+                prob_triplet_vec = probabilities[pos:pos+3, GenePredictionClass.STOP]
+                prob_triplet_max = float(np.max(prob_triplet_vec))
+                prob_triplet_avg = float(np.mean(prob_triplet_vec))
+            else:
+                prob_triplet_max = float(prob_pos)
+                prob_triplet_avg = float(prob_pos)
+
+            is_target_stop = bool((target_triplet == GenePredictionClass.STOP).any())
+            is_predicted_stop = bool((pred_triplet == GenePredictionClass.STOP).any())
+            if not (is_predicted_stop or is_target_stop):
+                continue
+            key = (seq_idx, pos)
+            if key in seen_positions_stop:
+                raise ValueError(f"Duplicate STOP position detected for sequence {seq_idx} at position {pos}")
+            seen_positions_stop.add(key)
+
+            if is_predicted_stop and is_target_stop:
+                classification = "TP"
+            elif is_predicted_stop and not is_target_stop:
+                classification = "FP"
+            elif (not is_predicted_stop) and is_target_stop:
+                classification = "FN"
+            else:
+                continue
+
+            upstream = sequence[max(0, pos-20):pos]
+            downstream = sequence[pos+3:pos+23]
+            target_class = targets[pos] if pos < len(targets) else -1
+            target_name = GenePredictionClass.idx_to_cls[int(target_class)]
+            prediction_data = {
+                'sequence_index': seq_idx,
+                'region_positions': [pos],
+                'atg_position': pos,
+                'actual_codon': triplet,
+                'site_type': 'stop',
+                'is_true_positive': (classification == 'TP'),
+                'classification': classification,
+                'target_class': target_name,
+                'stop_probability': float(prob_pos),
+                'stop_prob_max_triplet': float(prob_triplet_max),
+                'stop_prob_avg_triplet': float(prob_triplet_avg),
+                'upstream_20': upstream,
+                'downstream_20': downstream,
+                'region_length': 1,
+                'pred_triplet': pred_triplet.tolist() if hasattr(pred_triplet, 'tolist') else list(pred_triplet),
+            }
+
+            all_predictions.append(prediction_data)
         
         # print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
     
     return all_predictions
 
 def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
-    """Validate prediction entries for correctness and consistency.
-    - Ensure each reported site is an ATG in the source sequence
+    """Validate prediction entries for correctness and consistency for START and STOP.
+    - Ensure each reported site matches expected codon class (ATG for START; TAA/TAG/TGA for STOP)
     - Ensure no duplicate (sequence_index, atg_position)
-    - Ensure FN+TP equals number of real ATG STARTs in targets per sequence
+    - Ensure FN+TP equals number of true START and true STOP sites respectively
     """
     # Map sequences for quick lookup
     seq_map = {}
@@ -327,6 +363,7 @@ def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
         target_map[seq_idx] = result['targets']
 
     seen = set()
+    stop_codons = {'TAA', 'TAG', 'TGA'}
     for p in predictions:
         seq_idx = p['sequence_index']
         pos = p['atg_position']
@@ -336,29 +373,48 @@ def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
         seen.add(key)
 
         seq = seq_map[seq_idx]
-        assert seq[pos:pos+3] == 'ATG', f"Reported site is not ATG at sequence {seq_idx} pos {pos}"
+        site_type = p.get('site_type', 'start')
+        triplet = seq[pos:pos+3]
+        if site_type == 'start':
+            assert triplet == 'ATG', f"Reported START site is not ATG at sequence {seq_idx} pos {pos}"
+        else:
+            assert triplet in stop_codons, f"Reported STOP site is not a STOP codon at sequence {seq_idx} pos {pos}"
 
-    # Per-sequence TP+FN should equal number of target==2 ATG sites
-    # Identify real ATG START positions from targets
+    # Per-sequence TP+FN should equal number of true START and STOP sites
     from collections import defaultdict
     real_start_positions = defaultdict(set)
+    real_stop_positions = defaultdict(set)
     for seq_idx, targets in target_map.items():
         seq = seq_map[seq_idx]
-        for pos in range(0, len(seq) - 2):
-            if seq[pos:pos+3] == 'ATG' and targets[pos] == 2:
+        for pos in range(0, max(0, len(seq) - 2)):
+            tri = seq[pos:pos+3]
+            if tri == 'ATG' and targets[pos] == GenePredictionClass.START:
                 real_start_positions[seq_idx].add(pos)
+            if tri in stop_codons and targets[pos] == GenePredictionClass.STOP:
+                real_stop_positions[seq_idx].add(pos)
 
-    counted_tp_fn = defaultdict(set)
+    counted_start = defaultdict(set)
+    counted_stop = defaultdict(set)
     for p in predictions:
         if p.get('classification') in ('TP', 'FN'):
-            counted_tp_fn[p['sequence_index']].add(p['atg_position'])
+            if p.get('site_type', 'start') == 'start':
+                counted_start[p['sequence_index']].add(p['atg_position'])
+            else:
+                counted_stop[p['sequence_index']].add(p['atg_position'])
 
     for seq_idx in real_start_positions:
-        if real_start_positions[seq_idx] != counted_tp_fn.get(seq_idx, set()):
+        if real_start_positions[seq_idx] != counted_start.get(seq_idx, set()):
             raise AssertionError(
                 f"TP+FN positions do not match real START ATGs for sequence {seq_idx}:\n"
                 f"  expected={sorted(real_start_positions[seq_idx])}\n"
-                f"  got={sorted(counted_tp_fn.get(seq_idx, set()))}"
+                f"  got={sorted(counted_start.get(seq_idx, set()))}"
+            )
+    for seq_idx in real_stop_positions:
+        if real_stop_positions[seq_idx] != counted_stop.get(seq_idx, set()):
+            raise AssertionError(
+                f"TP+FN positions do not match real STOP codons for sequence {seq_idx}:\n"
+                f"  expected={sorted(real_stop_positions[seq_idx])}\n"
+                f"  got={sorted(counted_stop.get(seq_idx, set()))}"
             )
 
 def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
@@ -508,12 +564,11 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
 
 
 def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
-    """Dump top-k attended sequence fragments around predicted START sites to FASTA.
+    """Dump top-k attended sequence fragments around predicted START/STOP sites to FASTA.
 
-    - For each predicted START (classification=='TP' or 'FP'), for each layer/head, pick top-k attention positions
-      from attentions['layer_i'][head, pos, :].
-    - Extract a sequence slice [j-window .. j+window] around each top index j.
-    - Write FASTA entries named: >input-sequence_layer{L}_head{H}_{weight:.3f}_{j}
+    FASTA header format:
+      >sequence_{sid}_{site_type}_{layer}_head_{h}_bp_{j}_weight_{1000*w}
+    where site_type is 'start' or 'stop'.
     """
     with open(output_fasta, 'w') as f:
         # Build sequence map for quick slicing
@@ -524,6 +579,7 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                 continue
             sid = p['sequence_index']
             pos = p['atg_position']
+            site_type = p.get('site_type', 'start')
             seq = seq_map.get(sid)
             layer_attn = attn_map.get(sid)
             if seq is None or not layer_attn:
@@ -541,7 +597,7 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                         s = max(0, j - window)
                         e = min(L, j + window + 1)
                         frag = seq[s:e]
-                        header = f">sequence_{sid}_{layer_name}_head_{h}_bp_{j}_weight_{1000*w:.0f}\n"
+                        header = f">sequence_{sid}_{site_type}_{layer_name}_head_{h}_bp_{j}_weight_{1000*w:.0f}\n"
                         f.write(header)
                         f.write(f"{frag}\n")
 
@@ -582,17 +638,16 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
 
     # Simplified: no distance-binned analysis
 
-def print_summary(predictions: List[Dict], metrics: Dict):
-    """Print concise summary of position-level metrics only."""
-    print(f"\nMETRICS (Position-level):")
-    print(f"  True Positives: {metrics['tp']}")
-    print(f"  False Positives: {metrics['fp']}")
-    print(f"  False Negatives: {metrics['fn']}")
-    print(f"  True Negatives: {metrics['tn']}")
-    print()
-    print(f"  Sensitivity: {metrics['sensitivity']:.1%}")
-    print(f"  Precision: {metrics['precision']:.1%}")
-    print(f"  Specificity: {metrics['specificity']:.1%}")
+def print_summary(start_metrics: Dict, stop_metrics: Dict):
+    """Print concise summary for START and STOP."""
+    print("\nSTART (ATG)")
+    print(f"  Sensitivity: {start_metrics['sensitivity']:.1%}")
+    print(f"  Precision: {start_metrics['precision']:.1%}")
+    print(f"  Specificity: {start_metrics['specificity']:.1%}")
+    print("\nSTOP (TAA/TAG/TGA)")
+    print(f"  Sensitivity: {stop_metrics['sensitivity']:.1%}")
+    print(f"  Precision: {stop_metrics['precision']:.1%}")
+    print(f"  Specificity: {stop_metrics['specificity']:.1%}")
 
 def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
     """Select a checkpoint to use.
@@ -688,8 +743,8 @@ def main():
     # Run predictions (with attention if requested)
     results = run_predictions(model, data_loader, args.device, return_attention=True)
     
-    # Calculate position-level metrics
-    metrics = calculate_metrics(results)
+    # Calculate position-level metrics (START and STOP)
+    start_metrics, stop_metrics = calculate_start_stop_metrics(results)
     
     # Analyze predictions
     predictions = analyze_all_predictions(results)
@@ -703,7 +758,7 @@ def main():
     print(f"✓ Attention fragments written to: {attn_fa}")
     
     # Print summary
-    print_summary(predictions, metrics)
+    print_summary(start_metrics, stop_metrics)
 
 if __name__ == "__main__":
     main()
