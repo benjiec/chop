@@ -701,6 +701,13 @@ def main():
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
+    # CC readout info (for visibility; model decides based on checkpoint config)
+    parser.add_argument('--cc-enabled', action='store_true', default=True, help='Expect class-conditional readouts to be enabled in the checkpoint')
+    parser.add_argument('--start-before', type=int, default=300)
+    parser.add_argument('--start-after', type=int, default=0)
+    parser.add_argument('--stop-before', type=int, default=0)
+    parser.add_argument('--stop-after', type=int, default=300)
+    parser.add_argument('--cc-gap', type=int, default=0)
     
     args = parser.parse_args()
 
@@ -723,6 +730,17 @@ def main():
     model = load_trained_model(ckpt_path, args.device)
     if model is None:
         return
+    # Reflect CC status from checkpoint
+    try:
+        cc_cfg = getattr(model, 'config', {}).get('model', {}).get('class_conditional_readouts')
+    except Exception:
+        cc_cfg = None
+    if cc_cfg and bool(cc_cfg.get('enabled')):
+        print("Class-conditional readouts: enabled")
+        for e in (cc_cfg.get('entries') or []):
+            print(f"  - {e.get('class')} before={e.get('before')} gap={e.get('gap')} after={e.get('after')}")
+    else:
+        print("Class-conditional readouts: disabled")
     
     # Generate test data, aligned to model's max_seq_length
     model_max_len = getattr(getattr(model, 'config', {}).get('model', {}), 'get', lambda k, d=None: None)('max_seq_length', None)
@@ -744,7 +762,7 @@ def main():
     predictions = analyze_all_predictions(results)
     
     # Save results (FASTA + visual report)
-    base_name = save_analysis_results(predictions, metrics, results, output_dir)
+    base_name = save_analysis_results(predictions, {'start': start_metrics, 'stop': stop_metrics}, results, output_dir)
     
     # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
