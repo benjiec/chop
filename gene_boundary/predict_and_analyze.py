@@ -16,6 +16,10 @@ from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from gene_boundary.layouts import generate_dataset
 
+# DRY visualization window sizes
+VIS_UPSTREAM_BP = 200
+VIS_DOWNSTREAM_BP = 150
+
 
 def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
@@ -153,6 +157,17 @@ def convert_tokens_to_sequence(tokens):
     idx_to_nucleotide = DNAEmbed.idx_to_bp
     return ''.join([idx_to_nucleotide.get(int(token), 'N') for token in tokens])
 
+def compute_triplet_prob_stats(probabilities: np.ndarray, position: int, class_index: int) -> Dict[str, float]:
+    """Compute per-position probability and max/avg across codon triplet for given class index."""
+    if probabilities is None or probabilities.shape[0] == 0:
+        return {'pos': 0.0, 'max': 0.0, 'avg': 0.0}
+    pos_prob = float(probabilities[position, class_index]) if 0 <= position < probabilities.shape[0] else 0.0
+    if position + 2 < probabilities.shape[0]:
+        vec = probabilities[position:position+3, class_index]
+        return {'pos': pos_prob, 'max': float(np.max(vec)), 'avg': float(np.mean(vec))}
+    return {'pos': pos_prob, 'max': pos_prob, 'avg': pos_prob}
+
+
 def _calculate_metrics_for_triplets(all_predictions, codons: set, class_idx: int):
     """Calculate sensitivity, precision, specificity restricted to triplets in codons set for given class_idx."""
     tp_positions = fp_positions = fn_positions = tn_positions = 0
@@ -224,15 +239,10 @@ def analyze_all_predictions(results_data):
             # Triplet-aware signals (START)
             target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
             pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
-            prob_pos = probabilities[pos, GenePredictionClass.START] if pos < len(probabilities) else 0.0
-            # Triplet probabilities around the ATG site for START class
-            if pos + 2 < probabilities.shape[0]:
-                prob_triplet_vec = probabilities[pos:pos+3, 2]
-                prob_triplet_max = float(np.max(prob_triplet_vec))
-                prob_triplet_avg = float(np.mean(prob_triplet_vec))
-            else:
-                prob_triplet_max = float(prob_pos)
-                prob_triplet_avg = float(prob_pos)
+            stats = compute_triplet_prob_stats(probabilities, pos, GenePredictionClass.START)
+            prob_pos = stats['pos']
+            prob_triplet_max = stats['max']
+            prob_triplet_avg = stats['avg']
 
             is_target_start = bool((target_triplet == GenePredictionClass.START).any())
             is_predicted_start = bool((pred_triplet == GenePredictionClass.START).any())
@@ -292,14 +302,10 @@ def analyze_all_predictions(results_data):
                 continue
             target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
             pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
-            prob_pos = probabilities[pos, GenePredictionClass.STOP] if pos < len(probabilities) else 0.0
-            if pos + 2 < probabilities.shape[0]:
-                prob_triplet_vec = probabilities[pos:pos+3, GenePredictionClass.STOP]
-                prob_triplet_max = float(np.max(prob_triplet_vec))
-                prob_triplet_avg = float(np.mean(prob_triplet_vec))
-            else:
-                prob_triplet_max = float(prob_pos)
-                prob_triplet_avg = float(prob_pos)
+            stats = compute_triplet_prob_stats(probabilities, pos, GenePredictionClass.STOP)
+            prob_pos = stats['pos']
+            prob_triplet_max = stats['max']
+            prob_triplet_avg = stats['avg']
 
             is_target_stop = bool((target_triplet == GenePredictionClass.STOP).any())
             is_predicted_stop = bool((pred_triplet == GenePredictionClass.STOP).any())
@@ -438,7 +444,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
     fns = [p for p in predictions if p.get('classification') == 'FN']
     
     with open(output_path, 'w') as f:
-        f.write("START Prediction Visual Analysis\n")
+        f.write("Prediction Visual Analysis\n")
         f.write("=" * 80 + "\n\n")
         
         # True Positives
@@ -447,27 +453,34 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         for i, tp in enumerate(tps):  # Show all TPs
             seq_idx = tp['sequence_index']
             pos = tp['atg_position']
-            prob_max = tp.get('start_prob_max_triplet', tp.get('start_probability', 0.0))
-            prob_avg = tp.get('start_prob_avg_triplet', tp.get('start_probability', 0.0))
+            site_type = tp.get('site_type', 'start')
+            if site_type == 'stop':
+                prob_max = tp.get('stop_prob_max_triplet', tp.get('stop_probability', 0.0))
+                prob_avg = tp.get('stop_prob_avg_triplet', tp.get('stop_probability', 0.0))
+                label = 'STOP'
+            else:
+                prob_max = tp.get('start_prob_max_triplet', tp.get('start_probability', 0.0))
+                prob_avg = tp.get('start_prob_avg_triplet', tp.get('start_probability', 0.0))
+                label = 'START'
             
             # Get full context from original sequence
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-200):pos]
+                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
                     codon = sequence[pos:pos+3]
-                    downstream_20 = sequence[pos+3:pos+23]
+                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
                     
                     # Create header with sequence name and position
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_200 + codon + downstream_20
-                    marker_line = " " * len(upstream_200) + f"^^^ TP max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_150
+                    marker_line = " " * len(upstream_200) + f"^^^ TP {label} max={prob_max:.2f} avg={prob_avg:.2f}"
 
                     # Per-position targets/predictions for window [-200..+20]
-                    start_idx = max(0, pos - 200)
-                    end_idx = min(len(sequence), pos + 3 + 20)
+                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
+                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
@@ -486,27 +499,34 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
         for i, fp in enumerate(fps):  # Show all FPs
             seq_idx = fp['sequence_index']
             pos = fp['atg_position']
-            prob_max = fp.get('start_prob_max_triplet', fp.get('start_probability', 0.0))
-            prob_avg = fp.get('start_prob_avg_triplet', fp.get('start_probability', 0.0))
+            site_type = fp.get('site_type', 'start')
+            if site_type == 'stop':
+                prob_max = fp.get('stop_prob_max_triplet', fp.get('stop_probability', 0.0))
+                prob_avg = fp.get('stop_prob_avg_triplet', fp.get('stop_probability', 0.0))
+                label = 'STOP'
+            else:
+                prob_max = fp.get('start_prob_max_triplet', fp.get('start_probability', 0.0))
+                prob_avg = fp.get('start_prob_avg_triplet', fp.get('start_probability', 0.0))
+                label = 'START'
             
             # Get full context from original sequence
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-200):pos]
+                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
                     codon = sequence[pos:pos+3]
-                    downstream_20 = sequence[pos+3:pos+23]
+                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
                     
                     # Create header with sequence name and position
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_200 + codon + downstream_20
-                    marker_line = " " * len(upstream_200) + f"^^^ FP max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_150
+                    marker_line = " " * len(upstream_200) + f"^^^ FP {label} max={prob_max:.2f} avg={prob_avg:.2f}"
 
                     # Per-position targets/predictions for window [-200..+20]
-                    start_idx = max(0, pos - 200)
-                    end_idx = min(len(sequence), pos + 3 + 20)
+                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
+                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
@@ -520,32 +540,39 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
                     break
         
         # False Negatives
-        f.write("\nFALSE NEGATIVES (Missed STARTs):\n")
+        f.write("\nFALSE NEGATIVES (Missed):\n")
         f.write("-" * 40 + "\n")
         for i, fn in enumerate(fns):  # Show all FNs
             seq_idx = fn['sequence_index']
             pos = fn['atg_position']
-            prob_max = fn.get('start_prob_max_triplet', fn.get('start_probability', 0.0))
-            prob_avg = fn.get('start_prob_avg_triplet', fn.get('start_probability', 0.0))
+            site_type = fn.get('site_type', 'start')
+            if site_type == 'stop':
+                prob_max = fn.get('stop_prob_max_triplet', fn.get('stop_probability', 0.0))
+                prob_avg = fn.get('stop_prob_avg_triplet', fn.get('stop_probability', 0.0))
+                label = 'STOP'
+            else:
+                prob_max = fn.get('start_prob_max_triplet', fn.get('start_probability', 0.0))
+                prob_avg = fn.get('start_prob_avg_triplet', fn.get('start_probability', 0.0))
+                label = 'START'
             
             # Get full context from original sequence
             for result in results_data:
                 if result['sequence_index'] == seq_idx:
                     sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-200):pos]
+                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
                     codon = sequence[pos:pos+3]
-                    downstream_20 = sequence[pos+3:pos+23]
+                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
                     
                     # Create header with sequence name and position
                     header = f">sequence_{seq_idx}@{pos}"
                     
                     # Create visual line
-                    context_line = upstream_200 + codon + downstream_20
-                    marker_line = " " * len(upstream_200) + f"^^^ FN max={prob_max:.2f} avg={prob_avg:.2f}"
+                    context_line = upstream_200 + codon + downstream_150
+                    marker_line = " " * len(upstream_200) + f"^^^ FN {label} max={prob_max:.2f} avg={prob_avg:.2f}"
 
-                    # Per-position targets/predictions for window [-200..+20]
-                    start_idx = max(0, pos - 200)
-                    end_idx = min(len(sequence), pos + 3 + 20)
+                    # Per-position targets/predictions for window [-200..+150]
+                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
+                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
                     targets_window = result['targets'][start_idx:end_idx].tolist()
                     targets_line = ''.join(str(int(x)) for x in targets_window)
                     preds_window = result['predictions'][start_idx:end_idx].tolist()
@@ -686,7 +713,7 @@ def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_pa
 
 
 def main():
-    parser = argparse.ArgumentParser(description='START prediction analysis')
+    parser = argparse.ArgumentParser(description='START/STOP prediction analysis')
     parser.add_argument('--run-dir', type=str, required=True,
                        help='Run directory (parent of checkpoints). Outputs will be written here by default.')
     parser.add_argument('--model-file', type=str, default=None,
@@ -711,7 +738,7 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else run_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print("START Prediction Analysis")
+    print("START/STOP Prediction Analysis")
     
     # Resolve checkpoint
     try:
@@ -756,9 +783,32 @@ def main():
     
     # Analyze predictions
     predictions = analyze_all_predictions(results)
+
+    # Heuristic: ignore STOP predictions within STOP_FOLLOWUP_UTR3_SPACER_BP after first STOP TP per sequence
+    filtered_predictions = []
+    last_tp_stop_by_seq = {}
+    for p in predictions:
+        if p.get('site_type') != 'stop':
+            filtered_predictions.append(p)
+            continue
+        sid = p['sequence_index']
+        pos = p['atg_position']
+        if p.get('classification') == 'TP':
+            last_tp_stop_by_seq[sid] = pos
+            filtered_predictions.append(p)
+            continue
+        last_tp = last_tp_stop_by_seq.get(sid)
+        if last_tp is not None and 0 <= (pos - last_tp) <= STOP_FOLLOWUP_UTR3_SPACER_BP:
+            # suppress FP within the followup window
+            q = dict(p)
+            q['classification'] = 'IGNORED'
+            q['ignored_reason'] = f"within {STOP_FOLLOWUP_UTR3_SPACER_BP}bp of STOP TP at {last_tp}"
+            filtered_predictions.append(q)
+        else:
+            filtered_predictions.append(p)
     
     # Save results (FASTA + visual report)
-    base_name = save_analysis_results(predictions, {'start': start_metrics, 'stop': stop_metrics}, results, output_dir)
+    base_name = save_analysis_results(filtered_predictions, {'start': start_metrics, 'stop': stop_metrics}, results, output_dir)
     
     # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
