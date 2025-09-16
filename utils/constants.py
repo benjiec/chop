@@ -1,5 +1,7 @@
 
 ConventionalStopCodons = {'TAA', 'TAG', 'TGA'}
+ConventionalDonorDinucleotides = {'GT', 'GC', 'GA'}
+ConventionalAcceptorDinucleotides = {'AG'}
 
 
 class GenePredictionClass:
@@ -9,6 +11,8 @@ class GenePredictionClass:
     GENE = 3
     STOP = 4
     UTR3 = 5
+    DSS = 6
+    ASS = 7
 
     idx_to_cls = {
         INTERGENIC: 'INTERGENIC',
@@ -16,7 +20,9 @@ class GenePredictionClass:
         START: 'START',
         GENE: 'GENE',
         STOP: 'STOP',
-        UTR3: 'UTR3'
+        UTR3: 'UTR3',
+        DSS: 'DSS',
+        ASS: 'ASS'
     }
 
 

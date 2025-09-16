@@ -30,7 +30,8 @@ configuration.
 9. Follow DRY model in code development. Abstract common code into functions
 that can be re-called as much as possible.
 
-10. Always use chop_env virtual env.
+10. Always use chop_env virtual env. For example, running python should be like
+```source chop_env/bin/activate && python ...```
 
 11. Whenever possible, use constants in utils/constants.py. Specifically,
 always use the GenePredictionClass enums from that module to refer to training
