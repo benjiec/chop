@@ -77,11 +77,12 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
-def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1):
+def generate_test_data(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1, incl_start: bool = True, incl_stop: bool = True):
     """Generate fresh test data aligned to the model's max sequence length."""
     print(f"Generating {num_sequences} test sequences...")
 
-    dataset = generate_dataset(num_sequences, max_seq_length, layouts_per_contig=layouts_per_contig, add_negatives=True)
+    dataset = generate_dataset(num_sequences, max_seq_length, layouts_per_contig=layouts_per_contig,
+                               add_negatives=True, incl_start=incl_start, incl_stop=incl_stop)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
@@ -701,13 +702,8 @@ def main():
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
-    # CC readout info (for visibility; model decides based on checkpoint config)
-    parser.add_argument('--cc-enabled', action='store_true', default=True, help='Expect class-conditional readouts to be enabled in the checkpoint')
-    parser.add_argument('--start-before', type=int, default=300)
-    parser.add_argument('--start-after', type=int, default=0)
-    parser.add_argument('--stop-before', type=int, default=0)
-    parser.add_argument('--stop-after', type=int, default=300)
-    parser.add_argument('--cc-gap', type=int, default=0)
+    parser.add_argument('--excl-start', action='store_true', help='Disable UTR5-START dataset (enabled by default)')
+    parser.add_argument('--excl-stop', action='store_true', help='Disable STOP-UTR3 dataset (enabled by default)')
     
     args = parser.parse_args()
 
@@ -730,17 +726,17 @@ def main():
     model = load_trained_model(ckpt_path, args.device)
     if model is None:
         return
-    # Reflect CC status from checkpoint
+    # Reflect CC status from checkpoint (informational only)
     try:
         cc_cfg = getattr(model, 'config', {}).get('model', {}).get('class_conditional_readouts')
+        if cc_cfg and bool(cc_cfg.get('enabled')):
+            print("Class-conditional readouts: enabled")
+            for e in (cc_cfg.get('entries') or []):
+                print(f"  - {e.get('class')} before={e.get('before')} gap={e.get('gap')} after={e.get('after')}")
+        else:
+            print("Class-conditional readouts: disabled")
     except Exception:
-        cc_cfg = None
-    if cc_cfg and bool(cc_cfg.get('enabled')):
-        print("Class-conditional readouts: enabled")
-        for e in (cc_cfg.get('entries') or []):
-            print(f"  - {e.get('class')} before={e.get('before')} gap={e.get('gap')} after={e.get('after')}")
-    else:
-        print("Class-conditional readouts: disabled")
+        pass
     
     # Generate test data, aligned to model's max_seq_length
     model_max_len = getattr(getattr(model, 'config', {}).get('model', {}), 'get', lambda k, d=None: None)('max_seq_length', None)
@@ -750,7 +746,7 @@ def main():
             model_max_len = int(model.model.embedding.max_seq_length)
         except Exception:
             model_max_len = 1000
-    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len)
+    data_loader, dataset = generate_test_data(args.num_sequences, model_max_len, incl_start=not args.excl_start, incl_stop=not args.excl_stop)
     
     # Run predictions (with attention if requested)
     results = run_predictions(model, data_loader, args.device, return_attention=True)

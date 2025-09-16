@@ -81,7 +81,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     cc_enabled: bool = True,
                     start_before: int = 300, start_after: int = 0,
                     stop_before: int = 0, stop_after: int = 300,
-                    cc_gap: int = 0):
+                    cc_gap: int = 0, incl_start: bool = True, incl_stop: bool = True):
 
     # Create config
     config = create_boundary_config(
@@ -96,7 +96,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         cc_gap=cc_gap,
     )
     
-    dataset = generate_dataset(num_contigs, max_seq_length, layouts_per_contig)
+    dataset = generate_dataset(num_contigs, max_seq_length, layouts_per_contig, incl_start=incl_start, incl_stop=incl_stop)
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -150,12 +150,14 @@ def main():
     parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma (focusing parameter)')
     parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
     # Class-conditional readouts
-    parser.add_argument('--cc-enabled', action='store_true', default=True, help='Enable class-conditional readouts for START/STOP (enabled by default)')
+    parser.add_argument('--disable-cc', action='store_true', help='Disable class-conditional readouts for START/STOP (enabled by default)')
     parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
     parser.add_argument('--start-after', type=int, default=0, help='CC downstream window for START')
     parser.add_argument('--stop-before', type=int, default=0, help='CC upstream window for STOP')
     parser.add_argument('--stop-after', type=int, default=300, help='CC downstream window for STOP')
     parser.add_argument('--cc-gap', type=int, default=0, help='Relative donut gap for CC masks')
+    parser.add_argument('--excl-start', action='store_true', help='Disable UTR5-START dataset (enabled by default)')
+    parser.add_argument('--excl-stop', action='store_true', help='Disable STOP-UTR3 dataset (enabled by default)')
     
     args = parser.parse_args()
     
@@ -209,12 +211,14 @@ def main():
         use_focal=args.use_focal,
         focal_gamma=args.focal_gamma,
         focal_alpha=focal_alpha,
-        cc_enabled=args.cc_enabled,
+        cc_enabled=not args.disable_cc,
         start_before=args.start_before,
         start_after=args.start_after,
         stop_before=args.stop_before,
         stop_after=args.stop_after,
         cc_gap=args.cc_gap,
+        incl_start=not args.excl_start,
+        incl_stop=not args.excl_stop
     )
 
 if __name__ == "__main__":

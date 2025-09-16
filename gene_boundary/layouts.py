@@ -96,21 +96,32 @@ def blind_full_gene():
     return layout
 
 
-def generate_dataset(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1, add_negatives = False):
+def generate_dataset(num_sequences: int, max_seq_length: int, layouts_per_contig: int = 1, add_negatives = False, incl_start = True, incl_stop = True):
     print(f"Generating {num_sequences} test sequences...")
 
-    layouts = [
-        blind_utr5_spacer_start_random_decoy_flanks(),
-        blind_kozak_start_random_decoy_flanks(),
-        blind_stop_utr3_random_decoy_flanks(),
-        blind_stop_spacer_utr3_random_decoy_flanks(),
-        blind_full_gene(),
-        blind_full_gene()
-    ]
+    layouts = []
 
-    if add_negatives:
-        layouts.append(decoy_random_decopy_flanks())
-        layouts.append(decoy_random_decopy_flanks())
+    if incl_start:
+        layouts.extend([
+            blind_utr5_spacer_start_random_decoy_flanks(),
+            blind_kozak_start_random_decoy_flanks()
+        ])
+        if add_negatives:
+            layouts.append(decoy_random_decopy_flanks())
+
+    if incl_stop:
+        layouts.extend([
+            blind_stop_utr3_random_decoy_flanks(),
+            blind_stop_spacer_utr3_random_decoy_flanks()
+        ])
+        if add_negatives:
+            layouts.append(decoy_random_decopy_flanks())
+
+    if incl_start and incl_stop:
+        layouts.extend([
+            blind_full_gene(),
+            blind_full_gene()
+        ])
 
     random.shuffle(layouts)
 
