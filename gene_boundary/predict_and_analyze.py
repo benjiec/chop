@@ -784,31 +784,8 @@ def main():
     # Analyze predictions
     predictions = analyze_all_predictions(results)
 
-    # Heuristic: ignore STOP predictions within STOP_FOLLOWUP_UTR3_SPACER_BP after first STOP TP per sequence
-    filtered_predictions = []
-    last_tp_stop_by_seq = {}
-    for p in predictions:
-        if p.get('site_type') != 'stop':
-            filtered_predictions.append(p)
-            continue
-        sid = p['sequence_index']
-        pos = p['atg_position']
-        if p.get('classification') == 'TP':
-            last_tp_stop_by_seq[sid] = pos
-            filtered_predictions.append(p)
-            continue
-        last_tp = last_tp_stop_by_seq.get(sid)
-        if last_tp is not None and 0 <= (pos - last_tp) <= STOP_FOLLOWUP_UTR3_SPACER_BP:
-            # suppress FP within the followup window
-            q = dict(p)
-            q['classification'] = 'IGNORED'
-            q['ignored_reason'] = f"within {STOP_FOLLOWUP_UTR3_SPACER_BP}bp of STOP TP at {last_tp}"
-            filtered_predictions.append(q)
-        else:
-            filtered_predictions.append(p)
-    
     # Save results (FASTA + visual report)
-    base_name = save_analysis_results(filtered_predictions, {'start': start_metrics, 'stop': stop_metrics}, results, output_dir)
+    base_name = save_analysis_results(predictions, {'start': start_metrics, 'stop': stop_metrics}, results, output_dir)
     
     # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
