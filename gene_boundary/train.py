@@ -24,7 +24,7 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
                            use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
-                           use_focal: bool = False, focal_gamma: float = 2.0,
+                           use_focal: bool = False, focal_gamma: float = 1.5,
                            focal_alpha: Optional[list] = None,
                            cc_enabled: bool = True,
                            start_before: int = 300, start_after: int = 0,
@@ -76,7 +76,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
-                    use_focal: bool = False, focal_gamma: float = 2.0,
+                    use_focal: bool = False, focal_gamma: float = 1.5,
                     focal_alpha: Optional[list] = None,
                     cc_enabled: bool = True,
                     start_before: int = 300, start_after: int = 0,
@@ -147,7 +147,7 @@ def main():
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
     # Focal loss options
     parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
-    parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma (focusing parameter)')
+    parser.add_argument('--focal-gamma', type=float, default=1.5, help='Focal loss gamma (focusing parameter)')
     parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
     # Class-conditional readouts
     parser.add_argument('--disable-cc', action='store_true', help='Disable class-conditional readouts for START/STOP (enabled by default)')
