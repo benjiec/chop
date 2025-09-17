@@ -137,7 +137,8 @@ def generate_dataset(num_sequences: int, max_seq_length: int, layouts_per_contig
         full_targets = dataset.contig_targets[contig_idx]
         stop_targets = len([x for x in full_targets if x == P.STOP])
         start_targets = len([x for x in full_targets if x == P.START])
-        print(f"contig {contig_idx}: {len(full_sequence)} bps, {stop_targets} STOP bps, {start_targets} START bps")
+        if contig_idx % 100 == 0:
+            print(f"contig {contig_idx}: {len(full_sequence)} bps, {stop_targets} STOP bps, {start_targets} START bps")
         assert stop_targets in (0, 3) and start_targets in (0, 3)
 
     return dataset
