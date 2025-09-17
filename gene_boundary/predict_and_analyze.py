@@ -103,43 +103,62 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
             sequences = sequences.to(device)
             targets = targets.to(device)
             
-            # Run model
-            outputs = model(sequences, return_attention=return_attention)
+            # Convert to numpy for analysis (batch-agnostic), with optional windowed inference for long sequences
+            # Defer model calls to per-sequence to support windowing when needed
+            from utils.windowing import compute_window_slices, blend_logits
 
-            # Model returns tensor logits or (logits, attentions)
-            if return_attention and isinstance(outputs, tuple) and len(outputs) == 2:
-                logits, layer_attn = outputs
-            else:
-                logits = outputs
-                layer_attn = None
-
-            predictions = torch.argmax(logits, dim=-1)
-            probabilities = torch.softmax(logits, dim=-1)
-
-            # Convert to numpy for analysis (batch-agnostic)
             B = sequences.size(0)
             for b in range(B):
-                seq_np = sequences[b].cpu().numpy()
-                target_np = targets[b].cpu().numpy()
-                pred_np = predictions[b].cpu().numpy()
-                prob_np = probabilities[b].cpu().numpy()
+                seq_tokens_b = sequences[b:b+1]  # (1, L)
+                targets_b = targets[b].cpu().numpy()
+                L = int(seq_tokens_b.size(1))
 
+                # Resolve model max length
+                try:
+                    max_len = int(model.model.embedding.max_seq_length)
+                except Exception:
+                    # Fallback if model is a bare nn.Module with attribute
+                    max_len = int(getattr(getattr(model, 'embedding', None), 'max_seq_length', L))
+
+                if L <= max_len:
+                    out = model(seq_tokens_b, return_attention=return_attention)
+                    if return_attention and isinstance(out, tuple) and len(out) == 2:
+                        logits_b, layer_attn_b = out
+                    else:
+                        logits_b = out
+                        layer_attn_b = None
+                    preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
+                    probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
+                    attn_export = None
+                    if return_attention and layer_attn_b is not None:
+                        attn_export = {name: tensor[0].cpu().numpy() for name, tensor in layer_attn_b.items() if tensor is not None}
+                else:
+                    # Windowed inference and blending
+                    stride = max_len // 2 if max_len > 1 else 1
+                    slices = compute_window_slices(L, window=max_len, stride=stride)
+                    window_logits_np = []
+                    for (s, e) in slices:
+                        win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
+                        out = model(win_tokens, return_attention=False)
+                        if isinstance(out, tuple):
+                            out = out[0]
+                        wl = out[0].detach().cpu().numpy()  # (win_len, C)
+                        window_logits_np.append(wl)
+                    blended = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=None)
+                    probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
+                    preds_b = np.argmax(probs_b, axis=-1)
+                    attn_export = None  # Not supported for windowed case
+
+                seq_np = seq_tokens_b[0].cpu().numpy()
                 result_entry = {
                     'sequence_index': batch_idx if B == 1 else f"{batch_idx}:{b}",
                     'sequence_tokens': seq_np,
-                    'targets': target_np,
-                    'predictions': pred_np,
-                    'probabilities': prob_np
+                    'targets': targets_b,
+                    'predictions': preds_b,
+                    'probabilities': probs_b,
                 }
-                if return_attention and layer_attn is not None:
-                    # Convert attention dict to per-layer numpy arrays for this sequence
-                    attn_dict = {}
-                    for layer_name, attn_tensor in layer_attn.items():
-                        if attn_tensor is None:
-                            continue
-                        # attn_tensor: (batch, heads, L, L)
-                        attn_dict[layer_name] = attn_tensor[b].cpu().numpy()
-                    result_entry['attentions'] = attn_dict
+                if return_attention and attn_export is not None:
+                    result_entry['attentions'] = attn_export
 
                 all_results.append(result_entry)
             

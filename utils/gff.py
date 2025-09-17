@@ -13,6 +13,7 @@ from utils.constants import (
     ConventionalDonorDinucleotides,
     ConventionalAcceptorDinucleotides,
 )
+from utils.windowing import compute_window_slices
 
 
 @dataclass
@@ -92,20 +93,32 @@ def _encode_sequence(seq: str) -> np.ndarray:
 
 
 class GFFDataset:
-    def __init__(self, fasta_path: str, annotations_tsv_path: str):
+    def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
         self.targets: List[np.ndarray] = []
+        # Optional windowing
+        self.window: Optional[int] = int(window) if window and int(window) > 0 else None
+        self.stride: Optional[int] = int(stride) if stride and int(stride) > 0 else None
+        self.windows: List[Tuple[int, int, int]] = []  # (contig_idx, start, end)
         self._build()
 
     def __len__(self) -> int:
+        if self.window:
+            return len(self.windows)
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        seq = self.sequences[idx]
-        tgt = self.targets[idx]
-        return _encode_sequence(seq), tgt
+        if self.window:
+            contig_idx, start, end = self.windows[idx]
+            seq = self.sequences[contig_idx][start:end]
+            tgt = self.targets[contig_idx][start:end]
+            return _encode_sequence(seq), tgt
+        else:
+            seq = self.sequences[idx]
+            tgt = self.targets[idx]
+            return _encode_sequence(seq), tgt
 
     def _build(self):
         for ann in self.annotations:
@@ -184,3 +197,13 @@ class GFFDataset:
 
             self.sequences.append(seq)
             self.targets.append(tgt)
+
+        # If windowing is enabled, precompute windows over each contig
+        if self.window:
+            win = int(self.window)
+            st = int(self.stride) if self.stride else max(1, win // 2)
+            for contig_idx, seq in enumerate(self.sequences):
+                L = len(seq)
+                slices = compute_window_slices(L, window=win, stride=st)
+                for s, e in slices:
+                    self.windows.append((contig_idx, s, e))
