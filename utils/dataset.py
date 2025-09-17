@@ -104,7 +104,7 @@ class GenomicSyntheticTestingDataset(Dataset):
 
         # Encode DNA sequence to integers
         dna_vocab = {'A': DNAEmbed.A, 'T': DNAEmbed.T, 'G': DNAEmbed.G, 'C': DNAEmbed.C, 'N': DNAEmbed.N}
-        encoded_seq = np.array([dna_vocab.get(base, 4) for base in sequence])
+        encoded_seq = np.array([dna_vocab.get(base, DNAEmbed.N) for base in sequence])
         return torch.tensor(encoded_seq, dtype=torch.long), torch.tensor(np.array(targets, dtype=np.int64), dtype=torch.long)
 
 

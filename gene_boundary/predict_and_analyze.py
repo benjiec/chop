@@ -105,46 +105,43 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
             
             # Run model
             outputs = model(sequences, return_attention=return_attention)
-            
-            # Handle both dictionary and tensor outputs
-            if isinstance(outputs, dict):
-                gene_boundaries = outputs['gene_boundaries']
-                layer_attn = outputs.get('attentions') if 'attentions' in outputs else None
-            else:
-                # Model returns tensor or (logits, attentions)
-                if return_attention and isinstance(outputs, tuple) and len(outputs) == 2:
-                    gene_boundaries, layer_attn = outputs
-                else:
-                    gene_boundaries = outputs
-                    layer_attn = None
-            
-            predictions = torch.argmax(gene_boundaries, dim=-1)
-            probabilities = torch.softmax(gene_boundaries, dim=-1)
-            
-            # Convert to numpy for analysis
-            seq_np = sequences[0].cpu().numpy()
-            target_np = targets[0].cpu().numpy()
-            pred_np = predictions[0].cpu().numpy()
-            prob_np = probabilities[0].cpu().numpy()
-            
-            result_entry = {
-                'sequence_index': batch_idx,
-                'sequence_tokens': seq_np,
-                'targets': target_np,
-                'predictions': pred_np,
-                'probabilities': prob_np
-            }
-            if return_attention and layer_attn is not None:
-                # Convert attention dict to per-layer numpy arrays for this sequence
-                attn_dict = {}
-                for layer_name, attn_tensor in layer_attn.items():
-                    if attn_tensor is None:
-                        continue
-                    # attn_tensor: (batch, heads, L, L)
-                    attn_dict[layer_name] = attn_tensor[0].cpu().numpy()
-                result_entry['attentions'] = attn_dict
 
-            all_results.append(result_entry)
+            # Model returns tensor logits or (logits, attentions)
+            if return_attention and isinstance(outputs, tuple) and len(outputs) == 2:
+                logits, layer_attn = outputs
+            else:
+                logits = outputs
+                layer_attn = None
+
+            predictions = torch.argmax(logits, dim=-1)
+            probabilities = torch.softmax(logits, dim=-1)
+
+            # Convert to numpy for analysis (batch-agnostic)
+            B = sequences.size(0)
+            for b in range(B):
+                seq_np = sequences[b].cpu().numpy()
+                target_np = targets[b].cpu().numpy()
+                pred_np = predictions[b].cpu().numpy()
+                prob_np = probabilities[b].cpu().numpy()
+
+                result_entry = {
+                    'sequence_index': batch_idx if B == 1 else f"{batch_idx}:{b}",
+                    'sequence_tokens': seq_np,
+                    'targets': target_np,
+                    'predictions': pred_np,
+                    'probabilities': prob_np
+                }
+                if return_attention and layer_attn is not None:
+                    # Convert attention dict to per-layer numpy arrays for this sequence
+                    attn_dict = {}
+                    for layer_name, attn_tensor in layer_attn.items():
+                        if attn_tensor is None:
+                            continue
+                        # attn_tensor: (batch, heads, L, L)
+                        attn_dict[layer_name] = attn_tensor[b].cpu().numpy()
+                    result_entry['attentions'] = attn_dict
+
+                all_results.append(result_entry)
             
             if (batch_idx + 1) % 10 == 0:
                 print(f"  Processed {batch_idx + 1} sequences...")
