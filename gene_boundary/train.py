@@ -22,6 +22,7 @@ from gene_boundary.layouts import generate_dataset
 def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                            use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+                           dss_weight: float = 10.0, ass_weight: float = 10.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
                            use_focal: bool = False, focal_gamma: float = 1.5,
@@ -34,15 +35,25 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
     if use_class_weights:
-        # Order must match GenePredictionClass indices
-        # [INTERGENIC, UTR5, START, GENE, STOP, UTR3]
-        class_weights = [1.0, utr_weight, start_weight, 1.0, stop_weight, utr_weight]
+        # Build full weights map for all defined classes
+        weights_map = {
+            P.INTERGENIC: 1.0,
+            P.UTR5: utr_weight,
+            P.START: start_weight,
+            P.GENE: 1.0,
+            P.STOP: stop_weight,
+            P.UTR3: utr_weight,
+            P.DSS: dss_weight,
+            P.ASS: ass_weight,
+        }
+        class_weights = [weights_map.get(i, 1.0) for i in sorted(P.idx_to_cls.keys())]
     else:
+        weights_map = None
         class_weights = None
     
     cfg = create_base_config(
         max_seq_length=max_seq_length,
-        num_classes=6,
+        num_classes=len(P.idx_to_cls),
         class_names=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())],
         d_model=d_model,
         n_layers=n_layers,
@@ -74,6 +85,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     num_contigs: int = 20, layouts_per_contig: int = 1,
                     learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                     use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+                    dss_weight: float = 10.0, ass_weight: float = 10.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
                     use_focal: bool = False, focal_gamma: float = 1.5,
@@ -88,6 +100,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         d_model=d_model, n_layers=n_layers, n_heads=n_heads,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
         use_class_weights=use_class_weights, start_weight=start_weight, stop_weight=stop_weight, utr_weight=utr_weight,
+        dss_weight=dss_weight, ass_weight=ass_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
         use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
         cc_enabled=cc_enabled,
@@ -139,6 +152,8 @@ def main():
     parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
     parser.add_argument('--stop-weight', type=float, default=10.0, help='Weight for STOP class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
+    parser.add_argument('--dss-weight', type=float, default=10.0, help='Weight for DSS class')
+    parser.add_argument('--ass-weight', type=float, default=10.0, help='Weight for ASS class')
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
     parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
@@ -205,6 +220,8 @@ def main():
         start_weight=args.start_weight,
         stop_weight=args.stop_weight,
         utr_weight=args.utr_weight,
+        dss_weight=args.dss_weight,
+        ass_weight=args.ass_weight,
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
