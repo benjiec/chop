@@ -802,17 +802,6 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
 
     # Simplified: no distance-binned analysis
 
-def print_summary(start_metrics: Dict, stop_metrics: Dict):
-    """Print concise summary for START and STOP."""
-    print("\nSTART (ATG)")
-    print(f"  Sensitivity: {start_metrics['sensitivity']:.1%}")
-    print(f"  Precision: {start_metrics['precision']:.1%}")
-    print(f"  Specificity: {start_metrics['specificity']:.1%}")
-    print("\nSTOP (TAA/TAG/TGA)")
-    print(f"  Sensitivity: {stop_metrics['sensitivity']:.1%}")
-    print(f"  Precision: {stop_metrics['precision']:.1%}")
-    print(f"  Specificity: {stop_metrics['specificity']:.1%}")
-
 def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
     """Select a checkpoint to use.
     Priority: legacy --model-path > run_dir/checkpoints/model_file > best (lowest val_loss) in run_dir/checkpoints.
@@ -944,8 +933,7 @@ def main():
     dump_attention_fragments(results, predictions, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
     print(f"✓ Attention fragments written to: {attn_fa}")
     
-    # Print summary
-    print_summary(start_metrics, stop_metrics)
+    
 
 if __name__ == "__main__":
     main()
