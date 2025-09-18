@@ -63,12 +63,15 @@ class TestMetricsCallback(unittest.TestCase):
         cw[START] = 10.0
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader)
+        cb = F1Callback(val_loader, print_per_class_every=0)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)
         self.assertAlmostEqual(mod.logged['val_f1'], 1.0, places=6)
+        # Per-class keys logged (logger-only)
+        self.assertIn('val_f1_classes/START', mod.logged)
+        self.assertIn('val_f1_classes/STOP', mod.logged)
 
     def test_macro_f1_partial_for_center_only_prediction(self):
         dna = "NNNNNNTGANN"
@@ -90,13 +93,14 @@ class TestMetricsCallback(unittest.TestCase):
         cw = [1.0] * num_classes
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader)
+        cb = F1Callback(val_loader, print_per_class_every=0)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)
         self.assertGreaterEqual(mod.logged['val_f1'], 0.0)
         self.assertLessEqual(mod.logged['val_f1'], 1.0)
+        self.assertIn('val_f1_classes/STOP', mod.logged)
 
 
 if __name__ == '__main__':

@@ -5,14 +5,20 @@ import torch
 import numpy as np
 
 from utils.metrics import calculate_generic_metrics
+from utils.constants import GenePredictionClass as P
 
 
 class F1Callback(pl.Callback):
-    """Compute macro-average F1 over classes returned by calculate_generic_metrics on validation data."""
+    """Compute macro-average F1 over classes returned by calculate_generic_metrics on validation data.
 
-    def __init__(self, val_loader):
+    Also logs per-class F1 to the logger (not the progress bar) and can optionally
+    print a compact per-class summary to stdout every N epochs.
+    """
+
+    def __init__(self, val_loader, print_per_class_every: int = 1):
         super().__init__()
         self.val_loader = val_loader
+        self.print_per_class_every = int(print_per_class_every) if print_per_class_every is not None else 0
 
     @torch.no_grad()
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module):
@@ -50,6 +56,7 @@ class F1Callback(pl.Callback):
 
         # Compute macro-average F1 across all classes returned
         f1_values = []
+        per_class_f1 = {}
         for cls_idx, m in metrics_by_class.items():
             tp = float(m.get('tp', 0))
             fp = float(m.get('fp', 0))
@@ -59,9 +66,25 @@ class F1Callback(pl.Callback):
             denom = precision + sensitivity
             f1 = (2.0 * precision * sensitivity / denom) if denom > 0.0 else 0.0
             f1_values.append(f1)
+            cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+            per_class_f1[cls_name] = f1
 
         macro_f1 = float(np.mean(f1_values)) if f1_values else 0.0
 
+        # Progress bar: only macro F1
         pl_module.log('val_f1', macro_f1, prog_bar=True, on_epoch=True)
+
+        # Logger-only: per-class F1
+        for name, value in per_class_f1.items():
+            pl_module.log(f"val_f1_classes/{name}", float(value), prog_bar=False, on_epoch=True)
+
+        # Optional compact stdout summary
+        should_print = self.print_per_class_every and (
+            (trainer is None) or ((getattr(trainer, 'current_epoch', 0) + 1) % self.print_per_class_every == 0)
+        )
+        if should_print and per_class_f1:
+            ordered = sorted(per_class_f1.items(), key=lambda kv: kv[0])
+            summary = ' '.join([f"{k}={v:.2f}" for k, v in ordered])
+            print(f"F1 per class: {summary}")
 
 
