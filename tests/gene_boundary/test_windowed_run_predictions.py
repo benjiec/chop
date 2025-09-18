@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from gene_boundary.predict_and_analyze import run_predictions
+from synthetic.gene_boundary.predict_and_analyze import run_predictions
 from utils.windowing import compute_window_slices
 
 

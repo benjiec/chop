@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from gene_boundary.predict_and_analyze import (
+from synthetic.gene_boundary.predict_and_analyze import (
     calculate_generic_metrics,
     convert_tokens_to_sequence,
 )

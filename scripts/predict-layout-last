@@ -1,1 +1,1 @@
-PYTHONPATH=. python gene_boundary/predict_and_analyze.py --run-dir $1 --num-sequences 500 --model-file last.ckpt
+PYTHONPATH=. python synthetic/gene_boundary/predict_and_analyze.py --run-dir $1 --num-sequences 500 --model-file last.ckpt

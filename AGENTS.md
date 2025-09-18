@@ -44,3 +44,8 @@ Sensitivity = TP / (TP + FN)
 Precision = TP / (TP + FP)
 Specificity = TN / (TN + FP)
 
+12. Directory structure
+
+dna_learner - Re-usable DNA learning NN transformer model code
+gene_predictor - Training and prediction code for detection gene boundary and splice sites from GFF
+synthetic - Various experiments to learn how to use transformers to detect genomic features

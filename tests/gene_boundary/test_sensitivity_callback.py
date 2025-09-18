@@ -4,7 +4,7 @@ import unittest
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-from gene_boundary.sensitivity_callback import BoundarySensitivityCallback
+from synthetic.gene_boundary.sensitivity_callback import BoundarySensitivityCallback
 
 
 def encode_sequence_tokens(seq: str):

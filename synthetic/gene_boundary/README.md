@@ -6,9 +6,9 @@ START and STOP codons.
 ## Analyzing Predictions
 
 ```
-python gene_boundary/predict_and_analyze.py \
-  --model-path gene_boundary/boundary_run_<timestamp>/checkpoints/last.ckpt \
-  --output-dir gene_boundary/boundary_run_<timestamp> \
+python synthetic/gene_boundary/predict_and_analyze.py \
+  --model-path synthetic/gene_boundary/boundary_run_<timestamp>/checkpoints/last.ckpt \
+  --output-dir synthetic/gene_boundary/boundary_run_<timestamp> \
   --num-sequences 30
 ```
 
@@ -22,5 +22,5 @@ Prediction results appear under the test run directory
 
 ```
 # Train with asymmetric attention masks
-python gene_boundary/train.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
+python synthetic/gene_boundary/train.py --class-weights --start-weight 5 --kmer 0 --attention-masks "0:4,1:20:5,2:50:0" --layers 4
 ```

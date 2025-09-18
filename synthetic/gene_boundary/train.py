@@ -14,8 +14,8 @@ from typing import Optional, Dict
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
-from gene_boundary.sensitivity_callback import BoundarySensitivityCallback
-from gene_boundary.layouts import generate_dataset
+from synthetic.gene_boundary.sensitivity_callback import BoundarySensitivityCallback
+from synthetic.gene_boundary.layouts import generate_dataset
 
 
 def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
@@ -112,7 +112,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"gene_boundary/boundary_run_{timestamp}")
+    output_dir = Path(f"synthetic/gene_boundary/boundary_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def mk_training_cb(val_loader):
