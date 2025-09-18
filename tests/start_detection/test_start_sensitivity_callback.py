@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 
 class TestStartSensitivityCallback(unittest.TestCase):
     def test_start_sensitivity_callback_correctness(self):
-        from layout_detection.start_sensitivity_callback import StartSensitivityCallback
+        from synthetic.start_detection.start_sensitivity_callback import StartSensitivityCallback
 
         # Build two sequences length 16
         def enc(s):

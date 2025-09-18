@@ -17,7 +17,7 @@ whether an ATG should be classified as START vs INTERGENIC?
 
 Usage:
     cd /Users/benjie/git/chop && source chop_env/bin/activate
-    python layout_detection/train.py
+    python synthetic/start_detection/train.py
 """
 
 import sys
@@ -27,7 +27,7 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from gene_predictor.trainer import train
-from layout_detection.layer_analysis import LayerAnalyzer
+from synthetic.start_detection.layer_analysis import LayerAnalyzer
 import argparse
 from datetime import datetime
 import numpy as np
@@ -36,10 +36,10 @@ from typing import Optional, Dict
 
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
-from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
+from synthetic.start_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
-from layout_detection.start_sensitivity_callback import StartSensitivityCallback
-from layout_detection.layouts import generate_dataset
+from synthetic.start_detection.start_sensitivity_callback import StartSensitivityCallback
+from synthetic.start_detection.layouts import generate_dataset
 
 
 def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
@@ -98,10 +98,8 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(f"layout_detection/utr_start_test_run_{timestamp}")
+    output_dir = Path(f"synthetic/start_detection/utr_start_test_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # StartSensitivityCallback now imported from layout_detection.start_sensitivity_callback
 
     def mk_training_dynamic_cb(val_loader):
         return [

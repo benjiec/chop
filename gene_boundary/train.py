@@ -13,7 +13,6 @@ from typing import Optional, Dict
 
 from utils.constants import GenePredictionClass as P
 from gene_predictor.model import GenePredictorModule, create_base_config
-from layout_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
 from gene_boundary.sensitivity_callback import BoundarySensitivityCallback
 from gene_boundary.layouts import generate_dataset
@@ -116,23 +115,14 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
     output_dir = Path(f"gene_boundary/boundary_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # StartSensitivityCallback now imported from layout_detection.start_sensitivity_callback
-
-    def mk_training_dynamic_cb(val_loader):
-        return [
-            TrainingDynamicsCallback(
-                val_loader=val_loader,
-                output_dir=output_dir / "training_dynamics",
-                analysis_frequency=5
-            ),
-            BoundarySensitivityCallback(val_loader),
-        ]
+    def mk_training_cb(val_loader):
+        return [ BoundarySensitivityCallback(val_loader) ]
     
     model, val_loader = train(
         dataset,
         config,
         output_dir,
-        mk_training_dynamic_cb,
+        mk_training_cb,
         monitor_metric='val_event_ss',
         monitor_mode='max',
     )

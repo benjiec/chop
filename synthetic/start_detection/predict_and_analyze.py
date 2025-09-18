@@ -23,7 +23,7 @@ import re
 from utils.constants import DNAEmbed, GenePredictionClass
 from gene_predictor.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
-from layout_detection.layouts import generate_dataset
+from synthetic.start_detection.layouts import generate_dataset
 
 
 def load_trained_model(model_path: Path, device='cpu'):

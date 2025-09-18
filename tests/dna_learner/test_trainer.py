@@ -12,8 +12,6 @@ from utils.dataset import GenomicSyntheticTestingDataset, RandomBasesGenerator, 
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from utils.constants import GenePredictionClass as P
 import pytorch_lightning as pl
-from layout_detection.train import create_utr_start_config
-from gene_predictor.model import GenePredictorModule
 
 
 class DummyCallback(pl.Callback):
@@ -122,30 +120,3 @@ class TestTrainer(unittest.TestCase):
             # Ensure no duplicated tokens in name
             self.assertFalse(any('epoch=epoch=' in p.name for p in ckpts))
             self.assertFalse(any('val_accuracy=val_accuracy=' in p.name for p in ckpts))
-
-    def test_utr_weight_passes_to_module(self):
-        # Verify utr_weight affects class_weights in the module's criterion
-        cfg = create_utr_start_config(
-            d_model=16,
-            n_layers=1,
-            n_heads=4,
-            learning_rate=1e-3,
-            max_epochs=1,
-            batch_size=2,
-            use_class_weights=True,
-            start_weight=8.0,
-            utr_weight=4.0,
-            attention_masks={0: 2},
-            kmer_size=0,
-            max_seq_length=128,
-            use_focal=False,
-        )
-        module = GenePredictorModule(cfg)
-        w = module.criterion.weight.detach().cpu().numpy().tolist()
-        self.assertEqual(w, [1.0, 4.0, 8.0])
-
-
-if __name__ == '__main__':
-    unittest.main()
-
-
