@@ -14,7 +14,7 @@ from typing import Optional, Dict
 from utils.constants import GenePredictionClass as P
 from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
-from gene_predictor.sensitivity_callback import SensitivityCallback
+from gene_predictor.metrics_callback import F1Callback
 from utils.genome import AnnotatedGenomeDataset
 
 
@@ -117,14 +117,14 @@ def train(fna_fn: str, tsv_fn: str,
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def mk_training_cb(val_loader):
-        return [ SensitivityCallback(val_loader) ]
+        return [ F1Callback(val_loader) ]
     
     model, val_loader = train(
         dataset,
         config,
         output_dir,
         mk_training_cb,
-        monitor_metric='val_event_ss',
+        monitor_metric='val_f1',
         monitor_mode='max',
     )
 
