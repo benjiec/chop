@@ -4,7 +4,7 @@ import sys
 import os
 from pathlib import Path
 
-from dna_learner.trainer import train
+from dna_learner.trainer import train as run_trainer
 import argparse
 from datetime import datetime
 import numpy as np
@@ -119,7 +119,7 @@ def train(fna_fn: str, tsv_fn: str,
     def mk_training_cb(val_loader):
         return [ F1Callback(val_loader) ]
     
-    model, val_loader = train(
+    model, val_loader = run_trainer(
         dataset,
         config,
         output_dir,
