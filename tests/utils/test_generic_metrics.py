@@ -3,7 +3,7 @@
 import unittest
 import numpy as np
 
-from gene_predictor.predict_and_analyze import (
+from utils.metrics import (
     calculate_generic_metrics,
     convert_tokens_to_sequence,
 )
@@ -80,3 +80,5 @@ class TestGenericMetrics(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
