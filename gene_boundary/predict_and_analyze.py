@@ -183,7 +183,6 @@ def compute_triplet_prob_stats(probabilities: np.ndarray, position: int, class_i
         return {'pos': pos_prob, 'max': float(np.max(vec)), 'avg': float(np.mean(vec))}
     return {'pos': pos_prob, 'max': pos_prob, 'avg': pos_prob}
 
-
 def _calculate_metrics_for_triplets(all_predictions, codons: set, class_idx: int):
     """Calculate sensitivity, precision, specificity restricted to triplets in codons set for given class_idx."""
     tp_positions = fp_positions = fn_positions = tn_positions = 0
@@ -224,9 +223,6 @@ def calculate_start_stop_metrics(all_predictions):
     stop_metrics = _calculate_metrics_for_triplets(all_predictions, stop_codons, GenePredictionClass.STOP)
     return start_metrics, stop_metrics
 
-
-# --- New generic metrics ---
-
 def _discover_motif_len_for_class(results_data: List[Dict], class_idx: int, max_len: int = 5) -> Optional[int]:
     lengths: Dict[int, int] = {}
     for result in results_data:
@@ -255,7 +251,6 @@ def _discover_motif_len_for_class(results_data: List[Dict], class_idx: int, max_
             candidate = k
     return candidate if best_count > 0 else None
 
-
 def _collect_motifs_from_targets(results_data: List[Dict], class_idx: int, motif_len: int) -> set:
     motifs = set()
     for result in results_data:
@@ -269,7 +264,6 @@ def _collect_motifs_from_targets(results_data: List[Dict], class_idx: int, motif
             if len(segment) == motif_len and np.all(segment == class_idx):
                 motifs.add(seq[pos:pos+motif_len])
     return motifs
-
 
 def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0) -> Dict[int, Dict[str, float]]:
     has_targets = any(result.get('targets') is not None for result in results_data)
@@ -726,7 +720,6 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
     
     print(f"✓ Visual analysis saved to: {output_path}")
 
-
 def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
     """Dump top-k attended sequence fragments around predicted START/STOP sites to FASTA.
 
@@ -765,9 +758,6 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                         f.write(header)
                         f.write(f"{frag}\n")
 
-
-# ... existing code ...
-
 def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: List[Dict], output_dir: Path):
     """Save analysis results with timestamped filenames."""
     
@@ -795,12 +785,8 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     # Run validations and print a short footer to stdout for confidence
     validate_predictions(results_data, predictions)
 
-    # Simplified: no threshold sweeps
-
     # Return base_name so callers can dump additional artifacts named consistently
     return base_name
-
-    # Simplified: no distance-binned analysis
 
 def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
     """Select a checkpoint to use.
