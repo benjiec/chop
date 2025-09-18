@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+import gzip
 
 import numpy as np
 
@@ -9,8 +10,12 @@ from utils.windowing import compute_window_slices
 
 
 def write_temp(path: Path, content: str):
-    with open(path, 'w') as f:
-        f.write(content)
+    if str(path).endswith('.gz'):
+        with gzip.open(path, 'wt') as f:
+            f.write(content)
+    else:
+        with open(path, 'w') as f:
+            f.write(content)
 
 
 class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
@@ -28,7 +33,7 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            fasta_path = fp / "s.fna"
+            fasta_path = fp / "s.fna.gz"
             tsv_path = fp / "a.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)

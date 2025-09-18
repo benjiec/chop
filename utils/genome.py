@@ -3,6 +3,7 @@
 from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 from pathlib import Path
+import gzip
 
 import numpy as np
 
@@ -33,7 +34,12 @@ def _load_fasta(fasta_path: str) -> Dict[str, str]:
     records: Dict[str, str] = {}
     sid = None
     buf: List[str] = []
-    with open(fasta_path, 'r') as f:
+    # Support both plain text and gzip-compressed FASTA files
+    path_obj = Path(fasta_path)
+    is_gz = any(suf == '.gz' for suf in path_obj.suffixes)
+    open_fn = gzip.open if is_gz else open
+    mode = 'rt' if is_gz else 'r'
+    with open_fn(fasta_path, mode) as f:
         for line in f:
             line = line.strip()
             if not line:

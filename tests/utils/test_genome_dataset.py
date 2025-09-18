@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import os
 from pathlib import Path
+import gzip
 
 import numpy as np
 
@@ -12,8 +13,12 @@ from utils.constants import GenePredictionClass as P
 
 
 def write_temp(path: Path, content: str):
-    with open(path, 'w') as f:
-        f.write(content)
+    if str(path).endswith('.gz'):
+        with gzip.open(path, 'wt') as f:
+            f.write(content)
+    else:
+        with open(path, 'w') as f:
+            f.write(content)
 
 
 class TestAnnotatedGenomeDataset(unittest.TestCase):
@@ -26,7 +31,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
               "contig1\tgene1\t5\t20\t5\t20\t+\n"
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            fasta_path = fp / "seq.fna"
+            fasta_path = fp / "seq.fna.gz"
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
@@ -54,7 +59,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
               "contig2\tgene2\t11\t26\t11\t26\t-\n"
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            fasta_path = fp / "seq.fna"
+            fasta_path = fp / "seq.fna.gz"
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
@@ -82,7 +87,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
               "contig3\tgene3\t6\t30\t21\t30\t+\n"
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            fasta_path = fp / "seq.fna"
+            fasta_path = fp / "seq.fna.gz"
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
@@ -111,9 +116,9 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            write_temp(fp/"seq.fna", fasta)
+            write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -133,9 +138,9 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            write_temp(fp/"seq.fna", fasta)
+            write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -162,9 +167,9 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            write_temp(fp/"seq.fna", fasta)
+            write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             # START at last exon end: last exon [26,36) -> start_pos=33, labels 33..35 (slice 33:36)
             self.assertTrue(all(tgt[33:36] == P.START))
@@ -185,10 +190,10 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as td:
             fp = Path(td)
-            write_temp(fp/"seq.fna", fasta)
+            write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
             with self.assertRaises(AssertionError):
-                AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
 
 
 if __name__ == '__main__':
