@@ -7,7 +7,7 @@ import tempfile
 import torch
 
 from synthetic.start_detection.train import create_utr_start_config
-from gene_predictor.model import GenePredictorModule
+from dna_learner.model import GenePredictorModule
 
 
 class TestTrainer(unittest.TestCase):

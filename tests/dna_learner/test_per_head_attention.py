@@ -20,7 +20,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
-from gene_predictor.model import MaskedTransformerLayer
+from dna_learner.model import MaskedTransformerLayer
 
 class TestPerHeadAttention(unittest.TestCase):
     """Test suite for per-head attention masking."""

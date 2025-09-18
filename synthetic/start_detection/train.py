@@ -26,7 +26,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
-from gene_predictor.trainer import train
+from dna_learner.trainer import train
 from synthetic.start_detection.layer_analysis import LayerAnalyzer
 import argparse
 from datetime import datetime
@@ -35,7 +35,7 @@ from typing import Optional, Dict
 
 
 from utils.constants import GenePredictionClass as P
-from gene_predictor.model import GenePredictorModule, create_base_config
+from dna_learner.model import GenePredictorModule, create_base_config
 from synthetic.start_detection.training_dynamics_callback import TrainingDynamicsCallback
 from utils.constants import GenePredictionClass as P
 from synthetic.start_detection.start_sensitivity_callback import StartSensitivityCallback

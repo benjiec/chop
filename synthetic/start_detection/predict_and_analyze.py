@@ -21,7 +21,7 @@ import hashlib
 import re
 
 from utils.constants import DNAEmbed, GenePredictionClass
-from gene_predictor.model import GenePredictorModule as ModelModule
+from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from synthetic.start_detection.layouts import generate_dataset
 

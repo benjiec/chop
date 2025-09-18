@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 from pathlib import Path
 from typing import Optional, Callable, List
 
-from gene_predictor.model import GenePredictorModule
+from dna_learner.model import GenePredictorModule
 import shutil
 
 

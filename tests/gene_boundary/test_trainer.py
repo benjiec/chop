@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 import tempfile
 
-from gene_predictor.trainer import train as train_fn
+from dna_learner.trainer import train as train_fn
 from synthetic.gene_boundary.train import create_boundary_config
 from utils.dataset import GenomicSyntheticTestingDataset, RandomBasesGenerator, RandomUTR5Generator, AddATGGenerator
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES

@@ -4,7 +4,7 @@ import sys
 import os
 from pathlib import Path
 
-from gene_predictor.trainer import train
+from dna_learner.trainer import train
 import argparse
 from datetime import datetime
 import numpy as np
@@ -12,7 +12,7 @@ from typing import Optional, Dict
 
 
 from utils.constants import GenePredictionClass as P
-from gene_predictor.model import GenePredictorModule, create_base_config
+from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
 from synthetic.gene_boundary.sensitivity_callback import BoundarySensitivityCallback
 from synthetic.gene_boundary.layouts import generate_dataset

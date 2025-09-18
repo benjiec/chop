@@ -4,7 +4,7 @@ import unittest
 import torch
 import numpy as np
 
-from gene_predictor.model import (
+from dna_learner.model import (
     DNAEmbedding,
     MaskedTransformerLayer,
     GenePredictorModel,
