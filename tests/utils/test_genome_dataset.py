@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from utils.gff import GFFDataset
+from utils.genome import AnnotatedGenomeDataset
 from utils.constants import GenePredictionClass as P
 
 
@@ -16,7 +16,7 @@ def write_temp(path: Path, content: str):
         f.write(content)
 
 
-class TestGFFDataset(unittest.TestCase):
+class TestAnnotatedGenomeDataset(unittest.TestCase):
     def test_single_exon_plus_strand(self):
         # Build sequence with exon: start ATG at idx 4, stop TAA ending at idx 19 (0-based)
         # 1-based exon coordinates: start=5, end=20
@@ -30,7 +30,7 @@ class TestGFFDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = GFFDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
             self.assertEqual(len(ds), 1)
             seq_enc, tgt = ds[0]
             seq = f"NNNN{exon}NN"
@@ -58,7 +58,7 @@ class TestGFFDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = GFFDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
             seq_enc, tgt = ds[0]
             # For minus strand, START occupies last 3 bases of exon (indices 23..25), STOP occupies first 3 (10..12)
             self.assertTrue(all(tgt[23:26] == P.START))
@@ -86,7 +86,7 @@ class TestGFFDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = GFFDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
             _, tgt = ds[0]
             # Donor at 12..13, Acceptor at 18..19 (we label 2bp windows)
             self.assertTrue(all(tgt[12:14] == P.DSS))
@@ -113,7 +113,7 @@ class TestGFFDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = GFFDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -135,7 +135,7 @@ class TestGFFDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = GFFDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -164,7 +164,7 @@ class TestGFFDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = GFFDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
             _, tgt = ds[0]
             # START at last exon end: last exon [26,36) -> start_pos=33, labels 33..35 (slice 33:36)
             self.assertTrue(all(tgt[33:36] == P.START))
@@ -188,7 +188,7 @@ class TestGFFDataset(unittest.TestCase):
             write_temp(fp/"seq.fna", fasta)
             write_temp(fp/"ann.tsv", tsv)
             with self.assertRaises(AssertionError):
-                GFFDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
+                AnnotatedGenomeDataset(str(fp/"seq.fna"), str(fp/"ann.tsv"))
 
 
 if __name__ == '__main__':

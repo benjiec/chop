@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from utils.gff import GFFDataset
+from utils.genome import AnnotatedGenomeDataset
 from utils.windowing import compute_window_slices
 
 
@@ -13,10 +13,10 @@ def write_temp(path: Path, content: str):
         f.write(content)
 
 
-class TestGFFDatasetWindowing(unittest.TestCase):
+class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
     def test_windowing_splits_contig(self):
         # Simple contig of length 50 with a single + strand exon [10..40] (1-based)
-        # Ensure START (ATG) at exon start and STOP (TAA) at exon end per GFFDataset invariants
+        # Ensure START (ATG) at exon start and STOP (TAA) at exon end per AnnotatedGenomeDataset invariants
         seq_list = list('N' * 50)
         # 0-based positions: start_pos = 9..11, stop_pos = 37..39
         seq_list[9:12] = list('ATG')
@@ -34,7 +34,7 @@ class TestGFFDatasetWindowing(unittest.TestCase):
             write_temp(tsv_path, tsv)
 
             # Window smaller than contig -> expect multiple items
-            ds = GFFDataset(str(fasta_path), str(tsv_path), window=16, stride=8)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=16, stride=8)
             expected = compute_window_slices(50, window=16, stride=8)
             self.assertEqual(len(ds), len(expected))
 
@@ -45,7 +45,7 @@ class TestGFFDatasetWindowing(unittest.TestCase):
                 self.assertEqual(y.shape[0], e - s)
 
             # No windowing -> single item of full length
-            ds_full = GFFDataset(str(fasta_path), str(tsv_path))
+            ds_full = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
             self.assertEqual(len(ds_full), 1)
             x_full, y_full = ds_full[0]
             self.assertEqual(x_full.shape[0], 50)

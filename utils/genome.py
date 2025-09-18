@@ -92,7 +92,7 @@ def _encode_sequence(seq: str) -> np.ndarray:
     return np.array([vocab.get(ch, DNAEmbed.N) for ch in seq], dtype=np.int64)
 
 
-class GFFDataset:
+class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
