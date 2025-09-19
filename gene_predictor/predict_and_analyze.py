@@ -83,7 +83,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, max_seq_length: int, layouts_pe
     # not windowing in the dataset class, but rely on windowing here and then blending the results here
     dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    print(f"✓ Generated {len(dataset)} test windows")
+    print(f"✓ Generated {len(dataset)} test samples - windowing and blending results...")
     return data_loader, dataset
 
 

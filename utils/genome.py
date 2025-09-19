@@ -331,6 +331,8 @@ class AnnotatedGenomeDataset:
                 if c in per_class_count:
                     per_class_count[c] += 1
 
+        print(f"After balanced selection: {per_class_count}")
+
         # If still short (e.g., no informative windows), fill with remaining windows deterministically
         if len(selected) < target_num:
             remaining = [i for i in range(total_available) if i not in selected]
