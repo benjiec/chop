@@ -124,6 +124,8 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                 if L <= max_len:
                     out = model(seq_tokens_b, return_attention=return_attention)
                     predicted_count += 1
+                    if (predicted_count + 1) % 10 == 0:
+                        print(f"  Processed {predicted_count + 1} windows...")
                     if return_attention and isinstance(out, tuple) and len(out) == 2:
                         logits_b, layer_attn_b = out
                     else:
@@ -143,6 +145,8 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
                         out = model(win_tokens, return_attention=False)
                         predicted_count += 1
+                        if (predicted_count + 1) % 10 == 0:
+                            print(f"  Processed {predicted_count + 1} windows...")
                         if isinstance(out, tuple):
                             out = out[0]
                         wl = out[0].detach().cpu().numpy()  # (win_len, C)
@@ -165,9 +169,6 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
 
                 all_results.append(result_entry)
             
-            if (predicted_count + 1) % 10 == 0:
-                print(f"  Processed {predicted_count + 1} windows...")
-    
     print(f"✓ Completed predictions for {len(all_results)} sequences")
     return all_results
 
@@ -413,157 +414,204 @@ def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
     print(f"✓ Input sequences saved to: {output_path}")
 
 
-def generate_visual_output(predictions: List[Dict], results_data: List[Dict], output_path: Path):
-    """Generate visual sequence output showing predictions with context."""
-    
-    # Collect all predictions by explicit classification to prevent overlap
-    tps = [p for p in predictions if p.get('classification') == 'TP']
-    fps = [p for p in predictions if p.get('classification') == 'FP']
-    fns = [p for p in predictions if p.get('classification') == 'FN']
-    
+def _format_with_colors(text: str, positions_to_color: List[Tuple[int, int, str]], ansi_colors: bool) -> str:
+    """Return text with ANSI colors applied for given segments.
+
+    positions_to_color: list of (start, end_inclusive, classification) sorted by start.
+    classification determines the color: TP=green, FP=red, FN=yellow.
+    """
+    if not ansi_colors or not positions_to_color:
+        return text
+    color_map = {
+        'TP': '\u001b[1;32m',
+        'FP': '\u001b[1;31m',
+        'FN': '\u001b[1;33m',
+    }
+    reset = '\u001b[0m'
+    out = []
+    idx = 0
+    for (s, e, clsf) in positions_to_color:
+        s = max(0, s)
+        e = max(s - 1, e)
+        if s > idx:
+            out.append(text[idx:s])
+        out.append(color_map.get(clsf, ''))
+        out.append(text[s:e+1])
+        out.append(reset)
+        idx = e + 1
+    if idx < len(text):
+        out.append(text[idx:])
+    return ''.join(out)
+
+
+def _compute_span_stats(probabilities: np.ndarray, start: int, end_incl: int, class_index: int) -> Tuple[float, float]:
+    """Compute (max, avg) probability over [start, end_incl] for class_index."""
+    if probabilities is None or probabilities.shape[0] == 0:
+        return 0.0, 0.0
+    s = max(0, start)
+    e = min(probabilities.shape[0] - 1, end_incl)
+    vec = probabilities[s:e+1, class_index]
+    return float(np.max(vec)), float(np.mean(vec))
+
+
+def _extract_sites_from_labels(labels: np.ndarray, class_index: int) -> List[Tuple[int, int]]:
+    """Return list of (start, end_inclusive) spans where labels==class_index (contiguous runs)."""
+    spans = []
+    i = 0
+    L = int(len(labels))
+    while i < L:
+        if int(labels[i]) == int(class_index):
+            j = i + 1
+            while j < L and int(labels[j]) == int(class_index):
+                j += 1
+            spans.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+    return spans
+
+
+def _merge_site_priority_map(length: int, sites: List[Dict]) -> Tuple[List[bool], List[Optional[int]]]:
+    """Create per-position uppercase mask and site assignment with priority TP>FN>FP."""
+    uppercase = [False] * length
+    site_at: List[Optional[int]] = [None] * length
+    priority = {'FP': 1, 'FN': 2, 'TP': 3}
+    for sid, s in enumerate(sites):
+        clsf = s['classification']
+        p = priority.get(clsf, 0)
+        for pos in range(s['start'], s['end'] + 1):
+            if 0 <= pos < length:
+                prev = site_at[pos]
+                if prev is None:
+                    site_at[pos] = sid
+                    uppercase[pos] = True
+                else:
+                    prev_p = priority.get(sites[prev]['classification'], 0)
+                    if p > prev_p:
+                        site_at[pos] = sid
+                        uppercase[pos] = True
+    return uppercase, site_at
+
+
+def generate_per_contig_report(results_data: List[Dict], output_path: Path, class_weights: Optional[List[float]] = None,
+                               line_width: int = 100, ansi_colors: bool = True):
+    """Write one report per contig with colored spans and end-of-line annotations.
+
+    Included classes: any with weight>1.0 from class_weights; if None, defaults to START, STOP, DSS, ASS.
+    """
+    # Determine included classes
+    if class_weights and len(class_weights) > 0:
+        include_classes = {idx for idx, w in enumerate(class_weights) if float(w) > 1.0}
+    else:
+        include_classes = {GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS}
+
+    include_classes = {int(i) for i in include_classes if int(i) in GenePredictionClass.idx_to_cls}
+
     with open(output_path, 'w') as f:
-        f.write("Prediction Visual Analysis\n")
-        f.write("=" * 80 + "\n\n")
-        
-        # True Positives
-        f.write("TRUE POSITIVES:\n")
-        f.write("-" * 40 + "\n")
-        for i, tp in enumerate(tps):  # Show all TPs
-            seq_idx = tp['sequence_index']
-            pos = tp['atg_position']
-            site_type = tp.get('site_type', 'start')
-            if site_type == 'stop':
-                prob_max = tp.get('stop_prob_max_triplet', tp.get('stop_probability', 0.0))
-                prob_avg = tp.get('stop_prob_avg_triplet', tp.get('stop_probability', 0.0))
-                label = 'STOP'
-            else:
-                prob_max = tp.get('start_prob_max_triplet', tp.get('start_probability', 0.0))
-                prob_avg = tp.get('start_prob_avg_triplet', tp.get('start_probability', 0.0))
-                label = 'START'
-            
-            # Get full context from original sequence
-            for result in results_data:
-                if result['sequence_index'] == seq_idx:
-                    sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
-                    codon = sequence[pos:pos+3]
-                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
-                    
-                    # Create header with sequence name and position
-                    header = f">sequence_{seq_idx}@{pos}"
-                    
-                    # Create visual line
-                    context_line = upstream_200 + codon + downstream_150
-                    marker_line = " " * len(upstream_200) + f"^^^ TP {label} max={prob_max:.2f} avg={prob_avg:.2f}"
+        for result in results_data:
+            seq_idx = result['sequence_index']
+            sequence = convert_tokens_to_sequence(result['sequence_tokens'])
+            L = len(sequence)
+            targets = result['targets']
+            preds = result['predictions']
+            probs = result['probabilities']
 
-                    # Per-position targets/predictions for window [-200..+20]
-                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
-                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
-                    targets_window = result['targets'][start_idx:end_idx].tolist()
-                    targets_line = ''.join(str(int(x)) for x in targets_window)
-                    preds_window = result['predictions'][start_idx:end_idx].tolist()
-                    preds_line = ''.join(str(int(x)) for x in preds_window)
-                    
-                    f.write(f"{header}\n")
-                    f.write(f"{targets_line}\n")
-                    f.write(f"{context_line}\n")
-                    f.write(f"{preds_line}\n")
-                    f.write(f"{marker_line}\n")
-                    break
-        
-        # False Positives
-        f.write("\nFALSE POSITIVES:\n")
-        f.write("-" * 40 + "\n")
-        for i, fp in enumerate(fps):  # Show all FPs
-            seq_idx = fp['sequence_index']
-            pos = fp['atg_position']
-            site_type = fp.get('site_type', 'start')
-            if site_type == 'stop':
-                prob_max = fp.get('stop_prob_max_triplet', fp.get('stop_probability', 0.0))
-                prob_avg = fp.get('stop_prob_avg_triplet', fp.get('stop_probability', 0.0))
-                label = 'STOP'
-            else:
-                prob_max = fp.get('start_prob_max_triplet', fp.get('start_probability', 0.0))
-                prob_avg = fp.get('start_prob_avg_triplet', fp.get('start_probability', 0.0))
-                label = 'START'
-            
-            # Get full context from original sequence
-            for result in results_data:
-                if result['sequence_index'] == seq_idx:
-                    sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
-                    codon = sequence[pos:pos+3]
-                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
-                    
-                    # Create header with sequence name and position
-                    header = f">sequence_{seq_idx}@{pos}"
-                    
-                    # Create visual line
-                    context_line = upstream_200 + codon + downstream_150
-                    marker_line = " " * len(upstream_200) + f"^^^ FP {label} max={prob_max:.2f} avg={prob_avg:.2f}"
+            # Build sites from targets (TP/FN) and predictions (FP)
+            sites: List[Dict] = []
+            for cls_idx in sorted(include_classes):
+                # True sites
+                true_spans = _extract_sites_from_labels(targets, cls_idx)
+                pred_spans = _extract_sites_from_labels(preds, cls_idx)
 
-                    # Per-position targets/predictions for window [-200..+20]
-                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
-                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
-                    targets_window = result['targets'][start_idx:end_idx].tolist()
-                    targets_line = ''.join(str(int(x)) for x in targets_window)
-                    preds_window = result['predictions'][start_idx:end_idx].tolist()
-                    preds_line = ''.join(str(int(x)) for x in preds_window)
-                    
-                    f.write(f"{header}\n")
-                    f.write(f"{targets_line}\n")
-                    f.write(f"{context_line}\n")
-                    f.write(f"{preds_line}\n")
-                    f.write(f"{marker_line}\n")
-                    break
-        
-        # False Negatives
-        f.write("\nFALSE NEGATIVES (Missed):\n")
-        f.write("-" * 40 + "\n")
-        for i, fn in enumerate(fns):  # Show all FNs
-            seq_idx = fn['sequence_index']
-            pos = fn['atg_position']
-            site_type = fn.get('site_type', 'start')
-            if site_type == 'stop':
-                prob_max = fn.get('stop_prob_max_triplet', fn.get('stop_probability', 0.0))
-                prob_avg = fn.get('stop_prob_avg_triplet', fn.get('stop_probability', 0.0))
-                label = 'STOP'
-            else:
-                prob_max = fn.get('start_prob_max_triplet', fn.get('start_probability', 0.0))
-                prob_avg = fn.get('start_prob_avg_triplet', fn.get('start_probability', 0.0))
-                label = 'START'
-            
-            # Get full context from original sequence
-            for result in results_data:
-                if result['sequence_index'] == seq_idx:
-                    sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-                    upstream_200 = sequence[max(0, pos-VIS_UPSTREAM_BP):pos]
-                    codon = sequence[pos:pos+3]
-                    downstream_150 = sequence[pos+3:pos+3+VIS_DOWNSTREAM_BP]
-                    
-                    # Create header with sequence name and position
-                    header = f">sequence_{seq_idx}@{pos}"
-                    
-                    # Create visual line
-                    context_line = upstream_200 + codon + downstream_150
-                    marker_line = " " * len(upstream_200) + f"^^^ FN {label} max={prob_max:.2f} avg={prob_avg:.2f}"
+                # Index predicted spans for FP check
+                pred_spans_copy = list(pred_spans)
 
-                    # Per-position targets/predictions for window [-200..+150]
-                    start_idx = max(0, pos - VIS_UPSTREAM_BP)
-                    end_idx = min(len(sequence), pos + 3 + VIS_DOWNSTREAM_BP)
-                    targets_window = result['targets'][start_idx:end_idx].tolist()
-                    targets_line = ''.join(str(int(x)) for x in targets_window)
-                    preds_window = result['predictions'][start_idx:end_idx].tolist()
-                    preds_line = ''.join(str(int(x)) for x in preds_window)
-                    
-                    f.write(f"{header}\n")
-                    f.write(f"{targets_line}\n")
-                    f.write(f"{context_line}\n")
-                    f.write(f"{preds_line}\n")
-                    f.write(f"{marker_line}\n")
-                    break
-    
-    print(f"✓ Visual analysis saved to: {output_path}")
+                # For each true span, decide TP/FN
+                for (s, e) in true_spans:
+                    # predicted positive if any overlap with predicted labels
+                    pred_pos = any(int(preds[j]) == int(cls_idx) for j in range(s, e + 1) if 0 <= j < L)
+                    clsf = 'TP' if pred_pos else 'FN'
+                    pmax, pavg = _compute_span_stats(probs, s, e, int(cls_idx))
+                    sites.append({
+                        'start': s,
+                        'end': e,
+                        'class_index': int(cls_idx),
+                        'label': GenePredictionClass.idx_to_cls[int(cls_idx)],
+                        'classification': clsf,
+                        'prob_max': pmax,
+                        'prob_avg': pavg,
+                    })
+
+                # Add FP spans: predicted spans that do not overlap any true span of same class
+                for (ps, pe) in pred_spans_copy:
+                    overlaps = any(not (pe < ts or ps > te) for (ts, te) in true_spans)
+                    if not overlaps:
+                        pmax, pavg = _compute_span_stats(probs, ps, pe, int(cls_idx))
+                        sites.append({
+                            'start': ps,
+                            'end': pe,
+                            'class_index': int(cls_idx),
+                            'label': GenePredictionClass.idx_to_cls[int(cls_idx)],
+                            'classification': 'FP',
+                            'prob_max': pmax,
+                            'prob_avg': pavg,
+                        })
+
+            # Prepare per-position mapping for uppercase and color priority
+            uppercase, site_at = _merge_site_priority_map(L, sites)
+
+            # Header per sequence
+            f.write(f">sequence_{seq_idx}\n")
+
+            # Render sequence in chunks
+            base_seq = sequence.lower()
+            for start in range(0, L, int(line_width)):
+                end_excl = min(L, start + int(line_width))
+                # Build line characters with uppercase at sites
+                chars = []
+                segments_for_color: List[Tuple[int, int, str]] = []
+                current_sid = None
+                seg_start = None
+                for gpos in range(start, end_excl):
+                    sid = site_at[gpos]
+                    ch = base_seq[gpos]
+                    if sid is not None:
+                        ch = ch.upper()
+                    chars.append(ch)
+                    if sid != current_sid:
+                        # close previous
+                        if current_sid is not None:
+                            segments_for_color.append((seg_start - start, gpos - 1 - start, sites[current_sid]['classification']))
+                        # open new if present
+                        if sid is not None:
+                            seg_start = gpos
+                        current_sid = sid
+                if current_sid is not None:
+                    segments_for_color.append((seg_start - start, end_excl - 1 - start, sites[current_sid]['classification']))
+
+                line_text = ''.join(chars)
+                # Apply colors if enabled
+                if ansi_colors and segments_for_color:
+                    # translate segments to local positions
+                    colored_segments = []
+                    for (ls, le, clsf) in segments_for_color:
+                        colored_segments.append((ls, le, clsf))
+                    line_text = _format_with_colors(line_text, colored_segments, ansi_colors=True)
+
+                # Build end-of-line annotations
+                line_sites = []
+                for idx, s in enumerate(sites):
+                    if not (s['end'] < start or s['start'] >= end_excl):
+                        line_sites.append((s['start'], s))
+                line_sites.sort(key=lambda t: t[0])
+                if line_sites:
+                    annotations = []
+                    for _, s in line_sites:
+                        annotations.append(f"{s['label']} {s['prob_max']:.2f}/{s['prob_avg']:.2f}")
+                    line_text = f"{line_text}  " + "; ".join(annotations)
+
+                f.write(f"{line_text}\n")
+    print(f"✓ Per-contig report saved to: {output_path}")
 
 
 def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
@@ -605,8 +653,9 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                         f.write(f"{frag}\n")
 
 
-def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: List[Dict], output_dir: Path):
-    """Save analysis results with timestamped filenames."""
+def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weights: Optional[List[float]] = None,
+                         line_width: int = 100, ansi_colors: bool = True):
+    """Save analysis results with timestamped filenames (FASTA + per-contig colored report)."""
     
     # Generate timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -625,12 +674,9 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
     fasta_output = output_dir / f"{base_name}.fa"
     save_input_sequences_fasta(results_data, fasta_output)
     
-    # Generate visual output
+    # Generate per-contig colored report
     report_output = output_dir / f"{base_name}.txt"
-    generate_visual_output(predictions, results_data, report_output)
-
-    # Run validations and print a short footer to stdout for confidence
-    validate_predictions(results_data, predictions)
+    generate_per_contig_report(results_data, report_output, class_weights=class_weights, line_width=line_width, ansi_colors=ansi_colors)
 
     # Return base_name so callers can dump additional artifacts named consistently
     return base_name
@@ -691,6 +737,9 @@ def main():
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
+    parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
+    parser.add_argument('--no-ansi-colors', dest='ansi_colors', action='store_false', help='Disable ANSI colors in the report')
+    parser.set_defaults(ansi_colors=True)
     
     args = parser.parse_args()
 
@@ -746,11 +795,11 @@ def main():
         cw = None
     generic = calculate_generic_metrics(results, class_weights=cw, min_weight=1.0)
     
-    # Analyze predictions
+    # Analyze predictions for attention export only (legacy functionality)
     predictions = analyze_all_predictions(results)
 
-    # Save results (FASTA + visual report)
-    base_name = save_analysis_results(predictions, generic, results, output_dir)
+    # Save results (FASTA + per-contig colored report)
+    base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors)
 
     # Print generic per-class metrics (for classes selected above)
     if generic:
