@@ -58,8 +58,8 @@ def _collect_motifs_from_targets(results_data: List[Dict], class_idx: int, motif
     return motifs
 
 
-def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0) -> Dict[int, Dict[str, float]]:
-    """Compute per-class TP/FP/FN/TN and derived metrics over results_data.
+def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0):
+    """Compute per-class metrics and also return motif-window events for visualization.
 
     Behavior overview
     -----------------
@@ -87,10 +87,18 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
     - Predicted-only on a non-motif substring (e.g., START on "TTG" when {"ATG"}) → ignored (no FP).
 
     DSS/ASS (2-mer) behave the same way with their discovered motif set and a 2-length window.
+    
+    Returns
+    -------
+    (metrics_by_class, window_events)
+        - metrics_by_class: dict[class_index] -> metrics dict
+        - window_events: list of dict with keys:
+            {'sequence_index', 'class_index', 'class_label', 'start', 'end', 'classification'}
+          Included only when target_is_cls or pred_is_cls (no TN windows).
     """
     has_targets = any(result.get('targets') is not None for result in results_data)
     if not has_targets:
-        return {}
+        return {}, []
 
     classes_in_targets = set()
     for result in results_data:
@@ -106,6 +114,7 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
         candidate_classes = sorted(classes_in_targets)
 
     metrics_by_class: Dict[int, Dict[str, float]] = {}
+    window_events: List[Dict] = []
 
     motif_len_map: Dict[int, Optional[int]] = {c: _discover_motif_len_for_class(results_data, c) for c in candidate_classes}
     motif_sets: Dict[int, set] = {}
@@ -123,6 +132,7 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
                 tgt = result['targets']
                 pred = result['predictions']
                 L = min(len(seq), len(tgt), len(pred))
+                seq_idx = result.get('sequence_index')
                 for pos in range(0, max(0, L - mlen + 1)):
                     if seq[pos:pos+mlen] not in motifs:
                         continue
@@ -130,10 +140,34 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
                     pred_is_cls = bool((pred[pos:pos+mlen] == class_idx).any())
                     if pred_is_cls and target_is_cls:
                         tp += 1
+                        window_events.append({
+                            'sequence_index': seq_idx,
+                            'class_index': int(class_idx),
+                            'class_label': str(class_idx),
+                            'start': pos,
+                            'end': pos + mlen - 1,
+                            'classification': 'TP',
+                        })
                     elif pred_is_cls and not target_is_cls:
                         fp += 1
+                        window_events.append({
+                            'sequence_index': seq_idx,
+                            'class_index': int(class_idx),
+                            'class_label': str(class_idx),
+                            'start': pos,
+                            'end': pos + mlen - 1,
+                            'classification': 'FP',
+                        })
                     elif (not pred_is_cls) and target_is_cls:
                         fn += 1
+                        window_events.append({
+                            'sequence_index': seq_idx,
+                            'class_index': int(class_idx),
+                            'class_label': str(class_idx),
+                            'start': pos,
+                            'end': pos + mlen - 1,
+                            'classification': 'FN',
+                        })
                     else:
                         tn += 1
         else:
@@ -161,6 +195,20 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
             'specificity': specificity,
         }
 
+    # Fill human-readable labels for events now that metrics_by_class is assembled
+    from utils.constants import GenePredictionClass as P
+    for ev in window_events:
+        idx = int(ev['class_index'])
+        ev['class_label'] = P.idx_to_cls.get(idx, str(idx))
+    return metrics_by_class, window_events
+
+
+def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0) -> Dict[int, Dict[str, float]]:
+    """Back-compat wrapper: return only metrics, discarding window events."""
+    metrics_by_class, _events = calculate_generic_metrics_and_predictions(results_data, class_weights=class_weights, min_weight=min_weight)
     return metrics_by_class
+
+# Back-compat alias (window events == motif-span predictions)
+calculate_generic_metrics_with_windows = calculate_generic_metrics_and_predictions
 
 

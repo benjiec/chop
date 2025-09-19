@@ -39,12 +39,18 @@ you need class index to class name mapping, use
 utils.constants.GenePredictionClass.idx_to_cls. Don't roll your own
 dictionaries.
 
-11. Use these metrics and terminology.
+11. When removing old code we are not using, which you should almost always do,
+please remove all the code including the function signature/definitino, and
+don't just leave an empty "pass" or "return None" as a placeholder. And remove
+tests for logic we don't use anymore. And, DO NOT leave a comment saying you
+removed something.
+
+12. Use these metrics and terminology.
 Sensitivity = TP / (TP + FN)
 Precision = TP / (TP + FP)
 Specificity = TN / (TN + FP)
 
-12. Directory structure
+13. Directory structure
 
 dna_learner - Re-usable DNA learning NN transformer model code
 gene_predictor - Training and prediction code for detection gene boundary and splice sites from GFF

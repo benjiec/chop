@@ -5,6 +5,7 @@ import numpy as np
 
 from utils.metrics import (
     calculate_generic_metrics,
+    calculate_generic_metrics_and_predictions,
     convert_tokens_to_sequence,
 )
 from utils.constants import GenePredictionClass as P
@@ -76,6 +77,47 @@ class TestGenericMetrics(unittest.TestCase):
         # Expect at least 1 TP and 1 FN counted on motif-aware windows
         self.assertGreaterEqual(m[P.DSS]['tp'], 1)
         self.assertGreaterEqual(m[P.DSS]['fn'], 1)
+
+    def test_window_events_for_triplet_start(self):
+        # Two ATGs; predict one correctly, miss one; also add a non-motif predicted START elsewhere
+        dna = 'NNNNATGNNNATGNNNTTG'
+        tokens = encode_sequence(dna)
+        targets = np.zeros(len(dna), dtype=np.int64)
+        # ATGs at 4..6 and 10..12
+        targets[4:7] = P.START
+        targets[10:13] = P.START
+        predictions = np.zeros(len(dna), dtype=np.int64)
+        predictions[4:7] = P.START  # TP at first ATG
+        # Predicted-only START at a non-motif window "TTG" near end
+        predictions[16:18] = P.START
+        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        cw = [1.0] * (max(P.idx_to_cls.keys()) + 1)
+        cw[P.START] = 10.0
+        m, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
+        # Expect TP for first ATG window [4,6] and FN for second [10,12]
+        spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.START}
+        self.assertIn((4, 6, 'TP'), spans)
+        self.assertIn((10, 12, 'FN'), spans)
+        # Non-motif predicted-only window should not appear as FP event
+        self.assertTrue(all(e['classification'] != 'FP' or not (e['start'] == 16 and e['end'] == 18)
+                            for e in events if e['class_index'] == P.START))
+
+    def test_window_events_for_dss_dinucleotide(self):
+        # Create a simple sequence with two DSS 2-mers; predict only one
+        dna = 'NNNNNNNNNNNNNNNNNNNNNNNNNNNNNN'
+        tokens = encode_sequence(dna)
+        targets = np.zeros(len(dna), dtype=np.int64)
+        targets[5:7] = P.DSS  # span [5,6]
+        targets[20:22] = P.DSS  # span [20,21]
+        predictions = np.zeros(len(dna), dtype=np.int64)
+        predictions[5:7] = P.DSS  # TP at first DSS, FN at second
+        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        cw = [1.0] * (max(P.idx_to_cls.keys()) + 1)
+        cw[P.DSS] = 10.0
+        m, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
+        spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.DSS}
+        self.assertIn((5, 6, 'TP'), spans)
+        self.assertIn((20, 21, 'FN'), spans)
 
 
 if __name__ == '__main__':

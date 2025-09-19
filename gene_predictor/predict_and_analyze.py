@@ -15,11 +15,7 @@ from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_
 from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
-from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics
-
-# DRY visualization window sizes
-VIS_UPSTREAM_BP = 200
-VIS_DOWNSTREAM_BP = 150
+from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
 
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -173,232 +169,6 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
     return all_results
 
 
-def compute_triplet_prob_stats(probabilities: np.ndarray, position: int, class_index: int) -> Dict[str, float]:
-    """Compute per-position probability and max/avg across codon triplet for given class index."""
-    if probabilities is None or probabilities.shape[0] == 0:
-        return {'pos': 0.0, 'max': 0.0, 'avg': 0.0}
-    pos_prob = float(probabilities[position, class_index]) if 0 <= position < probabilities.shape[0] else 0.0
-    if position + 2 < probabilities.shape[0]:
-        vec = probabilities[position:position+3, class_index]
-        return {'pos': pos_prob, 'max': float(np.max(vec)), 'avg': float(np.mean(vec))}
-    return {'pos': pos_prob, 'max': pos_prob, 'avg': pos_prob}
- 
-
-def analyze_all_predictions(results_data):
-    """Analyze START and STOP predictions with sequence context (triplet-aware)."""
-    
-    print("Analyzing START/STOP predictions...")
-    
-    all_predictions = []
-    
-    for result in results_data:
-        seq_idx = result['sequence_index']
-        sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-        targets = result['targets']
-        predictions = result['predictions']
-        probabilities = result['probabilities']
-        
-        # print(f"Sequence {seq_idx}: length {len(sequence)}")
-        
-        # Analyze START sites (ATG)
-        atg_count = 0
-        tp_count = 0
-        fp_count = 0
-        fn_count = 0
-        seen_positions = set()
-        
-        for pos in range(len(sequence) - 2):
-            if sequence[pos:pos+3] != 'ATG':
-                continue
-            atg_count += 1
-
-            # Triplet-aware signals (START)
-            target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
-            pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
-            stats = compute_triplet_prob_stats(probabilities, pos, GenePredictionClass.START)
-            prob_pos = stats['pos']
-            prob_triplet_max = stats['max']
-            prob_triplet_avg = stats['avg']
-
-            is_target_start = bool((target_triplet == GenePredictionClass.START).any())
-            is_predicted_start = bool((pred_triplet == GenePredictionClass.START).any())
-
-            # Only include ATGs that were either predicted as START or should be START
-            if is_predicted_start or is_target_start:
-                key = (seq_idx, pos)
-                if key in seen_positions:
-                    raise ValueError(f"Duplicate ATG position detected for sequence {seq_idx} at position {pos}")
-                seen_positions.add(key)
-
-                if is_predicted_start and is_target_start:
-                    classification = "TP"
-                    tp_count += 1
-                elif is_predicted_start and not is_target_start:
-                    classification = "FP"
-                    fp_count += 1
-                elif (not is_predicted_start) and is_target_start:
-                    classification = "FN"
-                    fn_count += 1
-                else:
-                    continue
-
-                # Get context
-                upstream = sequence[max(0, pos-20):pos]
-                downstream = sequence[pos+3:pos+23]
-
-                # Determine target class name (at pos)
-                target_class = targets[pos] if pos < len(targets) else -1
-                target_name = GenePredictionClass.idx_to_cls[int(target_class)]
-
-                prediction_data = {
-                    'sequence_index': seq_idx,
-                    'region_positions': [pos],
-                    'atg_position': pos,
-                    'actual_codon': 'ATG',
-                    'site_type': 'start',
-                    'is_true_positive': (classification == 'TP'),
-                    'classification': classification,
-                    'target_class': target_name,
-                    'start_probability': float(prob_pos),
-                    'start_prob_max_triplet': float(prob_triplet_max),
-                    'start_prob_avg_triplet': float(prob_triplet_avg),
-                    'upstream_20': upstream,
-                    'downstream_20': downstream,
-                    'region_length': 1,
-                    'pred_triplet': pred_triplet.tolist() if hasattr(pred_triplet, 'tolist') else list(pred_triplet),
-                }
-
-                all_predictions.append(prediction_data)
-
-        # Analyze STOP sites (TAA/TAG/TGA)
-        seen_positions_stop = set()
-        for pos in range(len(sequence) - 2):
-            triplet = sequence[pos:pos+3]
-            if triplet not in stop_codons:
-                continue
-            target_triplet = targets[pos:pos+3] if pos+2 < len(targets) else np.array([], dtype=np.int64)
-            pred_triplet = predictions[pos:pos+3] if pos+2 < len(predictions) else np.array([], dtype=np.int64)
-            stats = compute_triplet_prob_stats(probabilities, pos, GenePredictionClass.STOP)
-            prob_pos = stats['pos']
-            prob_triplet_max = stats['max']
-            prob_triplet_avg = stats['avg']
-
-            is_target_stop = bool((target_triplet == GenePredictionClass.STOP).any())
-            is_predicted_stop = bool((pred_triplet == GenePredictionClass.STOP).any())
-            if not (is_predicted_stop or is_target_stop):
-                continue
-            key = (seq_idx, pos)
-            if key in seen_positions_stop:
-                raise ValueError(f"Duplicate STOP position detected for sequence {seq_idx} at position {pos}")
-            seen_positions_stop.add(key)
-
-            if is_predicted_stop and is_target_stop:
-                classification = "TP"
-            elif is_predicted_stop and not is_target_stop:
-                classification = "FP"
-            elif (not is_predicted_stop) and is_target_stop:
-                classification = "FN"
-            else:
-                continue
-
-            upstream = sequence[max(0, pos-20):pos]
-            downstream = sequence[pos+3:pos+23]
-            target_class = targets[pos] if pos < len(targets) else -1
-            target_name = GenePredictionClass.idx_to_cls[int(target_class)]
-            prediction_data = {
-                'sequence_index': seq_idx,
-                'region_positions': [pos],
-                'atg_position': pos,
-                'actual_codon': triplet,
-                'site_type': 'stop',
-                'is_true_positive': (classification == 'TP'),
-                'classification': classification,
-                'target_class': target_name,
-                'stop_probability': float(prob_pos),
-                'stop_prob_max_triplet': float(prob_triplet_max),
-                'stop_prob_avg_triplet': float(prob_triplet_avg),
-                'upstream_20': upstream,
-                'downstream_20': downstream,
-                'region_length': 1,
-                'pred_triplet': pred_triplet.tolist() if hasattr(pred_triplet, 'tolist') else list(pred_triplet),
-            }
-
-            all_predictions.append(prediction_data)
-        
-        # print(f"  Total ATGs: {atg_count}, Analyzed: TP={tp_count}, FP={fp_count}, FN={fn_count}")
-    
-    return all_predictions
-
-
-def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
-    """Validate prediction entries for correctness and consistency for START and STOP.
-    - Ensure each reported site matches expected codon class (ATG for START; TAA/TAG/TGA for STOP)
-    - Ensure no duplicate (sequence_index, atg_position)
-    - Ensure FN+TP equals number of true START and true STOP sites respectively
-    """
-    # Map sequences for quick lookup
-    seq_map = {}
-    target_map = {}
-    for result in results_data:
-        seq_idx = result['sequence_index']
-        seq_map[seq_idx] = convert_tokens_to_sequence(result['sequence_tokens'])
-        target_map[seq_idx] = result['targets']
-
-    seen = set()
-    for p in predictions:
-        seq_idx = p['sequence_index']
-        pos = p['atg_position']
-        key = (seq_idx, pos)
-        if key in seen:
-            raise AssertionError(f"Duplicate predicted site: sequence {seq_idx} position {pos}")
-        seen.add(key)
-
-        seq = seq_map[seq_idx]
-        site_type = p.get('site_type', 'start')
-        triplet = seq[pos:pos+3]
-        if site_type == 'start':
-            assert triplet == 'ATG', f"Reported START site is not ATG at sequence {seq_idx} pos {pos}"
-        else:
-            assert triplet in stop_codons, f"Reported STOP site is not a STOP codon at sequence {seq_idx} pos {pos}"
-
-    # Per-sequence TP+FN should equal number of true START and STOP sites
-    from collections import defaultdict
-    real_start_positions = defaultdict(set)
-    real_stop_positions = defaultdict(set)
-    for seq_idx, targets in target_map.items():
-        seq = seq_map[seq_idx]
-        for pos in range(0, max(0, len(seq) - 2)):
-            tri = seq[pos:pos+3]
-            if tri == 'ATG' and targets[pos] == GenePredictionClass.START:
-                real_start_positions[seq_idx].add(pos)
-            if tri in stop_codons and targets[pos] == GenePredictionClass.STOP:
-                real_stop_positions[seq_idx].add(pos)
-
-    counted_start = defaultdict(set)
-    counted_stop = defaultdict(set)
-    for p in predictions:
-        if p.get('classification') in ('TP', 'FN'):
-            if p.get('site_type', 'start') == 'start':
-                counted_start[p['sequence_index']].add(p['atg_position'])
-            else:
-                counted_stop[p['sequence_index']].add(p['atg_position'])
-
-    for seq_idx in real_start_positions:
-        if real_start_positions[seq_idx] != counted_start.get(seq_idx, set()):
-            raise AssertionError(
-                f"TP+FN positions do not match real START ATGs for sequence {seq_idx}:\n"
-                f"  expected={sorted(real_start_positions[seq_idx])}\n"
-                f"  got={sorted(counted_start.get(seq_idx, set()))}"
-            )
-    for seq_idx in real_stop_positions:
-        if real_stop_positions[seq_idx] != counted_stop.get(seq_idx, set()):
-            raise AssertionError(
-                f"TP+FN positions do not match real STOP codons for sequence {seq_idx}:\n"
-                f"  expected={sorted(real_stop_positions[seq_idx])}\n"
-                f"  got={sorted(counted_stop.get(seq_idx, set()))}"
-            )
-
-
 def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
     """Save input sequences as FASTA file."""
     
@@ -517,7 +287,7 @@ def _merge_site_priority_map(length: int, sites: List[Dict]) -> Tuple[List[bool]
 
 
 def generate_per_contig_report(results_data: List[Dict], output_path: Path, class_weights: Optional[List[float]] = None,
-                               line_width: int = 100, ansi_colors: bool = True):
+                               line_width: int = 100, ansi_colors: bool = True, events: Optional[List[Dict]] = None):
     """Write one report per contig with colored spans and end-of-line annotations.
 
     Included classes: any with weight>1.0 from class_weights; if None, defaults to START, STOP, DSS, ASS.
@@ -539,48 +309,61 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
             preds = result['predictions']
             probs = result['probabilities']
 
-            # Build sites from targets (TP/FN) and predictions (FP)
+            # Build sites from metrics events if provided; otherwise fall back to local derivation
             sites: List[Dict] = []
-            for cls_idx in sorted(include_classes):
-                # True sites
-                true_spans = _extract_sites_from_labels(targets, cls_idx)
-                pred_spans = _extract_sites_from_labels(preds, cls_idx)
-
-                # Index predicted spans for FP check
-                pred_spans_copy = list(pred_spans)
-
-                # For each true span, decide TP/FN
-                for (s, e) in true_spans:
-                    s, e = _normalize_span_length(s, e, L, int(cls_idx))
-                    # predicted positive if any overlap with predicted labels
-                    pred_pos = any(int(preds[j]) == int(cls_idx) for j in range(s, e + 1) if 0 <= j < L)
-                    clsf = 'TP' if pred_pos else 'FN'
-                    pmax, pavg = _compute_span_stats(probs, s, e, int(cls_idx))
+            if events is not None:
+                for ev in events:
+                    if ev.get('sequence_index') != seq_idx:
+                        continue
+                    cls_idx = int(ev.get('class_index'))
+                    if cls_idx not in include_classes:
+                        continue
+                    s = int(ev.get('start'))
+                    e = int(ev.get('end'))
+                    pmax, pavg = _compute_span_stats(probs, s, e, cls_idx)
                     sites.append({
                         'start': s,
                         'end': e,
-                        'class_index': int(cls_idx),
-                        'label': GenePredictionClass.idx_to_cls[int(cls_idx)],
-                        'classification': clsf,
+                        'class_index': cls_idx,
+                        'label': GenePredictionClass.idx_to_cls.get(cls_idx, str(cls_idx)),
+                        'classification': ev.get('classification', ''),
                         'prob_max': pmax,
                         'prob_avg': pavg,
                     })
-
-                # Add FP spans: predicted spans that do not overlap any true span of same class
-                for (ps, pe) in pred_spans_copy:
-                    ps, pe = _normalize_span_length(ps, pe, L, int(cls_idx))
-                    overlaps = any(not (pe < ts or ps > te) for (ts, te) in true_spans)
-                    if not overlaps:
-                        pmax, pavg = _compute_span_stats(probs, ps, pe, int(cls_idx))
+            else:
+                for cls_idx in sorted(include_classes):
+                    # True sites
+                    true_spans = _extract_sites_from_labels(targets, cls_idx)
+                    pred_spans = _extract_sites_from_labels(preds, cls_idx)
+                    pred_spans_copy = list(pred_spans)
+                    for (s, e) in true_spans:
+                        s, e = _normalize_span_length(s, e, L, int(cls_idx))
+                        pred_pos = any(int(preds[j]) == int(cls_idx) for j in range(s, e + 1) if 0 <= j < L)
+                        clsf = 'TP' if pred_pos else 'FN'
+                        pmax, pavg = _compute_span_stats(probs, s, e, int(cls_idx))
                         sites.append({
-                            'start': ps,
-                            'end': pe,
+                            'start': s,
+                            'end': e,
                             'class_index': int(cls_idx),
                             'label': GenePredictionClass.idx_to_cls[int(cls_idx)],
-                            'classification': 'FP',
+                            'classification': clsf,
                             'prob_max': pmax,
                             'prob_avg': pavg,
                         })
+                    for (ps, pe) in pred_spans_copy:
+                        ps, pe = _normalize_span_length(ps, pe, L, int(cls_idx))
+                        overlaps = any(not (pe < ts or ps > te) for (ts, te) in true_spans)
+                        if not overlaps:
+                            pmax, pavg = _compute_span_stats(probs, ps, pe, int(cls_idx))
+                            sites.append({
+                                'start': ps,
+                                'end': pe,
+                                'class_index': int(cls_idx),
+                                'label': GenePredictionClass.idx_to_cls[int(cls_idx)],
+                                'classification': 'FP',
+                                'prob_max': pmax,
+                                'prob_avg': pavg,
+                            })
 
             # Prepare per-position mapping for uppercase and color priority
             uppercase, site_at = _merge_site_priority_map(L, sites)
@@ -653,14 +436,20 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
         for p in predictions:
             if p.get('classification') not in ('TP', 'FP'):
                 continue
+            cls_idx = int(p.get('class_index', -1))
+            # Only export attention around START/STOP motif spans
+            if cls_idx not in (GenePredictionClass.START, GenePredictionClass.STOP):
+                continue
             sid = p['sequence_index']
-            pos = p['atg_position']
-            site_type = p.get('site_type', 'start')
+            pos = int(p.get('start', 0))
+            site_type = 'start' if cls_idx == GenePredictionClass.START else 'stop'
             seq = seq_map.get(sid)
             layer_attn = attn_map.get(sid)
             if seq is None or not layer_attn:
                 continue
             L = len(seq)
+            if pos < 0 or pos >= L:
+                continue
             # For each layer
             for layer_name, att in layer_attn.items():
                 # att: (heads, L, L)
@@ -679,7 +468,7 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
 
 
 def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weights: Optional[List[float]] = None,
-                         line_width: int = 100, ansi_colors: bool = True):
+                         line_width: int = 100, ansi_colors: bool = True, events: Optional[List[Dict]] = None):
     """Save analysis results with timestamped filenames (FASTA + per-contig colored report)."""
     
     # Generate timestamp
@@ -699,9 +488,9 @@ def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weig
     fasta_output = output_dir / f"{base_name}.fa"
     save_input_sequences_fasta(results_data, fasta_output)
     
-    # Generate per-contig colored report
+    # Generate per-contig colored report (metrics-aligned coloring).
     report_output = output_dir / f"{base_name}.txt"
-    generate_per_contig_report(results_data, report_output, class_weights=class_weights, line_width=line_width, ansi_colors=ansi_colors)
+    generate_per_contig_report(results_data, report_output, class_weights=class_weights, line_width=line_width, ansi_colors=ansi_colors, events=events)
 
     # Return base_name so callers can dump additional artifacts named consistently
     return base_name
@@ -818,13 +607,11 @@ def main():
         cw = getattr(model, 'config', {}).get('loss', {}).get('class_weights')
     except Exception:
         cw = None
-    generic = calculate_generic_metrics(results, class_weights=cw, min_weight=1.0)
-    
-    # Analyze predictions for attention export only (legacy functionality)
-    predictions = analyze_all_predictions(results)
+    # Compute metrics and motif-span prediction events for visualization (single call)
+    generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
 
     # Save results (FASTA + per-contig colored report)
-    base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors)
+    base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)
 
     # Print generic per-class metrics (for classes selected above)
     if generic:
@@ -832,12 +619,12 @@ def main():
         for cls_idx in sorted(generic.keys()):
             name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(cls_idx))
             m = generic[cls_idx]
-            print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']} TN={m['tn']}  "
+            print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
                   f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}")
     
     # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
-    dump_attention_fragments(results, predictions, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
+    dump_attention_fragments(results, events, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
     print(f"✓ Attention fragments written to: {attn_fa}")
     
     
