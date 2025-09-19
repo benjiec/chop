@@ -82,11 +82,14 @@ def load_trained_model(model_path: Path, device='cpu'):
         print(f"Error loading model: {e}")
         return None
 
+
 def generate_test_data(fna_fn: str, tsv_fn: str, max_seq_length: int, layouts_per_contig: int = 1, incl_start: bool = True, incl_stop: bool = True):
-    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = max_seq_length)
+    # not windowing in the dataset class, but rely on windowing here and then blending the results here
+    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test windows")
     return data_loader, dataset
+
 
 def run_predictions(model, data_loader, device='cpu', return_attention: bool = False):
     """Run predictions on test data. Optionally return encoder attention per layer."""
@@ -94,6 +97,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
     print("Running predictions on test data...")
     
     all_results = []
+    predicted_count = 0
     
     with torch.no_grad():
         for batch_idx, (sequences, targets) in enumerate(data_loader):
@@ -119,6 +123,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
 
                 if L <= max_len:
                     out = model(seq_tokens_b, return_attention=return_attention)
+                    predicted_count += 1
                     if return_attention and isinstance(out, tuple) and len(out) == 2:
                         logits_b, layer_attn_b = out
                     else:
@@ -137,6 +142,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     for (s, e) in slices:
                         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
                         out = model(win_tokens, return_attention=False)
+                        predicted_count += 1
                         if isinstance(out, tuple):
                             out = out[0]
                         wl = out[0].detach().cpu().numpy()  # (win_len, C)
@@ -159,11 +165,12 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
 
                 all_results.append(result_entry)
             
-            if (batch_idx + 1) % 10 == 0:
-                print(f"  Processed {batch_idx + 1} sequences...")
+            if (predicted_count + 1) % 10 == 0:
+                print(f"  Processed {predicted_count + 1} windows...")
     
     print(f"✓ Completed predictions for {len(all_results)} sequences")
     return all_results
+
 
 def compute_triplet_prob_stats(probabilities: np.ndarray, position: int, class_index: int) -> Dict[str, float]:
     """Compute per-position probability and max/avg across codon triplet for given class index."""
@@ -174,7 +181,6 @@ def compute_triplet_prob_stats(probabilities: np.ndarray, position: int, class_i
         vec = probabilities[position:position+3, class_index]
         return {'pos': pos_prob, 'max': float(np.max(vec)), 'avg': float(np.mean(vec))}
     return {'pos': pos_prob, 'max': pos_prob, 'avg': pos_prob}
-
  
 
 def analyze_all_predictions(results_data):
@@ -322,6 +328,7 @@ def analyze_all_predictions(results_data):
     
     return all_predictions
 
+
 def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
     """Validate prediction entries for correctness and consistency for START and STOP.
     - Ensure each reported site matches expected codon class (ATG for START; TAA/TAG/TGA for STOP)
@@ -390,6 +397,7 @@ def validate_predictions(results_data: List[Dict], predictions: List[Dict]):
                 f"  got={sorted(counted_stop.get(seq_idx, set()))}"
             )
 
+
 def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
     """Save input sequences as FASTA file."""
     
@@ -403,6 +411,7 @@ def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
             f.write(f"{sequence}\n")
     
     print(f"✓ Input sequences saved to: {output_path}")
+
 
 def generate_visual_output(predictions: List[Dict], results_data: List[Dict], output_path: Path):
     """Generate visual sequence output showing predictions with context."""
@@ -556,6 +565,7 @@ def generate_visual_output(predictions: List[Dict], results_data: List[Dict], ou
     
     print(f"✓ Visual analysis saved to: {output_path}")
 
+
 def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
     """Dump top-k attended sequence fragments around predicted START/STOP sites to FASTA.
 
@@ -594,6 +604,7 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                         f.write(header)
                         f.write(f"{frag}\n")
 
+
 def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: List[Dict], output_dir: Path):
     """Save analysis results with timestamped filenames."""
     
@@ -623,6 +634,7 @@ def save_analysis_results(predictions: List[Dict], metrics: Dict, results_data: 
 
     # Return base_name so callers can dump additional artifacts named consistently
     return base_name
+
 
 def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
     """Select a checkpoint to use.
