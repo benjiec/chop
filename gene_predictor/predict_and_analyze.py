@@ -722,7 +722,7 @@ def main():
         except Exception:
             model_max_len = 1000
 
-    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len, incl_start=not args.excl_start, incl_stop=not args.excl_stop)
+    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len)
     
     # Run predictions (with attention if requested)
     results = run_predictions(model, data_loader, args.device, return_attention=True)
