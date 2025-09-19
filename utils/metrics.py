@@ -61,9 +61,32 @@ def _collect_motifs_from_targets(results_data: List[Dict], class_idx: int, motif
 def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0) -> Dict[int, Dict[str, float]]:
     """Compute per-class TP/FP/FN/TN and derived metrics over results_data.
 
-    - If class_weights provided, only include classes with weight > min_weight.
-    - For classes that appear as contiguous motifs of length 2 or 3, limit counting
-      to positions overlapping those motifs discovered from targets.
+    Behavior overview
+    -----------------
+    - Class filtering: If ``class_weights`` is provided, only classes with weight > ``min_weight``
+      are evaluated. Otherwise, all classes present in targets are considered.
+    - Motif-aware counting (length 2 or 3): For classes that appear as contiguous runs of length
+      2 or 3 in targets, we discover a predominant run length per class and collect the set of
+      concrete sequence motifs (e.g., {"ATG"} for START) observed at those runs. We then slide a
+      window of that motif length across each sequence and evaluate only windows whose underlying
+      sequence substring is in the target-derived motif set. For each such window, we mark:
+        * target_is_cls = any target token within the window equals the class
+        * pred_is_cls = any predicted token within the window equals the class
+      We increment TP/FP/FN/TN at the window level accordingly. Probabilities are not used.
+    - Per-position counting (all other classes): If no 2/3-length motif is discovered for a class,
+      fall back to token-level counts using exact class equality per position.
+
+    Examples (motif-aware START with motif set {"ATG"})
+    ---------------------------------------------------
+    - CTCA, predicted START at the central T → windows "CTC" and "TCA" are not in {"ATG"},
+      so both windows are ignored (no FP).
+    - ATCA with targets labeling A/T as START but window substring is "ATC" → not in {"ATG"},
+      so ignored (no TP/FP/FN from this window).
+    - ATGA with predicted START only on T within "ATG" → window "ATG" is evaluated; since
+      both target_is_cls and pred_is_cls are True (any-in-window), it counts as TP.
+    - Predicted-only on a non-motif substring (e.g., START on "TTG" when {"ATG"}) → ignored (no FP).
+
+    DSS/ASS (2-mer) behave the same way with their discovered motif set and a 2-length window.
     """
     has_targets = any(result.get('targets') is not None for result in results_data)
     if not has_targets:

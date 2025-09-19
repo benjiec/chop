@@ -425,7 +425,7 @@ def _format_with_colors(text: str, positions_to_color: List[Tuple[int, int, str]
     color_map = {
         'TP': '\u001b[1;32m',
         'FP': '\u001b[1;31m',
-        'FN': '\u001b[1;33m',
+        'FN': '\u001b[0;37;42m',
     }
     reset = '\u001b[0m'
     out = []
@@ -469,6 +469,29 @@ def _extract_sites_from_labels(labels: np.ndarray, class_index: int) -> List[Tup
         else:
             i += 1
     return spans
+
+
+def _expected_span_length(class_index: int) -> int:
+    if int(class_index) in (int(GenePredictionClass.START), int(GenePredictionClass.STOP)):
+        return 3
+    if int(class_index) in (int(GenePredictionClass.DSS), int(GenePredictionClass.ASS)):
+        return 2
+    return 1
+
+
+def _normalize_span_length(start: int, end_incl: int, length: int, class_index: int) -> Tuple[int, int]:
+    """Ensure span covers at least the expected number of bases for the class.
+    If shorter, extend to the right up to sequence end.
+    """
+    expected = _expected_span_length(class_index)
+    if start < 0:
+        start = 0
+    if end_incl < start:
+        end_incl = start
+    current = end_incl - start + 1
+    if current < expected:
+        end_incl = min(length - 1, start + expected - 1)
+    return start, end_incl
 
 
 def _merge_site_priority_map(length: int, sites: List[Dict]) -> Tuple[List[bool], List[Optional[int]]]:
@@ -528,6 +551,7 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
 
                 # For each true span, decide TP/FN
                 for (s, e) in true_spans:
+                    s, e = _normalize_span_length(s, e, L, int(cls_idx))
                     # predicted positive if any overlap with predicted labels
                     pred_pos = any(int(preds[j]) == int(cls_idx) for j in range(s, e + 1) if 0 <= j < L)
                     clsf = 'TP' if pred_pos else 'FN'
@@ -544,6 +568,7 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
 
                 # Add FP spans: predicted spans that do not overlap any true span of same class
                 for (ps, pe) in pred_spans_copy:
+                    ps, pe = _normalize_span_length(ps, pe, L, int(cls_idx))
                     overlaps = any(not (pe < ts or ps > te) for (ts, te) in true_spans)
                     if not overlaps:
                         pmax, pavg = _compute_span_stats(probs, ps, pe, int(cls_idx))
