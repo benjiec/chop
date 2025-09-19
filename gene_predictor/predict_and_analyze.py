@@ -613,6 +613,11 @@ def main():
     # Save results (FASTA + per-contig colored report)
     base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)
 
+   # Dump attention fragments to FASTA
+    attn_fa = output_dir / f"{base_name}_attn.fa"
+    dump_attention_fragments(results, events, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
+    print(f"✓ Attention fragments written to: {attn_fa}")
+    
     # Print generic per-class metrics (for classes selected above)
     if generic:
         print("\nPer-class metrics:")
@@ -621,13 +626,7 @@ def main():
             m = generic[cls_idx]
             print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
                   f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}")
-    
-    # Dump attention fragments to FASTA
-    attn_fa = output_dir / f"{base_name}_attn.fa"
-    dump_attention_fragments(results, events, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
-    print(f"✓ Attention fragments written to: {attn_fa}")
-    
-    
+
 
 if __name__ == "__main__":
     main()
