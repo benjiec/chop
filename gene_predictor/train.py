@@ -88,6 +88,7 @@ def train(fna_fn: str, tsv_fn: str,
           dss_weight: float = 10.0, ass_weight: float = 10.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
           max_seq_length: int = 1000,
+          num_windows: int = 5000,
           use_focal: bool = False, focal_gamma: float = 1.5,
           focal_alpha: Optional[list] = None,
           cc_enabled: bool = True,
@@ -109,7 +110,24 @@ def train(fna_fn: str, tsv_fn: str,
         cc_gap=cc_gap,
     )
 
-    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = max_seq_length)
+    # Pass class weights to dataset for sampling/accounting (format: list of floats indexed by class id)
+    dataset_class_weights = config.get('loss', {}).get('class_weights')
+
+    if num_windows:
+        dataset = AnnotatedGenomeDataset(
+            fna_fn,
+            tsv_fn,
+            window=max_seq_length,
+            num_windows=num_windows,
+            class_weights=dataset_class_weights,
+        )
+    else:
+        dataset = AnnotatedGenomeDataset(
+            fna_fn,
+            tsv_fn,
+            window=max_seq_length,
+            class_weights=dataset_class_weights,
+        )
 
     # Create output directory early for saving sample data
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -137,6 +155,7 @@ def main():
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
     parser.add_argument('--tsv-fn', type=str, required=True, help='File name for annotations in TSV format')
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
+    parser.add_argument('--num-windows', type=int, default=5000, help='Number of windows to train with; if 0, do not sample windows')
     parser.add_argument('--d-model', type=int, default=512, help='Model dimension')
     parser.add_argument('--layers', type=int, default=4, help='Number of transformer layers')
     parser.add_argument('--heads', type=int, default=8, help='Number of attention heads')
@@ -218,6 +237,7 @@ def main():
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
+        num_windows=args.num_windows,
         use_focal=args.use_focal,
         focal_gamma=args.focal_gamma,
         focal_alpha=focal_alpha,

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Set
 from dataclasses import dataclass
 from pathlib import Path
 import gzip
 
 import numpy as np
+import random
 
 from utils.constants import (
     GenePredictionClass as P,
@@ -99,25 +100,42 @@ def _encode_sequence(seq: str) -> np.ndarray:
 
 
 class AnnotatedGenomeDataset:
-    def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None):
+    def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None,
+                 num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
         self.targets: List[np.ndarray] = []
+        self.contig_ids: List[str] = []
         # Optional windowing
         self.window: Optional[int] = int(window) if window and int(window) > 0 else None
         self.stride: Optional[int] = int(stride) if stride and int(stride) > 0 else None
         self.windows: List[Tuple[int, int, int]] = []  # (contig_idx, start, end)
+        # Sampling/accounting options
+        self.num_windows: Optional[int] = int(num_windows) if num_windows is not None else None
+        self.class_weights: Optional[List[float]] = list(class_weights) if class_weights is not None else None
+        self.seed: int = int(seed)
+        # Derived/accounting structures
+        self.classset_to_contigs: Dict[frozenset, List[str]] = {}
+        self._window_class_sets: List[Set[int]] = []
+        self._selected_window_indices: Optional[List[int]] = None
+        print("Building/sampling windows for training")
         self._build()
 
     def __len__(self) -> int:
         if self.window:
+            if self._selected_window_indices is not None:
+                return len(self._selected_window_indices)
             return len(self.windows)
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         if self.window:
-            contig_idx, start, end = self.windows[idx]
+            if self._selected_window_indices is not None:
+                real_idx = self._selected_window_indices[idx]
+            else:
+                real_idx = idx
+            contig_idx, start, end = self.windows[real_idx]
             seq = self.sequences[contig_idx][start:end]
             tgt = self.targets[contig_idx][start:end]
             return _encode_sequence(seq), tgt
@@ -203,6 +221,7 @@ class AnnotatedGenomeDataset:
 
             self.sequences.append(seq)
             self.targets.append(tgt)
+            self.contig_ids.append(ann.sequence_id)
 
         # If windowing is enabled, precompute windows over each contig
         if self.window:
@@ -213,3 +232,113 @@ class AnnotatedGenomeDataset:
                 slices = compute_window_slices(L, window=win, stride=st)
                 for s, e in slices:
                     self.windows.append((contig_idx, s, e))
+
+            # Build accounting for classes per window and classset->contigs map
+            self._compute_window_accounting_and_sampling()
+
+    def _compute_window_accounting_and_sampling(self) -> None:
+        # Classes to consider for balancing: exclude any with weight == 1.0 if provided
+        weights = self.class_weights
+        exclude_weight_one: Set[int] = set()
+        if weights is not None:
+            for i, w in enumerate(weights):
+                if w == 1.0:
+                    exclude_weight_one.add(i)
+
+        rng = random.Random(self.seed)
+
+        # Compute class set for each window
+        self._window_class_sets = []
+        class_to_windows: Dict[int, List[int]] = {}
+        for w_idx, (contig_idx, s, e) in enumerate(self.windows):
+            tgt_slice = self.targets[contig_idx][s:e]
+            present = set(int(c) for c in np.unique(tgt_slice))
+            present_considered = {c for c in present if c not in exclude_weight_one}
+            self._window_class_sets.append(present_considered)
+            for c in present_considered:
+                class_to_windows.setdefault(c, []).append(w_idx)
+
+        # Build classset->contigs mapping (order-insensitive)
+        classset_to_contigs: Dict[frozenset, Set[str]] = {}
+        for w_idx, cls_set in enumerate(self._window_class_sets):
+            key = frozenset(cls_set)
+            contig_idx, _, _ = self.windows[w_idx]
+            contig_id = self.contig_ids[contig_idx]
+            classset_to_contigs.setdefault(key, set()).add(contig_id)
+        # Convert sets to sorted lists for determinism
+        self.classset_to_contigs = {k: sorted(list(v)) for k, v in classset_to_contigs.items()}
+
+        # If no sampling requested, we're done
+        if self.num_windows is None:
+            self._selected_window_indices = None
+            return
+
+        target_num = max(0, int(self.num_windows))
+        total_available = len(self.windows)
+        if target_num >= total_available:
+            self._selected_window_indices = list(range(total_available))
+            return
+
+        # Determine classes to balance
+        classes_to_balance: List[int]
+        if weights is not None:
+            classes_to_balance = [i for i, w in enumerate(weights) if w != 1.0]
+        else:
+            # All classes observed across windows
+            observed: Set[int] = set()
+            for s in self._window_class_sets:
+                observed.update(s)
+            classes_to_balance = sorted(list(observed))
+
+        # Greedy round-robin selection to balance per-class counts
+        selected: Set[int] = set()
+        per_class_count: Dict[int, int] = {c: 0 for c in classes_to_balance}
+
+        def deficit(cls: int) -> int:
+            # Desired average count grows with selection; use current min target
+            return min(per_class_count.values()) - per_class_count[cls]
+
+        # Pre-shuffle candidate lists deterministically
+        for c in classes_to_balance:
+            rng.shuffle(class_to_windows.get(c, []))
+
+        while len(selected) < target_num:
+            # Choose the class with the smallest count so far (tie-broken deterministically)
+            cls_order = sorted(classes_to_balance, key=lambda c: (per_class_count[c], c))
+            picked_window = None
+            for cls in cls_order:
+                candidates = [w for w in class_to_windows.get(cls, []) if w not in selected]
+                if not candidates:
+                    continue
+                # Prefer candidate window that improves balance across included classes
+                def score(wi: int) -> Tuple[int, int, int]:
+                    included = self._window_class_sets[wi]
+                    # Higher score for covering more underrepresented classes
+                    underrep = sum(1 for c in included if c in per_class_count and per_class_count[c] == min(per_class_count.values()))
+                    # Fewer already well-represented classes
+                    overrep = sum(1 for c in included if c in per_class_count and per_class_count[c] > min(per_class_count.values()))
+                    # Tie-breaker: prefer smaller index for determinism after RNG shuffle
+                    return (underrep, -overrep, -wi)
+                candidates.sort(key=score, reverse=True)
+                picked_window = candidates[0]
+                break
+
+            if picked_window is None:
+                break
+
+            selected.add(picked_window)
+            for c in self._window_class_sets[picked_window]:
+                if c in per_class_count:
+                    per_class_count[c] += 1
+
+        # If still short (e.g., no informative windows), fill with remaining windows deterministically
+        if len(selected) < target_num:
+            remaining = [i for i in range(total_available) if i not in selected]
+            # Deterministic order
+            selected_list = list(selected)
+            remaining.sort()
+            needed = target_num - len(selected_list)
+            selected_list.extend(remaining[:needed])
+            self._selected_window_indices = selected_list
+        else:
+            self._selected_window_indices = sorted(list(selected))
