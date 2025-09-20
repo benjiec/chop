@@ -16,10 +16,9 @@ answer with possibilities and providing lots of text to read.
 5. Run unit tests using `scripts/run-unit-tests` whenever you update something
 not in the tests/ directory.
 
-6. Whenever adding code outside of the tests/ directory, consider adding unit
-tests to tests/ directory. To make sure tests can run using the
-`scripts/run-unit-tests` script, make sure tests following Python unittest
-module convention (e.g. subclass from unittest.TestCase).
+6. Please add new unit tests whenever you are adding new features. New tests
+should follow Python unittest module convention (e.g. subclass from
+unittest.TestCase).
 
 7. Don't leave comments that only pertain to an action you took, e.g. to undo
 something. Comments should describe the current state of the code or

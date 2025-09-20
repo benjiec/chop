@@ -52,7 +52,28 @@ class F1Callback(pl.Callback):
         except Exception:
             class_weights = None
 
-        metrics_by_class = calculate_generic_metrics(results_data, class_weights=class_weights, min_weight=1.0)
+        # Optional validity masks to exclude window edges using loss_window_margin_fraction
+        valid_masks = None
+        try:
+            # If the module has model config, derive margin from model's max seq length
+            max_len = int(getattr(pl_module, 'config', {}).get('model', {}).get('max_seq_length', 0) or 0)
+            frac = float(getattr(pl_module, 'config', {}).get('loss', {}).get('loss_window_margin_fraction', 0.2) or 0.2)
+            if max_len > 0 and frac > 0.0:
+                margin = int(max(0, min(max_len // 2, round(frac * max_len))))
+                valid_masks = []
+                for r in results_data:
+                    L = len(r['sequence_tokens'])
+                    mask = [True] * L
+                    if margin > 0 and L > 2 * margin:
+                        for i in range(0, margin):
+                            mask[i] = False
+                        for i in range(L - margin, L):
+                            mask[i] = False
+                    valid_masks.append(mask)
+        except Exception:
+            valid_masks = None
+
+        metrics_by_class = calculate_generic_metrics(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
 
         # Compute macro-average F1 across all classes returned
         f1_values = []
@@ -69,7 +90,7 @@ class F1Callback(pl.Callback):
             cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             per_class_f1[cls_name] = f1
 
-        macro_f1 = float(np.mean(f1_values)) if f1_values else 0.0
+        macro_f1 = float(np.median(f1_values)) if f1_values else 0.0
 
         # Progress bar: only macro F1
         pl_module.log('val_f1', macro_f1, prog_bar=True, on_epoch=True)

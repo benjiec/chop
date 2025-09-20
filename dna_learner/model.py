@@ -441,6 +441,15 @@ class GenePredictorModule(pl.LightningModule):
         if class_weights is not None:
             class_weights = torch.tensor(class_weights, dtype=torch.float32)
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
+        # Keep a reference to class weights for manual per-token loss when needed
+        self._class_weights_tensor = class_weights
+
+        # Optional edge masking for loss within each window: fraction of sequence length per side
+        # Default to 0.2 (20%) if not provided
+        try:
+            self.loss_window_margin_fraction: float = float(loss_config.get('loss_window_margin_fraction', 0.2))
+        except Exception:
+            self.loss_window_margin_fraction = 0.2
 
         # Focal loss options
         self.use_focal: bool = bool(loss_config.get('use_focal', False))
@@ -486,9 +495,19 @@ class GenePredictorModule(pl.LightningModule):
         batch_size, seq_length, num_classes = logits.shape
         logits_flat = logits.view(-1, num_classes)
         targets_flat = targets.view(-1)
+
+        # Build per-token weights to down-weight/zero window edges
+        margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
+        if margin > 0 and seq_length > 2 * margin:
+            center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
+            center[:margin] = 0.0
+            center[-margin:] = 0.0
+            per_token_weights = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1)
+        else:
+            per_token_weights = None
         
         # Calculate loss
-        loss = self._compute_loss(logits_flat, targets_flat)
+        loss = self._compute_loss(logits_flat, targets_flat, per_token_weights)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -513,9 +532,19 @@ class GenePredictorModule(pl.LightningModule):
         batch_size, seq_length, num_classes = logits.shape
         logits_flat = logits.view(-1, num_classes)
         targets_flat = targets.view(-1)
+
+        # Apply the same edge masking to validation loss for consistency
+        margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
+        if margin > 0 and seq_length > 2 * margin:
+            center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
+            center[:margin] = 0.0
+            center[-margin:] = 0.0
+            per_token_weights = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1)
+        else:
+            per_token_weights = None
         
         # Calculate loss
-        loss = self._compute_loss(logits_flat, targets_flat)
+        loss = self._compute_loss(logits_flat, targets_flat, per_token_weights)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -553,14 +582,25 @@ class GenePredictorModule(pl.LightningModule):
             },
         }
 
-    def _compute_loss(self, logits_flat: torch.Tensor, targets_flat: torch.Tensor) -> torch.Tensor:
-        """Select between CrossEntropy and Focal loss based on configuration."""
+    def _compute_loss(self, logits_flat: torch.Tensor, targets_flat: torch.Tensor, per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Compute loss with optional per-token weighting (edge masking)."""
         if not self.use_focal:
-            return self.criterion(logits_flat, targets_flat)
-        return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha)
+            if per_token_weights is None:
+                return self.criterion(logits_flat, targets_flat)
+            # Per-token cross-entropy with class weights and custom reduction
+            loss_vec = torch.nn.functional.cross_entropy(
+                logits_flat, targets_flat,
+                weight=self._class_weights_tensor.to(logits_flat.device) if self._class_weights_tensor is not None else None,
+                reduction='none'
+            )
+            weights = per_token_weights.to(loss_vec.dtype)
+            denom = torch.clamp(weights.sum(), min=1.0)
+            return (loss_vec * weights).sum() / denom
+        # Focal loss path: compute per-token and apply weights if provided
+        return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha, per_token_weights)
 
     @staticmethod
-    def _focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float, alpha: Optional[torch.Tensor]) -> torch.Tensor:
+    def _focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float, alpha: Optional[torch.Tensor], per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Compute multi-class focal loss using logits.
         - logits: (N, C)
@@ -586,6 +626,10 @@ class GenePredictorModule(pl.LightningModule):
 
         focal_factor = (1.0 - pt).clamp(min=0.0) ** gamma
         loss = -alpha_t * focal_factor * log_pt
+        if per_token_weights is not None:
+            w = per_token_weights.to(loss.dtype)
+            denom = torch.clamp(w.sum(), min=1.0)
+            return (loss * w).sum() / denom
         return loss.mean()
 
 
@@ -598,6 +642,7 @@ def create_base_config(
     max_epochs: int = 25,
     batch_size: int = 8,
     class_weights: Optional[list] = None,
+    loss_window_margin_fraction: Optional[float] = 0.2,
     attention_masks: Optional[Dict[int, int]] = None,
     kmer_size: int = 0,
     use_focal: Optional[bool] = None,
@@ -629,7 +674,8 @@ def create_base_config(
             'batch_size': batch_size
         },
         'loss': {
-            'class_weights': class_weights
+            'class_weights': class_weights,
+            'loss_window_margin_fraction': loss_window_margin_fraction,
         },
         'class_names': class_names
     }

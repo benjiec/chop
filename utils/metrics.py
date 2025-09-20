@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Sequence
 
 import numpy as np
 
@@ -58,7 +58,8 @@ def _collect_motifs_from_targets(results_data: List[Dict], class_idx: int, motif
     return motifs
 
 
-def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0):
+def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0,
+                                              valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None):
     """Compute per-class metrics and also return motif-window events for visualization.
 
     Behavior overview
@@ -127,13 +128,23 @@ def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_we
         tp = fp = fn = tn = 0
         if mlen in (2, 3) and motif_sets.get(class_idx):
             motifs = motif_sets[class_idx]
-            for result in results_data:
+            for idx, result in enumerate(results_data):
                 seq = convert_tokens_to_sequence(result['sequence_tokens'])
                 tgt = result['targets']
                 pred = result['predictions']
                 L = min(len(seq), len(tgt), len(pred))
                 seq_idx = result.get('sequence_index')
+                # Optional validity mask for this sequence
+                vm_np = None
+                if valid_masks is not None and idx < len(valid_masks) and valid_masks[idx] is not None:
+                    vm_list = list(valid_masks[idx])
+                    if len(vm_list) >= L:
+                        vm_np = np.array(vm_list[:L], dtype=bool)
+                    else:
+                        vm_np = np.array(vm_list + [False] * (L - len(vm_list)), dtype=bool)
                 for pos in range(0, max(0, L - mlen + 1)):
+                    if vm_np is not None and not vm_np[pos:pos+mlen].all():
+                        continue
                     if seq[pos:pos+mlen] not in motifs:
                         continue
                     target_is_cls = bool((tgt[pos:pos+mlen] == class_idx).any())
@@ -171,12 +182,21 @@ def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_we
                     else:
                         tn += 1
         else:
-            for result in results_data:
+            for idx, result in enumerate(results_data):
                 tgt = result['targets']
                 pred = result['predictions']
                 L = min(len(tgt), len(pred))
                 target_mask = (tgt[:L] == class_idx)
                 pred_mask = (pred[:L] == class_idx)
+                # Apply optional validity mask
+                if valid_masks is not None and idx < len(valid_masks) and valid_masks[idx] is not None:
+                    vm_list = list(valid_masks[idx])
+                    if len(vm_list) >= L:
+                        vm_np = np.array(vm_list[:L], dtype=bool)
+                    else:
+                        vm_np = np.array(vm_list + [False] * (L - len(vm_list)), dtype=bool)
+                    target_mask = np.logical_and(target_mask, vm_np)
+                    pred_mask = np.logical_and(pred_mask, vm_np)
                 tp += int(np.logical_and(target_mask, pred_mask).sum())
                 fp += int(np.logical_and(~target_mask, pred_mask).sum())
                 fn += int(np.logical_and(target_mask, ~pred_mask).sum())
@@ -203,9 +223,10 @@ def calculate_generic_metrics_and_predictions(results_data: List[Dict], class_we
     return metrics_by_class, window_events
 
 
-def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0) -> Dict[int, Dict[str, float]]:
+def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[List[float]] = None, min_weight: float = 1.0,
+                              valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None) -> Dict[int, Dict[str, float]]:
     """Back-compat wrapper: return only metrics, discarding window events."""
-    metrics_by_class, _events = calculate_generic_metrics_and_predictions(results_data, class_weights=class_weights, min_weight=min_weight)
+    metrics_by_class, _events = calculate_generic_metrics_and_predictions(results_data, class_weights=class_weights, min_weight=min_weight, valid_masks=valid_masks)
     return metrics_by_class
 
 # Back-compat alias (window events == motif-span predictions)
