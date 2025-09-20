@@ -101,7 +101,8 @@ def _encode_sequence(seq: str) -> np.ndarray:
 
 class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None,
-                 num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17):
+                 num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
+                 window_incl_classes: Optional[List[int]] = None):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
@@ -119,7 +120,8 @@ class AnnotatedGenomeDataset:
         self.classset_to_contigs: Dict[frozenset, List[str]] = {}
         self._window_class_sets: List[Set[int]] = []
         self._selected_window_indices: Optional[List[int]] = None
-        print("Building/sampling windows for training")
+        self._window_incl_classes = window_incl_classes
+        print("Building/sampling windows for training", self._window_incl_classes)
         self._build()
 
     def __len__(self) -> int:
@@ -283,12 +285,16 @@ class AnnotatedGenomeDataset:
         classes_to_balance: List[int]
         if weights is not None:
             classes_to_balance = [i for i, w in enumerate(weights) if w != 1.0]
+            if self._window_incl_classes is not None:
+                classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
         else:
             # All classes observed across windows
             observed: Set[int] = set()
             for s in self._window_class_sets:
                 observed.update(s)
             classes_to_balance = sorted(list(observed))
+            if self._window_incl_classes is not None:
+                classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
 
         # Greedy round-robin selection to balance per-class counts
         selected: Set[int] = set()
@@ -333,8 +339,8 @@ class AnnotatedGenomeDataset:
 
         print(f"After balanced selection: {per_class_count}")
 
-        # If still short (e.g., no informative windows), fill with remaining windows deterministically
-        if len(selected) < target_num:
+        # If still short (e.g., no informative windows), fill with remaining windows deterministically if we are not specifically looking for some classes
+        if len(selected) < target_num and self._window_incl_classes is None:
             remaining = [i for i in range(total_available) if i not in selected]
             # Deterministic order
             selected_list = list(selected)

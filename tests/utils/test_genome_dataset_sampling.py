@@ -30,7 +30,8 @@ def build_single_exon_contig(name: str, total_len: int, start_pos0: int, stop_po
 
 class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
     def _make_two_contigs_dataset(self, window: int = 16, stride: int = 8,
-                                  class_weights=None, num_windows=None, seed: int = 17):
+                                  class_weights=None, num_windows=None, seed: int = 17,
+                                  window_incl_classes=None):
         # Two contigs; exon spans create windows containing START-only, GENE-only, STOP-only, and combos
         total_len = 200
         # Contig c1: exon ~ [20, 73) with START at 20..22 and STOP at 70..72
@@ -53,6 +54,7 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=window, stride=stride,
                 num_windows=num_windows, class_weights=class_weights, seed=seed,
+                window_incl_classes=window_incl_classes
             )
             return ds
 
@@ -111,6 +113,23 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
                     class_counts[c] += 1
         diff = abs(class_counts[P.START] - class_counts[P.STOP])
         self.assertLessEqual(diff, 2, f"Unbalanced selection: {class_counts}")
+
+    def test_includes_only_classes_specified(self):
+        # Exclude everything except START
+        cw = [1.0] * 8
+        cw[P.START] = 2.0
+        cw[P.STOP] = 2.0
+        ds = self._make_two_contigs_dataset(class_weights=cw, window_incl_classes=[P.START], num_windows=2)
+        sel = ds._selected_window_indices
+        self.assertIsNotNone(sel)
+        class_counts = {P.START: 0, P.STOP: 0}
+        for wi in sel:
+            cls_set = ds._window_class_sets[wi]
+            for c in class_counts.keys():
+                if c in cls_set:
+                    class_counts[c] += 1
+        self.assertGreaterEqual(class_counts[P.START], 1)
+        self.assertLessEqual(class_counts[P.STOP], 0)
 
     def test_reproducibility_with_seed(self):
         cw = [1.0] * 8
