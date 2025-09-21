@@ -1,1 +1,0 @@
-PYTHONPATH=. python gene_predictor/predict_and_analyze.py --run-dir $1 --model-file last.ckpt --fna-fn data/GCA_001939145.1_test_small_query.fna --tsv-fn data/GCA_001939145.1_test_small_annotations.tsv

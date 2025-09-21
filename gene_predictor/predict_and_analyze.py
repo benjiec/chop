@@ -511,10 +511,12 @@ def main():
     parser = argparse.ArgumentParser(description='Gene prediction analysis')
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
     parser.add_argument('--tsv-fn', type=str, required=True, help='File name for annotations in TSV format')
+    parser.add_argument('--run-dir', type=str, required=True,
+                       help='Run directory that contains the checkpoints subdirectory.')
     parser.add_argument('--model-path', type=str, required=True,
-                       help='Explicit path to a model checkpoint (.ckpt).')
+                       help='Checkpoint path. If relative, it is resolved under <run-dir>/checkpoints/. Absolute paths are accepted.')
     parser.add_argument('--output-dir', type=str, default=None,
-                       help='Output directory for analysis results. If omitted, defaults to the model checkpoint directory.')
+                       help='Output directory for analysis results. If omitted, defaults to the run directory.')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
     parser.add_argument('--temperature', type=float, default=None, help='Temperature scaling for logits at inference (softmax(logits/T)).')
@@ -527,8 +529,11 @@ def main():
     
     args = parser.parse_args()
 
-    ckpt_path = _select_checkpoint_explicit(args.model_path)
-    output_dir = Path(args.output_dir) if args.output_dir else ckpt_path.parent.parent if (ckpt_path.parent.name == 'checkpoints') else ckpt_path.parent
+    run_dir = Path(args.run_dir)
+    # Resolve model path: if absolute, use as-is; if relative, place under run_dir/checkpoints
+    raw_model_path = Path(args.model_path)
+    ckpt_path = raw_model_path if raw_model_path.is_absolute() else (run_dir / 'checkpoints' / raw_model_path)
+    output_dir = Path(args.output_dir) if args.output_dir else run_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("START/STOP Prediction Analysis")
@@ -597,6 +602,12 @@ def main():
     # Brier score on final results
     brier = compute_brier_scores(results)
     print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
+    by_cls = brier.get('brier_by_class', {})
+    if by_cls:
+        print("Brier by class:")
+        for cls_idx in sorted(by_cls.keys()):
+            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+            print(f"  {name:>10s}: {float(by_cls[cls_idx]):.4f}")
 
     # Save results (FASTA + per-contig colored report)
     base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)
