@@ -80,9 +80,9 @@ def load_trained_model(model_path: Path, device='cpu', temperature: Optional[flo
         return None
 
 
-def generate_test_data(fna_fn: str, tsv_fn: str, max_seq_length: int, layouts_per_contig: int = 1, incl_start: bool = True, incl_stop: bool = True):
+def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
     # not windowing in the dataset class, but rely on windowing here and then blending the results here
-    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None)
+    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None, num_contigs = num_contigs)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test samples - windowing and blending results...")
     return data_loader, dataset
@@ -511,6 +511,7 @@ def main():
     parser = argparse.ArgumentParser(description='Gene prediction analysis')
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
     parser.add_argument('--tsv-fn', type=str, required=True, help='File name for annotations in TSV format')
+    parser.add_argument('--num-contigs', type=int, default=0, help='Number of contigs, if 0 use all from input file')
     parser.add_argument('--run-dir', type=str, required=True,
                        help='Run directory that contains the checkpoints subdirectory.')
     parser.add_argument('--model-path', type=str, required=True,
@@ -565,7 +566,7 @@ def main():
         except Exception:
             model_max_len = 1000
 
-    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len)
+    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
 
     # Temperature sweep (if requested)
     sweep_best = None

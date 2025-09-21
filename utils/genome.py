@@ -100,7 +100,8 @@ def _encode_sequence(seq: str) -> np.ndarray:
 
 
 class AnnotatedGenomeDataset:
-    def __init__(self, fasta_path: str, annotations_tsv_path: str, window: Optional[int] = None, stride: Optional[int] = None,
+    def __init__(self, fasta_path: str, annotations_tsv_path: str,
+                 num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
                  window_incl_classes: Optional[List[int]] = None):
         self.fasta_records = _load_fasta(fasta_path)
@@ -122,7 +123,7 @@ class AnnotatedGenomeDataset:
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
         print("Building/sampling windows for training", self._window_incl_classes)
-        self._build()
+        self._build(num_contigs)
 
     def __len__(self) -> int:
         if self.window:
@@ -146,7 +147,7 @@ class AnnotatedGenomeDataset:
             tgt = self.targets[idx]
             return _encode_sequence(seq), tgt
 
-    def _build(self):
+    def _build(self, num_contigs: Optional[int] = 0):
         for ann in self.annotations:
             if ann.sequence_id not in self.fasta_records:
                 continue
@@ -224,6 +225,11 @@ class AnnotatedGenomeDataset:
             self.sequences.append(seq)
             self.targets.append(tgt)
             self.contig_ids.append(ann.sequence_id)
+
+        if num_contigs and num_contigs > 0:
+            self.sequences = self.sequences[0:num_contigs]
+            self.targets = self.targets[0:num_contigs]
+            self.contig_ids = self.contig_ids[0:num_contigs]
 
         # If windowing is enabled, precompute windows over each contig
         if self.window:
