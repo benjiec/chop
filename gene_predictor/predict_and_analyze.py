@@ -570,7 +570,7 @@ def main():
         except Exception:
             model_max_len = 1000
 
-    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len)
+    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
     
      # Temperature sweep (if requested)
     sweep_best = None
