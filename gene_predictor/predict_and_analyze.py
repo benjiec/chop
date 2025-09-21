@@ -88,7 +88,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
     return data_loader, dataset
 
 
-def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None):
+def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None, log_every: Optional[int] = 10):
     """Run predictions on test data. Optionally return encoder attention per layer."""
     
     print("Running predictions on test data...")
@@ -121,7 +121,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                 if L <= max_len:
                     out = model(seq_tokens_b, return_attention=return_attention)
                     predicted_count += 1
-                    if (predicted_count + 1) % 10 == 0:
+                    if (predicted_count + 1) % log_every == 0:
                         print(f"  Processed {predicted_count + 1} windows...")
                     if return_attention and isinstance(out, tuple) and len(out) == 2:
                         logits_b, layer_attn_b = out
@@ -144,7 +144,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
                         out = model(win_tokens, return_attention=False)
                         predicted_count += 1
-                        if (predicted_count + 1) % 10 == 0:
+                        if (predicted_count + 1) % log_every == 0:
                             print(f"  Processed {predicted_count + 1} windows...")
                         if isinstance(out, tuple):
                             out = out[0]
@@ -537,8 +537,6 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else run_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    print("START/STOP Prediction Analysis")
-    
     print(f"Selected checkpoint: {ckpt_path}")
  
     # Load model
@@ -557,6 +555,12 @@ def main():
     except Exception:
         pass
     
+    # Generic metrics: use class weights from config if available (needed for consistent Brier computation)
+    try:
+        cw = getattr(model, 'config', {}).get('loss', {}).get('class_weights')
+    except Exception:
+        cw = None
+
     # Generate test data, aligned to model's max_seq_length
     model_max_len = getattr(getattr(model, 'config', {}).get('model', {}), 'get', lambda k, d=None: None)('max_seq_length', None)
     if model_max_len is None:
@@ -566,9 +570,9 @@ def main():
         except Exception:
             model_max_len = 1000
 
-    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
-
-    # Temperature sweep (if requested)
+    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len)
+    
+     # Temperature sweep (if requested)
     sweep_best = None
     if args.t_sweep:
         try:
@@ -578,9 +582,16 @@ def main():
             print(f"Invalid --t-sweep '{args.t_sweep}': {ex}")
             Ts = []
         for T in Ts:
-            results_T = run_predictions(model, data_loader, args.device, return_attention=False, temperature=T)
-            brier_T = compute_brier_scores(results_T)
+            results_T = run_predictions(model, data_loader, args.device, return_attention=False, temperature=T, log_every=100)
+            brier_T = compute_brier_scores(results_T, class_weights=cw, min_weight=1.0, event_only=True)
             print(f"T={T:.3f}  Brier={brier_T.get('brier', 0.0):.4f}")
+            by_cls_T = brier_T.get('brier_by_class', {})
+            if by_cls_T:
+                parts = []
+                for cls_idx in sorted(by_cls_T.keys()):
+                    name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+                    parts.append(f"{name}={float(by_cls_T[cls_idx]):.4f}")
+                print("  " + " ".join(parts))
             if (sweep_best is None) or (brier_T.get('brier', 0.0) < sweep_best[0]):
                 sweep_best = (float(brier_T.get('brier', 0.0)), float(T))
         if sweep_best is not None:
@@ -592,16 +603,11 @@ def main():
     # Run predictions (with attention if requested) using final temperature
     results = run_predictions(model, data_loader, args.device, return_attention=True, temperature=args.temperature)
     
-    # Generic metrics: use class weights from config if available
-    try:
-        cw = getattr(model, 'config', {}).get('loss', {}).get('class_weights')
-    except Exception:
-        cw = None
     # Compute metrics and motif-span prediction events for visualization (single call)
     generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
     
     # Brier score on final results
-    brier = compute_brier_scores(results, class_weights=cw, min_weight=1.0)
+    brier = compute_brier_scores(results, class_weights=cw, min_weight=1.0, event_only=True)
     print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
     by_cls = brier.get('brier_by_class', {})
     if by_cls:
