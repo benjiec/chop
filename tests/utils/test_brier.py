@@ -61,6 +61,27 @@ class TestBrier(unittest.TestCase):
         self.assertNotIn(2, out['brier_by_class'])
         self.assertAlmostEqual(out['brier_by_class'][1], (e0 + e1 + e2) / 3.0, places=6)
 
+    def test_event_only_positions(self):
+        # 2 classes; include only positions where target or prediction is class 1
+        probs = np.array([
+            [0.9, 0.1],  # y=0, pred=0
+            [0.6, 0.4],  # y=0, pred=0 (near miss)
+            [0.1, 0.9],  # y=1, pred=1
+            [0.8, 0.2],  # y=0, pred=0 (should be excluded if class 1 only)
+        ], dtype=np.float32)
+        targets = np.array([0, 0, 1, 0], dtype=int)
+        preds = np.array([0, 0, 1, 0], dtype=int)
+        rd = [{'targets': targets, 'probabilities': probs, 'predictions': preds}]
+        # Only class 1 allowed
+        cw = [0.0, 2.0]
+        out = compute_brier_scores(rd, class_weights=cw, min_weight=1.0, event_only=True)
+        # Included positions: idx 1 (pred not class1, target not class1) -> excluded; idx 2 (target=1) -> included
+        # idx 0,3 are TN for class1 and excluded when event_only=True with class1 only
+        # So overall equals per-class for class1 at idx 2 only: (0.9 - 1)^2 = 0.01
+        self.assertAlmostEqual(out['brier'], 0.01, places=6)
+        self.assertIn(1, out['brier_by_class'])
+        self.assertAlmostEqual(out['brier_by_class'][1], 0.01, places=6)
+
 
 if __name__ == '__main__':
     unittest.main()

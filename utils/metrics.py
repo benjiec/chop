@@ -236,16 +236,19 @@ calculate_generic_metrics_with_windows = calculate_generic_metrics_and_predictio
 def compute_brier_scores(results_data: List[Dict],
                          class_weights: Optional[Sequence[Optional[float]]] = None,
                          min_weight: float = 0.0,
-                         valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None) -> Dict[str, object]:
+                         valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None,
+                         event_only: bool = True) -> Dict[str, object]:
     """Compute multi-class Brier score (overall) and per-class Brier from results_data.
 
     Expected result entry keys:
       - 'targets': np.ndarray of shape (L,)
       - 'probabilities': np.ndarray of shape (L, C) (softmax probs). If missing but 'logits' is present, will softmax.
+      - Optional 'predictions': np.ndarray of shape (L,) used when event_only=True to include predicted events.
 
     The overall multi-class Brier is mean over positions of sum_k (p_k - y_k)^2 without dividing by C.
     Per-class Brier is mean over positions of (p_c - y_c)^2 for each class c.
     If class_weights is provided, only classes with weight > min_weight are included in the overall and per-class outputs.
+    If event_only is True, only positions where either the target or the predicted class is in the allowed classes are included.
     """
     total_sq_error_sum = 0.0
     total_token_count = 0
@@ -279,7 +282,6 @@ def compute_brier_scores(results_data: List[Dict],
             continue
 
         # Optional validity mask per sequence
-        vm_np = None
         if valid_masks is not None and idx < len(valid_masks) and valid_masks[idx] is not None:
             vm_list = list(valid_masks[idx])
             if len(vm_list) >= L:
@@ -292,14 +294,9 @@ def compute_brier_scores(results_data: List[Dict],
         # Slice
         probsL = probs[:L]
         tgtL = np.array(tgt[:L], dtype=int)
-        mask_idx = np.where(vm_np)[0]
-        if mask_idx.size == 0:
-            continue
-        probsM = probsL[mask_idx]
-        tgtM = tgtL[mask_idx]
 
-        C = int(probsM.shape[1])
         # Determine class mask
+        C = int(probsL.shape[1])
         if allowed_classes is not None:
             class_mask = np.array([c in allowed_classes for c in range(C)], dtype=bool)
         else:
@@ -307,7 +304,27 @@ def compute_brier_scores(results_data: List[Dict],
         if not class_mask.any():
             continue
 
-        # Build one-hot labels
+        # Event-only position mask
+        include_positions = np.ones(L, dtype=bool)
+        if event_only:
+            # Positions where target in allowed or prediction in allowed
+            tgt_allowed = class_mask[tgtL]
+            pred = result.get('predictions')
+            pred_allowed = np.zeros(L, dtype=bool)
+            if pred is not None and len(pred) >= L:
+                predL = np.array(pred[:L], dtype=int)
+                pred_allowed = class_mask[predL]
+            include_positions = np.logical_or(tgt_allowed, pred_allowed)
+        # Apply validity mask
+        include_positions = np.logical_and(include_positions, vm_np)
+        pos_idx = np.where(include_positions)[0]
+        if pos_idx.size == 0:
+            continue
+
+        probsM = probsL[pos_idx]
+        tgtM = tgtL[pos_idx]
+
+        # Build one-hot labels for included positions
         one_hot = np.zeros((tgtM.shape[0], C), dtype=np.float32)
         one_hot[np.arange(tgtM.shape[0]), tgtM] = 1.0
 
