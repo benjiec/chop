@@ -16,9 +16,10 @@ from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
+from utils.metrics import compute_brier_scores
 
 
-def load_trained_model(model_path: Path, device='cpu'):
+def load_trained_model(model_path: Path, device='cpu', temperature: Optional[float] = None):
     """Load the trained model from checkpoint, restoring exact architecture."""
     print(f"Loading model from: {model_path}")
 
@@ -87,7 +88,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, max_seq_length: int, layouts_pe
     return data_loader, dataset
 
 
-def run_predictions(model, data_loader, device='cpu', return_attention: bool = False):
+def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None):
     """Run predictions on test data. Optionally return encoder attention per layer."""
     
     print("Running predictions on test data...")
@@ -127,6 +128,8 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     else:
                         logits_b = out
                         layer_attn_b = None
+                    if temperature is not None and float(temperature) > 0:
+                        logits_b = logits_b / float(temperature)
                     preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
                     probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
                     attn_export = None
@@ -148,6 +151,8 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                         wl = out[0].detach().cpu().numpy()  # (win_len, C)
                         window_logits_np.append(wl)
                     blended = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=None)
+                    if temperature is not None and float(temperature) > 0:
+                        blended = blended / float(temperature)
                     probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
                     preds_b = np.argmax(probs_b, axis=-1)
                     attn_export = None  # Not supported for windowed case
@@ -496,59 +501,24 @@ def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weig
     return base_name
 
 
-def _select_checkpoint(run_dir: Path, model_file: Optional[str], legacy_model_path: Optional[str]) -> Path:
-    """Select a checkpoint to use.
-    Priority: legacy --model-path > run_dir/checkpoints/model_file > best (lowest val_loss) in run_dir/checkpoints.
-    """
-    if legacy_model_path:
-        return Path(legacy_model_path)
-    ckpt_dir = run_dir / 'checkpoints'
-    if model_file:
-        return ckpt_dir / model_file
-    # Prefer explicit best alias if present
-    best_alias = ckpt_dir / 'best.ckpt'
-    if best_alias.exists():
-        return best_alias
-    # Find best by lowest val_loss encoded as a trailing number before .ckpt
-    candidates = list(ckpt_dir.glob('*.ckpt'))
-    best_path = None
-    best_val = None
-    for p in candidates:
-        fname = p.name  # include extension for regex
-        m = re.search(r'([0-9]+(?:\.[0-9]+)?)\.ckpt$', fname)
-        if not m:
-            continue
-        try:
-            val = float(m.group(1))
-        except ValueError:
-            continue
-        if best_val is None or val < best_val:
-            best_val = val
-            best_path = p
-    if best_path is not None:
-        return best_path
-    # Fallback to last.ckpt
-    last = ckpt_dir / 'last.ckpt'
-    if last.exists():
-        return last
-    raise FileNotFoundError(f"No checkpoints found under {ckpt_dir}")
+def _select_checkpoint_explicit(model_path: Optional[str]) -> Path:
+    if not model_path:
+        raise ValueError("--model-path is required; auto-selection has been removed.")
+    return Path(model_path)
 
 
 def main():
     parser = argparse.ArgumentParser(description='Gene prediction analysis')
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
     parser.add_argument('--tsv-fn', type=str, required=True, help='File name for annotations in TSV format')
-    parser.add_argument('--run-dir', type=str, required=True,
-                       help='Run directory (parent of checkpoints). Outputs will be written here by default.')
-    parser.add_argument('--model-file', type=str, default=None,
-                       help='Specific checkpoint filename within run_dir/checkpoints to use (overrides best-by-val_loss selection).')
-    # Back-compat: allow explicit model path; if provided, overrides run-dir selection
-    parser.add_argument('--model-path', type=str, default=None,
-                       help='[Deprecated] Explicit path to a model checkpoint; overrides --run-dir/--model-file selection.')
+    parser.add_argument('--model-path', type=str, required=True,
+                       help='Explicit path to a model checkpoint (.ckpt).')
     parser.add_argument('--output-dir', type=str, default=None,
-                       help='Output directory for analysis results. If omitted, defaults to --run-dir.')
+                       help='Output directory for analysis results. If omitted, defaults to the model checkpoint directory.')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
+    parser.add_argument('--temperature', type=float, default=None, help='Temperature scaling for logits at inference (softmax(logits/T)).')
+    parser.add_argument('--t-sweep', type=str, default=None, help='Optional sweep "start:stop:step" over T; reports best Brier.')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
     parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
@@ -557,21 +527,14 @@ def main():
     
     args = parser.parse_args()
 
-    run_dir = Path(args.run_dir)
-    output_dir = Path(args.output_dir) if args.output_dir else run_dir
+    ckpt_path = _select_checkpoint_explicit(args.model_path)
+    output_dir = Path(args.output_dir) if args.output_dir else ckpt_path.parent.parent if (ckpt_path.parent.name == 'checkpoints') else ckpt_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print("START/STOP Prediction Analysis")
     
-    # Resolve checkpoint
-    try:
-        ckpt_path = _select_checkpoint(run_dir, args.model_file, args.model_path)
-    except Exception as e:
-        print(f"Error selecting checkpoint: {e}")
-        return
-
     print(f"Selected checkpoint: {ckpt_path}")
-
+ 
     # Load model
     model = load_trained_model(ckpt_path, args.device)
     if model is None:
@@ -598,9 +561,30 @@ def main():
             model_max_len = 1000
 
     data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, model_max_len)
-    
-    # Run predictions (with attention if requested)
-    results = run_predictions(model, data_loader, args.device, return_attention=True)
+
+    # Temperature sweep (if requested)
+    sweep_best = None
+    if args.t_sweep:
+        try:
+            s, e, st = [float(x) for x in args.t_sweep.split(':')]
+            Ts = np.arange(s, e + 1e-9, st)
+        except Exception as ex:
+            print(f"Invalid --t-sweep '{args.t_sweep}': {ex}")
+            Ts = []
+        for T in Ts:
+            results_T = run_predictions(model, data_loader, args.device, return_attention=False, temperature=T)
+            brier_T = compute_brier_scores(results_T)
+            print(f"T={T:.3f}  Brier={brier_T.get('brier', 0.0):.4f}")
+            if (sweep_best is None) or (brier_T.get('brier', 0.0) < sweep_best[0]):
+                sweep_best = (float(brier_T.get('brier', 0.0)), float(T))
+        if sweep_best is not None:
+            print(f"Best T by Brier: {sweep_best[1]:.3f} (Brier={sweep_best[0]:.4f})")
+        # Fall through to run with requested --temperature (or best-T, if not given)
+        if args.temperature is None and sweep_best is not None:
+            args.temperature = sweep_best[1]
+
+    # Run predictions (with attention if requested) using final temperature
+    results = run_predictions(model, data_loader, args.device, return_attention=True, temperature=args.temperature)
     
     # Generic metrics: use class weights from config if available
     try:
@@ -609,6 +593,10 @@ def main():
         cw = None
     # Compute metrics and motif-span prediction events for visualization (single call)
     generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
+
+    # Brier score on final results
+    brier = compute_brier_scores(results)
+    print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
 
     # Save results (FASTA + per-contig colored report)
     base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)

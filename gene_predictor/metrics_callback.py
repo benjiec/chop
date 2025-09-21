@@ -7,6 +7,9 @@ import numpy as np
 from utils.metrics import calculate_generic_metrics
 from utils.constants import GenePredictionClass as P
 
+# Add Brier computation
+from utils.metrics import compute_brier_scores
+
 
 class F1Callback(pl.Callback):
     """Compute macro-average F1 over classes returned by calculate_generic_metrics on validation data.
@@ -32,18 +35,20 @@ class F1Callback(pl.Callback):
             targets = targets.to(device)
             logits = pl_module.model(sequences)
             predictions = logits.argmax(dim=-1)
+            probabilities = torch.softmax(logits, dim=-1)
 
             batch_size = sequences.size(0)
             for b in range(batch_size):
                 seq_tokens = sequences[b].detach().cpu().numpy()
                 tgt = targets[b].detach().cpu().numpy()
                 pred = predictions[b].detach().cpu().numpy()
+                probs = probabilities[b].detach().cpu().numpy()
                 results_data.append({
                     'sequence_index': len(results_data),
                     'sequence_tokens': seq_tokens,
                     'targets': tgt,
                     'predictions': pred,
-                    'probabilities': None,
+                    'probabilities': probs,
                 })
 
         # Pull class weights from model config if available
@@ -99,6 +104,14 @@ class F1Callback(pl.Callback):
         for name, value in per_class_f1.items():
             pl_module.log(f"val_f1_classes/{name}", float(value), prog_bar=False, on_epoch=True)
 
+        # Brier score (overall + per-class)
+        brier = compute_brier_scores(results_data, valid_masks=valid_masks)
+        pl_module.log('val_brier', float(brier.get('brier', 0.0)), prog_bar=True, on_epoch=True)
+        by_class = brier.get('brier_by_class', {})
+        for cls_idx, val in by_class.items():
+            name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+            pl_module.log(f"val_brier_classes/{name}", float(val), prog_bar=False, on_epoch=True)
+
         # Optional compact stdout summary
         should_print = self.print_per_class_every and (
             (trainer is None) or ((getattr(trainer, 'current_epoch', 0) + 1) % self.print_per_class_every == 0)
@@ -107,5 +120,34 @@ class F1Callback(pl.Callback):
             ordered = sorted(per_class_f1.items(), key=lambda kv: kv[0])
             summary = ' '.join([f"{k}={v:.2f}" for k, v in ordered])
             print(f"F1 per class: {summary}")
+
+
+class DualMetricEarlyStopping(pl.Callback):
+    """Stop if neither val_loss improves (min) nor val_f1 improves (max) for N epochs."""
+
+    def __init__(self, patience: int = 8):
+        super().__init__()
+        self.patience = int(patience)
+        self.best_loss = None
+        self.best_f1 = None
+        self.wait = 0
+
+    def on_validation_end(self, trainer: pl.Trainer, pl_module):
+        metrics = trainer.callback_metrics
+        val_loss = float(metrics.get('val_loss', float('inf')))
+        val_f1 = float(metrics.get('val_f1', float('-inf')))
+        improved = False
+        if self.best_loss is None or val_loss < self.best_loss - 1e-12:
+            self.best_loss = val_loss
+            improved = True
+        if self.best_f1 is None or val_f1 > self.best_f1 + 1e-12:
+            self.best_f1 = val_f1
+            improved = True
+        if improved:
+            self.wait = 0
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                trainer.should_stop = True
 
 

@@ -15,6 +15,7 @@ from utils.constants import GenePredictionClass as P
 from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
 from gene_predictor.metrics_callback import F1Callback
+from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
 
@@ -135,15 +136,15 @@ def train(fna_fn: str, tsv_fn: str,
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def mk_training_cb(val_loader):
-        return [ F1Callback(val_loader) ]
+        return [ F1Callback(val_loader), DualMetricEarlyStopping(patience=8) ]
     
     model, val_loader = run_trainer(
         dataset,
         config,
         output_dir,
         mk_training_cb,
-        monitor_metric='val_f1',
-        monitor_mode='max',
+        monitor_metric='val_loss',
+        monitor_mode='min',
     )
 
     print(f"results saved to: {output_dir}")

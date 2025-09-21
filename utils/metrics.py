@@ -233,3 +233,88 @@ def calculate_generic_metrics(results_data: List[Dict], class_weights: Optional[
 calculate_generic_metrics_with_windows = calculate_generic_metrics_and_predictions
 
 
+def compute_brier_scores(results_data: List[Dict],
+                         valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None) -> Dict[str, object]:
+    """Compute multi-class Brier score (overall) and per-class Brier from results_data.
+
+    Expected result entry keys:
+      - 'targets': np.ndarray of shape (L,)
+      - 'probabilities': np.ndarray of shape (L, C) (softmax probs). If missing but 'logits' is present, will softmax.
+
+    The overall multi-class Brier is mean over positions of sum_k (p_k - y_k)^2 without dividing by C.
+    Per-class Brier is mean over positions of (p_c - y_c)^2 for each class c.
+    """
+    total_sq_error_sum = 0.0
+    total_token_count = 0
+
+    per_class_sq_error_sum: Dict[int, float] = {}
+    per_class_token_count: Dict[int, int] = {}
+
+    for idx, result in enumerate(results_data):
+        probs = result.get('probabilities')
+        logits = result.get('logits')
+        if probs is None and logits is not None:
+            # Softmax logits to probabilities if provided as logits
+            import numpy as _np
+            x = logits - _np.max(logits, axis=-1, keepdims=True)
+            ex = _np.exp(x)
+            probs = ex / _np.clip(_np.sum(ex, axis=-1, keepdims=True), 1e-12, None)
+        if probs is None:
+            # Cannot compute Brier for this entry
+            continue
+        tgt = result.get('targets')
+        if tgt is None:
+            continue
+        L = min(int(len(tgt)), int(probs.shape[0]))
+        if L <= 0:
+            continue
+
+        # Optional validity mask per sequence
+        vm_np = None
+        if valid_masks is not None and idx < len(valid_masks) and valid_masks[idx] is not None:
+            vm_list = list(valid_masks[idx])
+            if len(vm_list) >= L:
+                vm_np = np.array(vm_list[:L], dtype=bool)
+            else:
+                vm_np = np.array(vm_list + [False] * (L - len(vm_list)), dtype=bool)
+        else:
+            vm_np = np.ones(L, dtype=bool)
+
+        # Slice
+        probsL = probs[:L]
+        tgtL = np.array(tgt[:L], dtype=int)
+        mask_idx = np.where(vm_np)[0]
+        if mask_idx.size == 0:
+            continue
+        probsM = probsL[mask_idx]
+        tgtM = tgtL[mask_idx]
+
+        C = int(probsM.shape[1])
+        # Build one-hot labels
+        one_hot = np.zeros((tgtM.shape[0], C), dtype=np.float32)
+        one_hot[np.arange(tgtM.shape[0]), tgtM] = 1.0
+
+        # Overall multi-class Brier per token: sum_k (p_k - y_k)^2
+        sq_err = (probsM - one_hot) ** 2
+        total_sq_error_sum += float(np.sum(sq_err))
+        total_token_count += int(sq_err.shape[0])
+
+        # Per-class Brier (binary for each class): (p_c - y_c)^2
+        for c in range(C):
+            se_c = (probsM[:, c] - one_hot[:, c]) ** 2
+            per_class_sq_error_sum[c] = per_class_sq_error_sum.get(c, 0.0) + float(np.sum(se_c))
+            per_class_token_count[c] = per_class_token_count.get(c, 0) + int(se_c.shape[0])
+
+    overall = (total_sq_error_sum / total_token_count) if total_token_count > 0 else 0.0
+
+    brier_by_class: Dict[int, float] = {}
+    for c, s in per_class_sq_error_sum.items():
+        n = per_class_token_count.get(c, 0)
+        brier_by_class[int(c)] = (s / n) if n > 0 else 0.0
+
+    return {
+        'brier': float(overall),
+        'brier_by_class': brier_by_class,
+    }
+
+

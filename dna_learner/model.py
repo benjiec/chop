@@ -21,7 +21,6 @@ DEFAULT_D_MODEL = 512
 DEFAULT_N_LAYERS = 6
 DEFAULT_N_HEADS = 8
 DEFAULT_DROPOUT = 0.1
-DEFAULT_THRESHOLD = 0.5
 
 
 class DNAEmbedding(nn.Module):
@@ -463,6 +462,12 @@ class GenePredictorModule(pl.LightningModule):
         # Save hyperparameters for logging
         self.save_hyperparameters(config)
 
+        # Entropy regularization strength (lambda). Default 1e-3 if not specified
+        try:
+            self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 1e-3))
+        except Exception:
+            self.entropy_lambda = 1e-3
+
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
@@ -585,18 +590,31 @@ class GenePredictorModule(pl.LightningModule):
     def _compute_loss(self, logits_flat: torch.Tensor, targets_flat: torch.Tensor, per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Compute loss with optional per-token weighting (edge masking)."""
         if not self.use_focal:
+            # Base CE per-token
             if per_token_weights is None:
-                return self.criterion(logits_flat, targets_flat)
-            # Per-token cross-entropy with class weights and custom reduction
-            loss_vec = torch.nn.functional.cross_entropy(
+                ce_loss = self.criterion(logits_flat, targets_flat)
+                # Entropy term (maximize entropy => subtract lambda * H)
+                if self.entropy_lambda and self.entropy_lambda != 0.0:
+                    probs = torch.softmax(logits_flat, dim=-1)
+                    # -sum p log p
+                    entropy = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1).mean()
+                    ce_loss = ce_loss - float(self.entropy_lambda) * entropy
+                return ce_loss
+            # Per-token CE with weights
+            ce_vec = torch.nn.functional.cross_entropy(
                 logits_flat, targets_flat,
                 weight=self._class_weights_tensor.to(logits_flat.device) if self._class_weights_tensor is not None else None,
                 reduction='none'
             )
-            weights = per_token_weights.to(loss_vec.dtype)
+            # Entropy per-token
+            if self.entropy_lambda and self.entropy_lambda != 0.0:
+                probs = torch.softmax(logits_flat, dim=-1)
+                ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
+                ce_vec = ce_vec - float(self.entropy_lambda) * ent_vec
+            weights = per_token_weights.to(ce_vec.dtype)
             denom = torch.clamp(weights.sum(), min=1.0)
-            return (loss_vec * weights).sum() / denom
-        # Focal loss path: compute per-token and apply weights if provided
+            return (ce_vec * weights).sum() / denom
+        # Focal loss path: compute per-token and apply weights if provided (no entropy reg with focal)
         return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha, per_token_weights)
 
     @staticmethod

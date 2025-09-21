@@ -91,22 +91,23 @@ def train(
     
     # Build filename that reflects the monitored metric for clarity/DRYness
     metric_key = monitor_metric
-    filename = f"model_epoch={{epoch:02d}}_{metric_key}={{{metric_key}:.3f}}"
+    filename_primary = f"model_epoch={{epoch:02d}}_{metric_key}={{{metric_key}:.3f}}"
 
-    callbacks = [
-        pl.callbacks.ModelCheckpoint(
-            dirpath=output_dir / "checkpoints",
-            filename=filename,
-            monitor=monitor_metric,
-            mode=monitor_mode,
-            save_top_k=3,
-            save_last=True,
-            auto_insert_metric_name=False,
-        ),
-        BestCheckpointAlias(output_dir / "checkpoints"),
-        pl.callbacks.EarlyStopping(monitor=monitor_metric, patience=8, mode=monitor_mode),
-        pl.callbacks.LearningRateMonitor(logging_interval='epoch')
-    ]
+    callbacks: List[pl.Callback] = []
+    # Primary checkpoint uses the requested monitor_metric
+    callbacks.append(pl.callbacks.ModelCheckpoint(
+        dirpath=output_dir / "checkpoints",
+        filename=filename_primary,
+        monitor=monitor_metric,
+        mode=monitor_mode,
+        save_top_k=3,
+        save_last=True,
+        auto_insert_metric_name=False,
+    ))
+
+    # Neutral alias and early stopping on the primary metric only
+    callbacks.append(BestCheckpointAlias(output_dir / "checkpoints"))
+    callbacks.append(pl.callbacks.EarlyStopping(monitor=monitor_metric, patience=8, mode=monitor_mode))
 
     if additional_callback_generator:
         callbacks.extend(additional_callback_generator(val_loader))
