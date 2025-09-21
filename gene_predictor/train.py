@@ -10,6 +10,7 @@ from datetime import datetime
 import numpy as np
 from typing import Optional, Dict
 
+import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
 from dna_learner.model import GenePredictorModule, create_base_config
@@ -136,7 +137,17 @@ def train(fna_fn: str, tsv_fn: str,
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def mk_training_cb(val_loader):
-        return [ F1Callback(val_loader), DualMetricEarlyStopping(patience=8) ]
+        # Save best checkpoints by F1 in addition to the primary loss-based checkpoint
+        f1_ckpt = pl.callbacks.ModelCheckpoint(
+            dirpath=output_dir / "checkpoints",
+            filename="model_epoch={epoch:02d}_val_f1={val_f1:.3f}",
+            monitor='val_f1',
+            mode='max',
+            save_top_k=3,
+            save_last=False,
+            auto_insert_metric_name=False,
+        )
+        return [ F1Callback(val_loader), DualMetricEarlyStopping(patience=8), f1_ckpt ]
     
     model, val_loader = run_trainer(
         dataset,
