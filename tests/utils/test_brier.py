@@ -38,6 +38,29 @@ class TestBrier(unittest.TestCase):
         # mean: (0.14+0.06+0.24)/3 = 0.146666...
         self.assertAlmostEqual(out['brier'], (0.14+0.06+0.24)/3.0, places=6)
 
+    def test_min_weight_filtering(self):
+        # 3 classes; only class 1 has weight > 1.0
+        probs = np.array([
+            [0.7, 0.2, 0.1],  # y=0
+            [0.1, 0.8, 0.1],  # y=1
+            [0.2, 0.2, 0.6],  # y=2
+        ], dtype=np.float32)
+        targets = np.array([0, 1, 2], dtype=int)
+        rd = [{'targets': targets, 'probabilities': probs}]
+        class_weights = [1.0, 2.0, 0.0]
+        out = compute_brier_scores(rd, class_weights=class_weights, min_weight=1.0)
+        # Only class 1 should be included in overall and per-class
+        # per-token error for class 1: (p1 - y1)^2
+        e0 = (0.2 - 0.0)**2
+        e1 = (0.8 - 1.0)**2
+        e2 = (0.2 - 0.0)**2
+        overall = (e0 + e1 + e2) / 3.0
+        self.assertAlmostEqual(out['brier'], overall, places=6)
+        self.assertIn(1, out['brier_by_class'])
+        self.assertNotIn(0, out['brier_by_class'])
+        self.assertNotIn(2, out['brier_by_class'])
+        self.assertAlmostEqual(out['brier_by_class'][1], (e0 + e1 + e2) / 3.0, places=6)
+
 
 if __name__ == '__main__':
     unittest.main()

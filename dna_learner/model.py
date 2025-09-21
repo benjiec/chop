@@ -538,18 +538,38 @@ class GenePredictorModule(pl.LightningModule):
         logits_flat = logits.view(-1, num_classes)
         targets_flat = targets.view(-1)
 
-        # Apply the same edge masking to validation loss for consistency
+        # Edge mask per token (1 for center, 0 for edges if margin>0)
         margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
         if margin > 0 and seq_length > 2 * margin:
             center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
             center[:margin] = 0.0
             center[-margin:] = 0.0
-            per_token_weights = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1)
+            edge_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
         else:
-            per_token_weights = None
+            edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
         
-        # Calculate loss
-        loss = self._compute_loss(logits_flat, targets_flat, per_token_weights)
+        # Class weight filter: only classes with weight>1.0 are included
+        try:
+            cw = self._class_weights_tensor
+            if cw is not None:
+                allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
+                class_mask = allowed[targets_flat]
+            else:
+                class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+        except Exception:
+            class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+        
+        include_mask = edge_mask & class_mask
+        if include_mask.any():
+            # Per-token CE (unweighted for validation reporting)
+            ce_vec = torch.nn.functional.cross_entropy(
+                logits_flat, targets_flat,
+                weight=None,
+                reduction='none'
+            )
+            loss = ce_vec[include_mask].mean()
+        else:
+            loss = torch.tensor(0.0, device=logits.device, dtype=torch.float32)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -612,7 +632,7 @@ class GenePredictorModule(pl.LightningModule):
                 ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
                 ce_vec = ce_vec - float(self.entropy_lambda) * ent_vec
             weights = per_token_weights.to(ce_vec.dtype)
-            denom = torch.clamp(weights.sum(), min=1.0)
+            denom = torch.clamp((weights > 0).to(ce_vec.dtype).sum(), min=1.0)
             return (ce_vec * weights).sum() / denom
         # Focal loss path: compute per-token and apply weights if provided (no entropy reg with focal)
         return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha, per_token_weights)

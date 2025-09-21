@@ -599,9 +599,9 @@ def main():
         cw = None
     # Compute metrics and motif-span prediction events for visualization (single call)
     generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
-
+    
     # Brier score on final results
-    brier = compute_brier_scores(results)
+    brier = compute_brier_scores(results, class_weights=cw, min_weight=1.0)
     print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
     by_cls = brier.get('brier_by_class', {})
     if by_cls:

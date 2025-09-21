@@ -105,7 +105,7 @@ class F1Callback(pl.Callback):
             pl_module.log(f"val_f1_classes/{name}", float(value), prog_bar=False, on_epoch=True)
 
         # Brier score (overall + per-class)
-        brier = compute_brier_scores(results_data, valid_masks=valid_masks)
+        brier = compute_brier_scores(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
         pl_module.log('val_brier', float(brier.get('brier', 0.0)), prog_bar=True, on_epoch=True)
         by_class = brier.get('brier_by_class', {})
         for cls_idx, val in by_class.items():

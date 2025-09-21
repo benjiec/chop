@@ -234,6 +234,8 @@ calculate_generic_metrics_with_windows = calculate_generic_metrics_and_predictio
 
 
 def compute_brier_scores(results_data: List[Dict],
+                         class_weights: Optional[Sequence[Optional[float]]] = None,
+                         min_weight: float = 0.0,
                          valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None) -> Dict[str, object]:
     """Compute multi-class Brier score (overall) and per-class Brier from results_data.
 
@@ -243,12 +245,19 @@ def compute_brier_scores(results_data: List[Dict],
 
     The overall multi-class Brier is mean over positions of sum_k (p_k - y_k)^2 without dividing by C.
     Per-class Brier is mean over positions of (p_c - y_c)^2 for each class c.
+    If class_weights is provided, only classes with weight > min_weight are included in the overall and per-class outputs.
     """
     total_sq_error_sum = 0.0
     total_token_count = 0
 
     per_class_sq_error_sum: Dict[int, float] = {}
     per_class_token_count: Dict[int, int] = {}
+    allowed_classes: Optional[set] = None
+    if class_weights is not None and len(class_weights) > 0:
+        try:
+            allowed_classes = {i for i, w in enumerate(class_weights) if (w is not None) and (float(w) > float(min_weight))}
+        except Exception:
+            allowed_classes = None
 
     for idx, result in enumerate(results_data):
         probs = result.get('probabilities')
@@ -290,17 +299,28 @@ def compute_brier_scores(results_data: List[Dict],
         tgtM = tgtL[mask_idx]
 
         C = int(probsM.shape[1])
+        # Determine class mask
+        if allowed_classes is not None:
+            class_mask = np.array([c in allowed_classes for c in range(C)], dtype=bool)
+        else:
+            class_mask = np.ones(C, dtype=bool)
+        if not class_mask.any():
+            continue
+
         # Build one-hot labels
         one_hot = np.zeros((tgtM.shape[0], C), dtype=np.float32)
         one_hot[np.arange(tgtM.shape[0]), tgtM] = 1.0
 
-        # Overall multi-class Brier per token: sum_k (p_k - y_k)^2
+        # Overall multi-class Brier per token: sum over allowed classes only
         sq_err = (probsM - one_hot) ** 2
+        sq_err = sq_err[:, class_mask]
         total_sq_error_sum += float(np.sum(sq_err))
         total_token_count += int(sq_err.shape[0])
 
-        # Per-class Brier (binary for each class): (p_c - y_c)^2
+        # Per-class Brier (binary for each allowed class): (p_c - y_c)^2
         for c in range(C):
+            if not class_mask[c]:
+                continue
             se_c = (probsM[:, c] - one_hot[:, c]) ** 2
             per_class_sq_error_sum[c] = per_class_sq_error_sum.get(c, 0.0) + float(np.sum(se_c))
             per_class_token_count[c] = per_class_token_count.get(c, 0) + int(se_c.shape[0])
