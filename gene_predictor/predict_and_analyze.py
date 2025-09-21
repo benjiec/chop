@@ -520,7 +520,7 @@ def main():
                        help='Output directory for analysis results. If omitted, defaults to the run directory.')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
-    parser.add_argument('--temperature', type=float, default=None, help='Temperature scaling for logits at inference (softmax(logits/T)).')
+    parser.add_argument('--temperature', type=float, default=3.0, help='Temperature scaling for logits at inference (softmax(logits/T)).')
     parser.add_argument('--t-sweep', type=str, default=None, help='Optional sweep "start:stop:step" over T; reports best Brier.')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
