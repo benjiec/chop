@@ -492,27 +492,63 @@ class GenePredictorModule(pl.LightningModule):
         
         return metrics
     
-    def training_step(self, batch, batch_idx):
-        sequences, targets = batch
-        logits = self.model(sequences)
-        
-        # Reshape for loss calculation
+    def _compute_event_masked_entropy_ce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """Compute loss with edge masking, class filter (class weight > 1), and entropy regularization.
+
+        - logits: (B, L, C)
+        - targets: (B, L)
+        """
         batch_size, seq_length, num_classes = logits.shape
         logits_flat = logits.view(-1, num_classes)
         targets_flat = targets.view(-1)
 
-        # Build per-token weights to down-weight/zero window edges
+        # Edge mask (exclude window edges)
         margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
         if margin > 0 and seq_length > 2 * margin:
             center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
             center[:margin] = 0.0
             center[-margin:] = 0.0
-            per_token_weights = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1)
+            edge_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
         else:
-            per_token_weights = None
+            edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+
+        # Class mask: include only tokens whose target class has weight > 1.0
+        try:
+            cw = self._class_weights_tensor
+            if cw is not None:
+                allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
+                if allowed.any():
+                    class_mask = allowed[targets_flat]
+                else:
+                    # If no class exceeds the threshold, include all classes
+                    class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+            else:
+                class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+        except Exception:
+            class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+
+        include_mask = edge_mask & class_mask
+        if not include_mask.any():
+            return torch.tensor(0.0, device=logits.device, dtype=torch.float32)
+
+        # Per-token CE (unweighted) and entropy
+        ce_vec = torch.nn.functional.cross_entropy(
+            logits_flat, targets_flat,
+            weight=None,
+            reduction='none'
+        )
+        probs = torch.softmax(logits_flat, dim=-1)
+        ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
+
+        loss_vec = ce_vec - float(getattr(self, 'entropy_lambda', 0.0)) * ent_vec
+        return loss_vec[include_mask].mean()
+
+    def training_step(self, batch, batch_idx):
+        sequences, targets = batch
+        logits = self.model(sequences)
         
-        # Calculate loss
-        loss = self._compute_loss(logits_flat, targets_flat, per_token_weights)
+        # Unified loss (edge + class filter + entropy)
+        loss = self._compute_event_masked_entropy_ce_loss(logits, targets)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -533,43 +569,8 @@ class GenePredictorModule(pl.LightningModule):
         sequences, targets = batch
         logits = self.model(sequences)
         
-        # Reshape for loss calculation
-        batch_size, seq_length, num_classes = logits.shape
-        logits_flat = logits.view(-1, num_classes)
-        targets_flat = targets.view(-1)
-
-        # Edge mask per token (1 for center, 0 for edges if margin>0)
-        margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
-        if margin > 0 and seq_length > 2 * margin:
-            center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
-            center[:margin] = 0.0
-            center[-margin:] = 0.0
-            edge_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
-        else:
-            edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-        
-        # Class weight filter: only classes with weight>1.0 are included
-        try:
-            cw = self._class_weights_tensor
-            if cw is not None:
-                allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
-                class_mask = allowed[targets_flat]
-            else:
-                class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-        except Exception:
-            class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-        
-        include_mask = edge_mask & class_mask
-        if include_mask.any():
-            # Per-token CE (unweighted for validation reporting)
-            ce_vec = torch.nn.functional.cross_entropy(
-                logits_flat, targets_flat,
-                weight=None,
-                reduction='none'
-            )
-            loss = ce_vec[include_mask].mean()
-        else:
-            loss = torch.tensor(0.0, device=logits.device, dtype=torch.float32)
+        # Unified loss (edge + class filter + entropy)
+        loss = self._compute_event_masked_entropy_ce_loss(logits, targets)
         
         # Calculate metrics
         metrics = self._calculate_metrics(logits, targets)
@@ -606,36 +607,6 @@ class GenePredictorModule(pl.LightningModule):
                 "monitor": "val_loss",
             },
         }
-
-    def _compute_loss(self, logits_flat: torch.Tensor, targets_flat: torch.Tensor, per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """Compute loss with optional per-token weighting (edge masking)."""
-        if not self.use_focal:
-            # Base CE per-token
-            if per_token_weights is None:
-                ce_loss = self.criterion(logits_flat, targets_flat)
-                # Entropy term (maximize entropy => subtract lambda * H)
-                if self.entropy_lambda and self.entropy_lambda != 0.0:
-                    probs = torch.softmax(logits_flat, dim=-1)
-                    # -sum p log p
-                    entropy = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1).mean()
-                    ce_loss = ce_loss - float(self.entropy_lambda) * entropy
-                return ce_loss
-            # Per-token CE with weights
-            ce_vec = torch.nn.functional.cross_entropy(
-                logits_flat, targets_flat,
-                weight=self._class_weights_tensor.to(logits_flat.device) if self._class_weights_tensor is not None else None,
-                reduction='none'
-            )
-            # Entropy per-token
-            if self.entropy_lambda and self.entropy_lambda != 0.0:
-                probs = torch.softmax(logits_flat, dim=-1)
-                ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
-                ce_vec = ce_vec - float(self.entropy_lambda) * ent_vec
-            weights = per_token_weights.to(ce_vec.dtype)
-            denom = torch.clamp((weights > 0).to(ce_vec.dtype).sum(), min=1.0)
-            return (ce_vec * weights).sum() / denom
-        # Focal loss path: compute per-token and apply weights if provided (no entropy reg with focal)
-        return self._focal_loss(logits_flat, targets_flat, self.focal_gamma, self.focal_alpha, per_token_weights)
 
     @staticmethod
     def _focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float, alpha: Optional[torch.Tensor], per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:

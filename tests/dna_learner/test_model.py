@@ -117,8 +117,10 @@ class TestGenePredictorModel(unittest.TestCase):
                     logits[i, c] = -1.0
 
         # Compute losses
-        ce_loss = ce_module._compute_loss(logits, targets)
-        focal_loss = focal_module._compute_loss(logits, targets)
+        import torch.nn.functional as F
+        ce_loss = F.cross_entropy(logits, targets, reduction='mean')
+        # Use module's focal implementation directly
+        focal_loss = focal_module._focal_loss(logits, targets, focal_module.focal_gamma, focal_module.focal_alpha, per_token_weights=None)
 
         # With confident correct predictions, focal loss should be smaller than CE
         self.assertLess(focal_loss.item(), ce_loss.item() + 1e-6)
