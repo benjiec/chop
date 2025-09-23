@@ -493,10 +493,11 @@ class GenePredictorModule(pl.LightningModule):
         return metrics
     
     def _compute_event_masked_entropy_ce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        """Compute loss with edge masking, class filter (class weight > 1), and entropy regularization.
+        """Compute loss with edge masking over all classes and entropy regularization.
 
-        - logits: (B, L, C)
-        - targets: (B, L)
+        - Includes all center tokens (no class filter); edge tokens excluded by margin
+        - Applies class weights to per-token loss if provided
+        - Uses weighted mean across included tokens
         """
         batch_size, seq_length, num_classes = logits.shape
         logits_flat = logits.view(-1, num_classes)
@@ -512,34 +513,38 @@ class GenePredictorModule(pl.LightningModule):
         else:
             edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
 
-        # Class mask: include only tokens whose target class has weight > 1.0
-        cw = self._class_weights_tensor
-        if cw is not None:
-            allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
-            if allowed.any():
-                class_mask = allowed[targets_flat]
-            else:
-                # If no class exceeds the threshold, include all classes
-                class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-        else:
-            class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-
-        include_mask = edge_mask & class_mask
+        include_mask = edge_mask  # include all center tokens, no class filtering
         if not include_mask.any():
             # Return a zero loss connected to the graph to allow backward()
             return logits_flat.sum() * 0.0
 
-        # Per-token CE (unweighted) and entropy
+        # Per-token CE (unweighted), then apply class weights if any
         ce_vec = torch.nn.functional.cross_entropy(
             logits_flat, targets_flat,
             weight=None,
             reduction='none'
         )
+
+        # Entropy per-token
         probs = torch.softmax(logits_flat, dim=-1)
         ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
 
-        loss_vec = ce_vec - float(getattr(self, 'entropy_lambda', 0.0)) * ent_vec
-        return loss_vec[include_mask].mean()
+        # Per-token combined loss
+        lambda_h = float(getattr(self, 'entropy_lambda', 0.0))
+        per_token_loss = ce_vec - lambda_h * ent_vec
+
+        # Class weights per token
+        if getattr(self, '_class_weights_tensor', None) is not None:
+            cw = self._class_weights_tensor.to(device=logits.device, dtype=per_token_loss.dtype)
+            token_weights = cw[targets_flat]
+        else:
+            token_weights = torch.ones_like(per_token_loss)
+
+        # Apply mask and compute weighted mean
+        per_token_loss = per_token_loss[include_mask]
+        token_weights = token_weights[include_mask]
+        denom = torch.clamp(token_weights.sum(), min=1e-12)
+        return (per_token_loss * token_weights).sum() / denom
 
     def training_step(self, batch, batch_idx):
         sequences, targets = batch

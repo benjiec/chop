@@ -26,30 +26,29 @@ class TestValidationLossFilter(unittest.TestCase):
         mod = GenePredictorModule(cfg)
         return mod
 
-    def test_val_loss_filters_by_weight_gt_one(self):
-        # class weights: only class 1 has weight>1
+    def test_val_loss_weighted_all_center_tokens(self):
+        # class weights: only class 1 has weight>1; class 2 weight=0 (ignored)
         cw = [1.0, 2.0, 0.0]
         mod = self._make_module(cw, entropy_lambda=0.0)
-        # Craft logits so CE differs by class
-        # batch=1, L=4, C=3
+        # batch=1, L=4, C=3, each position confident for its true class
         logits = torch.tensor([
-            [[5.0,  -2.0,  -2.0],  # y=0 confident
-             [-2.0,  5.0,  -2.0],  # y=1 confident
-             [-2.0, -2.0,   5.0],  # y=2 confident
-             [-2.0,  5.0,  -2.0],  # y=1 confident
+            [[5.0,  -2.0,  -2.0],  # y=0
+             [-2.0,  5.0,  -2.0],  # y=1
+             [-2.0, -2.0,   5.0],  # y=2
+             [-2.0,  5.0,  -2.0],  # y=1
             ]
         ], dtype=torch.float32)
         targets = torch.tensor([[0,1,2,1]], dtype=torch.long)
-        # Monkeypatch model forward to return our logits
         def _fwd(x):
             return logits
         mod.model.forward = _fwd
         loss = mod.validation_step((torch.zeros_like(targets), targets), 0)
-        # Expected CE only for class 1 positions (2 positions)
         import math
+        # CE is identical for each correctly classified token given identical margins
         p = math.exp(5.0) / (math.exp(5.0) + math.exp(-2.0) + math.exp(-2.0))
         ce = -math.log(p)
-        expected = ce  # averaged across the two identical class-1 positions
+        # Weighted mean over tokens (weights by target class): [1,2,0,2]
+        expected = (1*ce + 2*ce + 0*ce + 2*ce) / (1+2+0+2)
         self.assertAlmostEqual(float(loss), expected, places=3)
 
 
