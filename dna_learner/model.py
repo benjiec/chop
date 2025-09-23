@@ -464,9 +464,9 @@ class GenePredictorModule(pl.LightningModule):
 
         # Entropy regularization strength (lambda). Default 1e-3 if not specified
         try:
-            self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 1e-3))
+            self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 0))
         except Exception:
-            self.entropy_lambda = 1e-3
+            self.entropy_lambda = 0
 
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
@@ -553,7 +553,6 @@ class GenePredictorModule(pl.LightningModule):
         
         # Log metrics
         self.log('train_loss', loss, prog_bar=True)
-        self.log('train_accuracy', metrics['accuracy'], prog_bar=True)
         
         # Log per-class accuracies
         for class_name in self.class_names:
@@ -575,7 +574,6 @@ class GenePredictorModule(pl.LightningModule):
         
         # Log metrics
         self.log('val_loss', loss, prog_bar=True)
-        self.log('val_accuracy', metrics['accuracy'], prog_bar=True)
         
         # Log per-class accuracies
         for class_name in self.class_names:

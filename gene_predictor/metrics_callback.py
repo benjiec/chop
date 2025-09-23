@@ -136,9 +136,11 @@ class DualMetricEarlyStopping(pl.Callback):
         val_f1 = float(metrics.get('val_f1', float('-inf')))
         improved = False
         if self.best_loss is None or val_loss < self.best_loss - 1e-12:
+            print("best_loss improved", self.best_loss, val_loss)
             self.best_loss = val_loss
             improved = True
         if self.best_f1 is None or val_f1 > self.best_f1 + 1e-12:
+            print("best_f1 improved", self.best_f1, val_f1)
             self.best_f1 = val_f1
             improved = True
         if improved:

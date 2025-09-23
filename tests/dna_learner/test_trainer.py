@@ -112,11 +112,11 @@ class TestTrainer(unittest.TestCase):
                 config,
                 outdir,
                 additional_callback_generator=lambda v: [],
-                monitor_metric='val_accuracy',
+                monitor_metric='val_loss',
                 monitor_mode='max',
             )
-            ckpts = list((outdir / 'checkpoints').glob('model_epoch=*_val_accuracy=*.ckpt'))
+            ckpts = list((outdir / 'checkpoints').glob('model_epoch=*_val_loss=*.ckpt'))
             self.assertTrue(len(ckpts) >= 1)
             # Ensure no duplicated tokens in name
             self.assertFalse(any('epoch=epoch=' in p.name for p in ckpts))
-            self.assertFalse(any('val_accuracy=val_accuracy=' in p.name for p in ckpts))
+            self.assertFalse(any('val_loss=val_loss=' in p.name for p in ckpts))
