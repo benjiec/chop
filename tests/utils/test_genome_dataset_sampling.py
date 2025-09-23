@@ -139,6 +139,44 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
         ds2 = self._make_two_contigs_dataset(class_weights=cw, num_windows=10, seed=42)
         self.assertEqual(ds1._selected_window_indices, ds2._selected_window_indices)
 
+    def test_excludes_edge_only_weighted_windows(self):
+        # Build a small contig of length 32 with START at positions 0..2 and STOP at 29..31
+        # With window=16 and margin_fraction=0.2 -> margin=3, both events lie in edge bands only
+        total_len = 32
+        fasta = (
+            f">ctg\n"
+            + ''.join(['N'] * total_len)
+        )
+        # Insert ATG at 0..2 and TAA at 29..31
+        seq_list = list('N' * total_len)
+        seq_list[0:3] = list('ATG')
+        seq_list[29:32] = list('TAA')
+        fasta = f">ctg\n{''.join(seq_list)}\n"
+        # Single + strand exon covering the whole region so START/STOP labels are set accordingly
+        # Use exon_start=1 (1-based) and exon_end=32 to get last_exon[1]=32 -> stop_pos=29
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctg\tg\t1\t32\t1\t32\t+\n"
+        )
+        cw = [1.0] * 8
+        cw[P.START] = 2.0
+        cw[P.STOP] = 2.0
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / 's.fna.gz'
+            tsv_path = fp / 'a.tsv'
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+            ds = AnnotatedGenomeDataset(
+                str(fasta_path), str(tsv_path), window=16, stride=16,
+                class_weights=cw, seed=17
+            )
+            # Expect two windows [0:16], [16:32]
+            self.assertEqual(len(ds.windows), 2)
+            # Both should be excluded for weighted-only-on-edges, thus window class sets become empty
+            self.assertEqual(ds._window_class_sets[0], set())
+            self.assertEqual(ds._window_class_sets[1], set())
+
 
 if __name__ == '__main__':
     unittest.main()

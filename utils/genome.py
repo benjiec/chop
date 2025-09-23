@@ -103,7 +103,8 @@ class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str,
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
-                 window_incl_classes: Optional[List[int]] = None):
+                 window_incl_classes: Optional[List[int]] = None,
+                 debug_margin_fraction: Optional[float] = 0.2):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
@@ -122,6 +123,7 @@ class AnnotatedGenomeDataset:
         self._window_class_sets: List[Set[int]] = []
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
+        self._debug_margin_fraction = float(debug_margin_fraction) if debug_margin_fraction is not None else None
         print("Building/sampling windows for training", self._window_incl_classes)
         self._build(num_contigs)
 
@@ -262,6 +264,28 @@ class AnnotatedGenomeDataset:
             tgt_slice = self.targets[contig_idx][s:e]
             present = set(int(c) for c in np.unique(tgt_slice))
             present_considered = {c for c in present if c not in exclude_weight_one}
+
+            # Exclude windows where weighted classes appear only on edges
+            excluded_for_edge_only = False
+            if self._debug_margin_fraction is not None and self.window and self.class_weights is not None:
+                Lw = len(tgt_slice)
+                margin = int(round(Lw * max(0.0, min(0.5, float(self._debug_margin_fraction)))))
+                if margin > 0 and (2 * margin) < Lw:
+                    weighted_classes = {i for i, w in enumerate(self.class_weights) if w is not None and float(w) > 1.0}
+                    if weighted_classes:
+                        pos_weighted = [i for i, v in enumerate(tgt_slice.tolist()) if int(v) in weighted_classes]
+                        if pos_weighted:
+                            in_center = [p for p in pos_weighted if (p >= margin and p < (Lw - margin))]
+                            if len(in_center) == 0:
+                                excluded_for_edge_only = True
+                                contig_id = self.contig_ids[contig_idx]
+                                # print(f"excluding window {w_idx} {contig_id}[{s}:{e}] (weighted targets only on edges); positions={pos_weighted}, margin={margin}, length={Lw}")
+
+            if excluded_for_edge_only:
+                # Mark as no informative classes for balancing; do not add to class_to_windows
+                self._window_class_sets.append(set())
+                continue
+
             self._window_class_sets.append(present_considered)
             for c in present_considered:
                 class_to_windows.setdefault(c, []).append(w_idx)

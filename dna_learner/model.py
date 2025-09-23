@@ -526,7 +526,8 @@ class GenePredictorModule(pl.LightningModule):
 
         include_mask = edge_mask & class_mask
         if not include_mask.any():
-            return torch.tensor(0.0, device=logits.device, dtype=torch.float32)
+            # Return a zero loss connected to the graph to allow backward()
+            return logits_flat.sum() * 0.0
 
         # Per-token CE (unweighted) and entropy
         ce_vec = torch.nn.functional.cross_entropy(
