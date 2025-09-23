@@ -107,7 +107,6 @@ def train(
 
     # Neutral alias and early stopping on the primary metric only
     callbacks.append(BestCheckpointAlias(output_dir / "checkpoints"))
-    callbacks.append(pl.callbacks.EarlyStopping(monitor=monitor_metric, patience=8, mode=monitor_mode))
 
     if additional_callback_generator:
         callbacks.extend(additional_callback_generator(val_loader))
