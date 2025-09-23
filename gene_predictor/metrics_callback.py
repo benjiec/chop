@@ -117,7 +117,7 @@ class F1Callback(pl.Callback):
         if should_print and per_class_f1:
             ordered = sorted(per_class_f1.items(), key=lambda kv: kv[0])
             summary = ' '.join([f"{k}={v:.2f}" for k, v in ordered])
-            print(f"F1 per class: {summary}")
+            print(f"\nF1 per class: {summary}")
 
 
 class DualMetricEarlyStopping(pl.Callback):
@@ -135,6 +135,12 @@ class DualMetricEarlyStopping(pl.Callback):
         val_loss = float(metrics.get('val_loss', float('inf')))
         val_f1 = float(metrics.get('val_f1', float('-inf')))
         improved = False
+
+        if trainer.current_epoch <= 1:  # first two epochs, just continue
+            trainer.should_stop = False
+            self.wait = 0
+            return
+
         if self.best_loss is None or val_loss < self.best_loss - 1e-12:
             print("best_loss improved", self.best_loss, val_loss)
             self.best_loss = val_loss
@@ -149,5 +155,3 @@ class DualMetricEarlyStopping(pl.Callback):
             self.wait += 1
             if self.wait >= self.patience:
                 trainer.should_stop = True
-
-
