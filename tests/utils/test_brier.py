@@ -82,6 +82,31 @@ class TestBrier(unittest.TestCase):
         self.assertIn(1, out['brier_by_class'])
         self.assertAlmostEqual(out['brier_by_class'][1], 0.01, places=6)
 
+    def test_valid_masks_masks_positions(self):
+        # 3 tokens, 2 classes; mask excludes middle token
+        probs = np.array([
+            [0.2, 0.8],  # y=1
+            [0.9, 0.1],  # y=0 (will be masked out)
+            [0.6, 0.4],  # y=1
+        ], dtype=np.float32)
+        targets = np.array([1, 0, 1], dtype=int)
+        preds = np.array([1, 0, 0], dtype=int)
+        rd = [{'targets': targets, 'probabilities': probs, 'predictions': preds}]
+        # No class filtering; event_only=False so we include all valid positions
+        # valid_masks: mask out position 1 only
+        valid_masks = [[True, False, True]]
+        out = compute_brier_scores(rd, class_weights=None, min_weight=0.0, event_only=False, valid_masks=valid_masks)
+        # Manually compute expected over positions 0 and 2 only
+        # pos0 one-hot [0,1]: se = (0.2-0)^2 + (0.8-1)^2 = 0.04 + 0.04 = 0.08
+        # pos2 one-hot [0,1]: se = (0.6-0)^2 + (0.4-1)^2 = 0.36 + 0.36 = 0.72
+        expected_overall = (0.08 + 0.72) / 2.0
+        self.assertAlmostEqual(out['brier'], expected_overall, places=6)
+        # Per-class brier: average binary squared error over positions 0 and 2
+        # class 0: (0.2-0)^2 + (0.6-0)^2 = 0.04 + 0.36 = 0.40 -> /2 = 0.20
+        # class 1: (0.8-1)^2 + (0.4-1)^2 = 0.04 + 0.36 = 0.40 -> /2 = 0.20
+        self.assertAlmostEqual(out['brier_by_class'][0], 0.20, places=6)
+        self.assertAlmostEqual(out['brier_by_class'][1], 0.20, places=6)
+
 
 if __name__ == '__main__':
     unittest.main()

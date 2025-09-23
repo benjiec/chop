@@ -513,18 +513,15 @@ class GenePredictorModule(pl.LightningModule):
             edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
 
         # Class mask: include only tokens whose target class has weight > 1.0
-        try:
-            cw = self._class_weights_tensor
-            if cw is not None:
-                allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
-                if allowed.any():
-                    class_mask = allowed[targets_flat]
-                else:
-                    # If no class exceeds the threshold, include all classes
-                    class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+        cw = self._class_weights_tensor
+        if cw is not None:
+            allowed = (cw > 1.0).to(dtype=torch.bool, device=logits.device)
+            if allowed.any():
+                class_mask = allowed[targets_flat]
             else:
+                # If no class exceeds the threshold, include all classes
                 class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-        except Exception:
+        else:
             class_mask = torch.ones_like(targets_flat, dtype=torch.bool)
 
         include_mask = edge_mask & class_mask
