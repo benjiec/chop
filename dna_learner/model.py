@@ -467,28 +467,7 @@ class GenePredictorModule(pl.LightningModule):
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
-    def _calculate_metrics(self, logits: torch.Tensor, targets: torch.Tensor) -> Dict[str, float]:
-        """Calculate accuracy metrics for each class."""
-        predictions = torch.argmax(logits, dim=-1)
-        
-        # Overall accuracy
-        correct = (predictions == targets).float()
-        accuracy = correct.mean()
-        
-        # Per-class accuracy
-        metrics = {'accuracy': accuracy}
-        
-        for class_idx, class_name in enumerate(self.class_names):
-            class_mask = (targets == class_idx)
-            if class_mask.any():
-                class_accuracy = correct[class_mask].mean()
-                metrics[f'{class_name.lower()}_accuracy'] = class_accuracy
-            else:
-                metrics[f'{class_name.lower()}_accuracy'] = torch.tensor(0.0)
-        
-        return metrics
-    
-    def _compute_event_masked_entropy_ce_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def _compute_adjusted_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute loss with edge masking over all classes and entropy regularization.
 
         - Includes all center tokens (no class filter); edge tokens excluded by margin
@@ -567,19 +546,10 @@ class GenePredictorModule(pl.LightningModule):
         logits = self.model(sequences)
         
         # Unified loss (edge + class filter + entropy)
-        loss = self._compute_event_masked_entropy_ce_loss(logits, targets)
-        
-        # Calculate metrics
-        metrics = self._calculate_metrics(logits, targets)
+        loss = self._compute_adjusted_loss(logits, targets)
         
         # Log metrics
         self.log('train_loss', loss, prog_bar=True)
-        
-        # Log per-class accuracies
-        for class_name in self.class_names:
-            metric_name = f'train_{class_name.lower()}_accuracy'
-            if metric_name in metrics:
-                self.log(metric_name, metrics[metric_name], prog_bar=True)
         
         return loss
     
@@ -588,19 +558,10 @@ class GenePredictorModule(pl.LightningModule):
         logits = self.model(sequences)
         
         # Unified loss (edge + class filter + entropy)
-        loss = self._compute_event_masked_entropy_ce_loss(logits, targets)
-        
-        # Calculate metrics
-        metrics = self._calculate_metrics(logits, targets)
+        loss = self._compute_adjusted_loss(logits, targets)
         
         # Log metrics
         self.log('val_loss', loss, prog_bar=True)
-        
-        # Log per-class accuracies
-        for class_name in self.class_names:
-            metric_name = f'val_{class_name.lower()}_accuracy'
-            if metric_name in metrics:
-                self.log(metric_name, metrics[metric_name], prog_bar=True)
         
         return loss
     

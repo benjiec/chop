@@ -42,7 +42,7 @@ class TestEntropyPenalty(unittest.TestCase):
         targets = torch.tensor([[0, 0, 1, 2]], dtype=torch.long)
         # CE-only over included tokens (all here):
         ce_only = torch.nn.functional.cross_entropy(logits.view(-1, 3), targets.view(-1), reduction='mean')
-        loss_with_entropy = mod._compute_event_masked_entropy_ce_loss(logits, targets)
+        loss_with_entropy = mod._compute_adjusted_loss(logits, targets)
         # With entropy regularization subtracting lambda*H, the loss should be <= CE-only (since entropy >= 0)
         self.assertLessEqual(float(loss_with_entropy), float(ce_only) + 1e-6)
 
