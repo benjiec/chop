@@ -44,10 +44,7 @@ class ClassAwareBatchSampler:
         self.index_to_classset = index_to_classset
         self.seed: int = int(seed)
         self.drop_last: bool = bool(drop_last)
-        # Cap the minimum per-class requirement to floor(batch_size / num_target_classes)
-        num_targets = max(1, len(self.target_class_ids))
-        max_min = self.batch_size // num_targets
-        self.min_per_class_per_batch: int = max(0, min(int(min_per_class_per_batch), max_min))
+        self.min_per_class_per_batch: int = min_per_class_per_batch
 
         # Pre-index candidates per class for quick lookup
         self._class_to_indices: dict[int, List[int]] = {c: [] for c in self.target_class_ids}
