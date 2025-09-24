@@ -111,6 +111,82 @@ class TestClassAwareBatchSampler(unittest.TestCase):
         self.assertIn(1, classes_in_b0)
         self.assertIn(2, classes_in_b0)
 
+    def test_min_per_class_with_recycling_after_exhaustion(self):
+        # Two classes (1 and 2). Class 1 has only 2 unique items; we form 3 batches
+        # requiring min_per_class_per_batch=1. Recycling for class 1 should start only
+        # after its 2 unique items are consumed.
+        class_map = {
+            0: {1},  # class 1
+            1: {1},  # class 1
+            2: {2},  # class 2
+            3: {2},  # class 2
+            4: {2},  # class 2
+            5: set(),
+        }
+
+        def index_to_classset(i: int):
+            return class_map.get(int(i), set())
+
+        indices = list(range(6))
+        # batch_size=2, targets=[1,2], min_per_class_per_batch=1 is valid (2 // 2 = 1)
+        sampler = ClassAwareBatchSampler(
+            indices=indices,
+            batch_size=2,
+            target_class_ids=[1, 2],
+            index_to_classset=index_to_classset,
+            seed=7,
+            drop_last=False,
+            min_per_class_per_batch=1,
+        )
+
+        batches = list(iter(sampler))
+        # We expect ceil(6/2)=3 batches produced (drop_last=False)
+        self.assertEqual(len(batches), 3)
+
+        # Track how many times each class-1 index appears; first two batches should use the two uniques
+        class1_indices = [0, 1]
+        seen_order = []
+        for b in batches:
+            classes_in_b = set()
+            for idx in b:
+                classes_in_b.update(index_to_classset(idx))
+                if idx in class1_indices:
+                    seen_order.append(idx)
+            # Each batch should include at least one of class 1 and one of class 2
+            self.assertIn(1, classes_in_b)
+            self.assertIn(2, classes_in_b)
+
+        # Ensure first two class-1 selections are the two unique items, recycle may appear only in 3rd batch
+        self.assertGreaterEqual(len(seen_order), 2)
+        self.assertEqual(set(seen_order[:2]), set(class1_indices))
+
+    def test_no_recycling_until_exhausted(self):
+        # Class 2 has ample unique items; ensure no recycling for class 2 occurs
+        # before we've consumed all its uniques when min_per_class_per_batch=1
+        class_map = {
+            0: {2}, 1: {2}, 2: {2}, 3: {2}, 4: {2}, 5: {2}
+        }
+
+        def index_to_classset(i: int):
+            return class_map.get(int(i), set())
+
+        indices = list(range(6))
+        sampler = ClassAwareBatchSampler(
+            indices=indices,
+            batch_size=2,
+            target_class_ids=[2],
+            index_to_classset=index_to_classset,
+            seed=11,
+            drop_last=False,
+            min_per_class_per_batch=1,
+        )
+
+        batches = list(iter(sampler))
+        # All uniques should be used first across consecutive batches
+        flat = [idx for b in batches for idx in b]
+        # The first 3 picks (one per batch for class 2) must be unique before any reuse
+        self.assertEqual(len(set(flat[:3])), 3)
+
 
 if __name__ == '__main__':
     unittest.main()
