@@ -31,7 +31,10 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   cc_enabled: bool = True,
                   start_before: int = 300, start_after: int = 0,
                   stop_before: int = 0, stop_after: int = 300,
-                  cc_gap: int = 0) -> dict:
+                  cc_gap: int = 0,
+                  entropy_lambda: float = 0.0,
+                  fp_beta: float = 0.1,
+                  accumulate_grad_batches: int = 1) -> dict:
 
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
@@ -68,6 +71,9 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         use_focal=use_focal,
         focal_gamma=focal_gamma,
         focal_alpha=focal_alpha,
+        entropy_lambda=entropy_lambda,
+        fp_beta=fp_beta,
+        accumulate_grad_batches=accumulate_grad_batches,
     )
 
     if cc_enabled:
@@ -96,7 +102,10 @@ def train(fna_fn: str, tsv_fn: str,
           cc_enabled: bool = True,
           start_before: int = 300, start_after: int = 0,
           stop_before: int = 0, stop_after: int = 300,
-          cc_gap: int = 0):
+          cc_gap: int = 0,
+          entropy_lambda: float = 0.0,
+          fp_beta: float = 0.1,
+          accumulate_grad_batches: int = 1):
 
     # Create config
     config = create_config(
@@ -110,6 +119,9 @@ def train(fna_fn: str, tsv_fn: str,
         start_before=start_before, start_after=start_after,
         stop_before=stop_before, stop_after=stop_after,
         cc_gap=cc_gap,
+        entropy_lambda=entropy_lambda,
+        fp_beta=fp_beta,
+        accumulate_grad_batches=accumulate_grad_batches,
     )
 
     # Pass class weights to dataset for sampling/accounting (format: list of floats indexed by class id)
@@ -201,6 +213,11 @@ def main():
     parser.add_argument('--stop-after', type=int, default=300, help='CC downstream window for STOP')
     parser.add_argument('--cc-gap', type=int, default=0, help='Relative donut gap for CC masks')
 
+    # optimization and loss tuning
+    parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
+    parser.add_argument('--entropy-lambda', type=float, default=0.0, help='Entropy regularization strength')
+    parser.add_argument('--fp-beta', type=float, default=0.1, help='False positive penalty coefficient')
+
     args = parser.parse_args()
     
     # Parse attention masks (support symmetric, asymmetric, and donut)
@@ -259,7 +276,10 @@ def main():
         start_after=args.start_after,
         stop_before=args.stop_before,
         stop_after=args.stop_after,
-        cc_gap=args.cc_gap
+        cc_gap=args.cc_gap,
+        entropy_lambda=args.entropy_lambda,
+        fp_beta=args.fp_beta,
+        accumulate_grad_batches=args.accumulate_grad_batches,
     )
 
 if __name__ == "__main__":

@@ -169,7 +169,8 @@ def train(
         enable_progress_bar=True,
         log_every_n_steps=10,
         enable_model_summary=True,
-        default_root_dir=output_dir
+        default_root_dir=output_dir,
+        accumulate_grad_batches=int(config.get('training', {}).get('accumulate_grad_batches', 1)),
     )
 
     # Train model

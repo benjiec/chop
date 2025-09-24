@@ -445,10 +445,7 @@ class GenePredictorModule(pl.LightningModule):
 
         # Optional edge masking for loss within each window: fraction of sequence length per side
         # Default to 0.2 (20%) if not provided
-        try:
-            self.loss_window_margin_fraction: float = float(loss_config.get('loss_window_margin_fraction', 0.2))
-        except Exception:
-            self.loss_window_margin_fraction = 0.2
+        self.loss_window_margin_fraction: float = float(loss_config.get('loss_window_margin_fraction', 0.2))
 
         # Focal loss options
         self.use_focal: bool = bool(loss_config.get('use_focal', False))
@@ -463,16 +460,10 @@ class GenePredictorModule(pl.LightningModule):
         self.save_hyperparameters(config)
 
         # Entropy regularization strength (lambda). Default 1e-3 if not specified
-        try:
-            self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 0))
-        except Exception:
-            self.entropy_lambda = 0
+        self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 0))
 
         # False-positive penalty coefficient (beta). Applies one-vs-rest BCE for weighted classes
-        try:
-            self.fp_beta: float = float(loss_config.get('fp_beta', 0.1))
-        except Exception:
-            self.fp_beta = 0.1
+        self.fp_beta: float = float(loss_config.get('fp_beta', 0.1))
 
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
@@ -684,6 +675,9 @@ def create_base_config(
     use_focal: Optional[bool] = None,
     focal_gamma: Optional[float] = None,
     focal_alpha: Optional[list] = None,
+    entropy_lambda: Optional[float] = None,
+    fp_beta: Optional[float] = None,
+    accumulate_grad_batches: Optional[int] = None,
 ) -> dict:
 
     # Validate d_model is divisible by n_heads
@@ -723,5 +717,11 @@ def create_base_config(
         cfg['loss']['focal_gamma'] = focal_gamma
     if focal_alpha is not None:
         cfg['loss']['focal_alpha'] = focal_alpha
+    if entropy_lambda is not None:
+        cfg['loss']['entropy_lambda'] = float(entropy_lambda)
+    if fp_beta is not None:
+        cfg['loss']['fp_beta'] = float(fp_beta)
+    if accumulate_grad_batches is not None:
+        cfg['training']['accumulate_grad_batches'] = int(accumulate_grad_batches)
 
     return cfg
