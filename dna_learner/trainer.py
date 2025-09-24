@@ -5,8 +5,8 @@ import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split
 from pathlib import Path
 from typing import Optional, Callable, List
-
 from dna_learner.model import GenePredictorModule
+from utils.samplers import ClassAwareBatchSampler
 import shutil
 
 
@@ -63,7 +63,6 @@ def train(
     # Optional class-aware batch sampling (deterministic, no try/except)
     batch_sampler = None
     if batch_sampling:
-        from dna_learner.samplers import ClassAwareBatchSampler
         # Default: target classes are those with weight > 1.0
         cw = list(config.get('loss', {}).get('class_weights', []))
         target_class_ids = [i for i, w in enumerate(cw) if float(w) > 1.0]
@@ -101,6 +100,7 @@ def train(
                 index_to_classset=mapping_fn,
                 seed=int(config['training'].get('seed', 17)),
                 drop_last=False,
+                min_per_class_per_batch=int(config.get('training', {}).get('min_per_class_per_batch', 1))
             )
 
     if batch_sampler is not None:

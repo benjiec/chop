@@ -1,6 +1,6 @@
 import unittest
 
-from dna_learner.samplers import ClassAwareBatchSampler
+from utils.samplers import ClassAwareBatchSampler
 
 
 class TestClassAwareBatchSampler(unittest.TestCase):

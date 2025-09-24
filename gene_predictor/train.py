@@ -34,7 +34,8 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   cc_gap: int = 0,
                   entropy_lambda: float = 0.0,
                   fp_beta: float = 0.1,
-                  accumulate_grad_batches: int = 1) -> dict:
+                  accumulate_grad_batches: int = 1,
+                  min_per_class_per_batch: int = 1) -> dict:
 
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
@@ -85,6 +86,8 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
             ]
         }
 
+    # Trainer-level sampler option
+    cfg['training']['min_per_class_per_batch'] = int(min_per_class_per_batch)
     return cfg
 
 
@@ -217,6 +220,7 @@ def main():
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--entropy-lambda', type=float, default=0.0, help='Entropy regularization strength')
     parser.add_argument('--fp-beta', type=float, default=0.1, help='False positive penalty coefficient')
+    parser.add_argument('--min-per-class-per-batch', type=int, default=1, help='Minimum items per target class per batch (recycling allowed)')
 
     args = parser.parse_args()
     
@@ -280,6 +284,7 @@ def main():
         entropy_lambda=args.entropy_lambda,
         fp_beta=args.fp_beta,
         accumulate_grad_batches=args.accumulate_grad_batches,
+        min_per_class_per_batch=args.min_per_class_per_batch,
     )
 
 if __name__ == "__main__":
