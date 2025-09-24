@@ -71,9 +71,13 @@ class ClassAwareBatchSampler:
         remaining = len(self.indices)
         while remaining > 0:
             batch: List[int] = []
+            covered_classes: set[int] = set()
 
             # First, try to cover each target class with one sample
             for c in self.target_class_ids:
+                # If already covered by a previously added item, skip
+                if c in covered_classes:
+                    continue
                 cand_list = self._class_to_indices[c]
                 # advance pointer until we find an unused candidate or exhaust
                 while cls_ptr[c] < len(cand_list) and cand_list[cls_ptr[c]] in used:
@@ -84,6 +88,12 @@ class ClassAwareBatchSampler:
                     used.add(idx)
                     cls_ptr[c] += 1
                     remaining -= 1
+                    # Mark all classes this item satisfies as covered
+                    try:
+                        classes_here = set(int(x) for x in self.index_to_classset(idx) or [])
+                    except Exception:
+                        classes_here = set()
+                    covered_classes.update(classes_here)
                 # else: no candidate left for this class; skip
 
             # Fill remaining slots from the global pool
