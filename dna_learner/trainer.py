@@ -52,6 +52,7 @@ def train(
     additional_callback_generator: Optional[Callable[[DataLoader], List[pl.Callback]]] = None,
     monitor_metric: str = 'val_loss',
     monitor_mode: str = 'min',
+    batch_sampling: bool = False,
 ):
 
     # Split dataset
@@ -59,13 +60,62 @@ def train(
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=config['training']['batch_size'], 
-        shuffle=True,
-        num_workers=0
-    )
+    # Optional class-aware batch sampling (deterministic, no try/except)
+    batch_sampler = None
+    if batch_sampling:
+        from dna_learner.samplers import ClassAwareBatchSampler
+        # Default: target classes are those with weight > 1.0
+        cw = list(config.get('loss', {}).get('class_weights', []))
+        target_class_ids = [i for i, w in enumerate(cw) if float(w) > 1.0]
+
+        # Fallback: if no weights > 1, disable sampler
+        if len(target_class_ids) > 0:
+            # index_to_classset over ORIGINAL dataset indices
+            def index_to_classset(orig_idx: int):
+                _, targets = dataset[int(orig_idx)]
+                # targets may be tensor; convert to python ints
+                try:
+                    values = set(int(x) for x in set(targets.tolist()))
+                except Exception:
+                    # minimal fallback
+                    values = set(int(x) for x in set(list(targets)))
+                return values
+
+            # train_dataset is a Subset; sampler must yield indices in [0..len(subset)-1]
+            original_indices = getattr(train_dataset, 'indices', None)
+            if original_indices is not None:
+                def subset_local_to_classset(local_idx: int):
+                    orig_idx = int(original_indices[int(local_idx)])
+                    return index_to_classset(orig_idx)
+                sampler_indices = list(range(len(train_dataset)))
+                mapping_fn = subset_local_to_classset
+            else:
+                # Not a Subset, indices are dataset-local
+                sampler_indices = list(range(len(train_dataset)))
+                mapping_fn = index_to_classset
+
+            batch_sampler = ClassAwareBatchSampler(
+                indices=sampler_indices,
+                batch_size=int(config['training']['batch_size']),
+                target_class_ids=target_class_ids,
+                index_to_classset=mapping_fn,
+                seed=int(config['training'].get('seed', 17)),
+                drop_last=False,
+            )
+
+    if batch_sampler is not None:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_sampler=batch_sampler,
+            num_workers=0,
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=config['training']['batch_size'], 
+            shuffle=True,
+            num_workers=0
+        )
     
     val_loader = DataLoader(
         val_dataset, 

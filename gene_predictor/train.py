@@ -156,6 +156,7 @@ def train(fna_fn: str, tsv_fn: str,
         mk_training_cb,
         monitor_metric='val_loss',
         monitor_mode='min',
+        batch_sampling=True
     )
 
     print(f"results saved to: {output_dir}")
