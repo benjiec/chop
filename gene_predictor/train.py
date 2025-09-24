@@ -108,7 +108,8 @@ def train(fna_fn: str, tsv_fn: str,
           cc_gap: int = 0,
           entropy_lambda: float = 0.0,
           fp_beta: float = 0.1,
-          accumulate_grad_batches: int = 1):
+          accumulate_grad_batches: int = 1,
+          min_per_class_per_batch: int = 1):
 
     # Create config
     config = create_config(
@@ -125,6 +126,7 @@ def train(fna_fn: str, tsv_fn: str,
         entropy_lambda=entropy_lambda,
         fp_beta=fp_beta,
         accumulate_grad_batches=accumulate_grad_batches,
+        min_per_class_per_batch=min_per_class_per_batch,
     )
 
     # Pass class weights to dataset for sampling/accounting (format: list of floats indexed by class id)
