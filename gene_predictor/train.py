@@ -21,7 +21,7 @@ from utils.genome import AnnotatedGenomeDataset
 
 
 def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
-                  learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
+                  learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
                   use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
                   dss_weight: float = 5.0, ass_weight: float = 5.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
@@ -91,7 +91,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
           num_contigs: int = 20, layouts_per_contig: int = 1,
-          learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
+          learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
           use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
           dss_weight: float = 5.0, ass_weight: float = 5.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
@@ -186,7 +186,7 @@ def main():
     parser.add_argument('--heads', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--learning-rate', type=float, default=5e-5, help='Learning rate')
     parser.add_argument('--epochs', type=int, default=25, help='Maximum epochs')
-    parser.add_argument('--batch-size', type=int, default=4, help='Batch size')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=codon sensitive)')
     parser.add_argument('--attention-masks', type=str,
                         help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
