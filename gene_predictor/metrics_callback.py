@@ -54,22 +54,20 @@ class F1Callback(pl.Callback):
         # Pull class weights from model config if available
         class_weights = pl_module.config.get('loss', {}).get('class_weights')
 
-        # Optional validity masks to exclude window edges using loss_window_margin_fraction
+        # Optional validity masks to exclude window edges using bp margin
         valid_masks = None
 
-        # If the module has model config, derive margin from model's max seq length
-        max_len = int(pl_module.config.get('model', {}).get('max_seq_length', 0) or 0)
-        frac = float(pl_module.config.get('loss', {}).get('loss_window_margin_fraction', 0.2) or 0.2)
-        if max_len > 0 and frac > 0.0:
-            margin = int(max(0, min(max_len // 2, round(frac * max_len))))
+        # If the module has config, read bp margin directly
+        margin_bp = int(pl_module.config.get('loss', {}).get('loss_window_margin_bp', 200) or 0)
+        if margin_bp > 0:
             valid_masks = []
             for r in results_data:
                 L = len(r['sequence_tokens'])
                 mask = [True] * L
-                if margin > 0 and L > 2 * margin:
-                    for i in range(0, margin):
+                if L > 2 * margin_bp:
+                    for i in range(0, margin_bp):
                         mask[i] = False
-                    for i in range(L - margin, L):
+                    for i in range(L - margin_bp, L):
                         mask[i] = False
                 valid_masks.append(mask)
 

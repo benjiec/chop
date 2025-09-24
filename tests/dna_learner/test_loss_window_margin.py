@@ -25,8 +25,8 @@ class TestLossWindowMargin(unittest.TestCase):
         # Correct center
         logits[:, 5:-5, 0] = 5.0
 
-        # Helper to compute validation loss for a given margin fraction
-        def compute_loss(margin_frac: float) -> float:
+        # Helper to compute validation loss for a given margin in bp
+        def compute_loss(margin_bp: int) -> float:
             cfg = create_base_config(
                 max_seq_length=L,
                 num_classes=C,
@@ -36,7 +36,7 @@ class TestLossWindowMargin(unittest.TestCase):
                 n_heads=1,
                 learning_rate=1e-3,
                 batch_size=1,
-                loss_window_margin_fraction=margin_frac,
+                loss_window_margin_bp=margin_bp,
             )
             mod = GenePredictorModule(cfg)
             # Replace model with a dummy nn.Module returning fixed logits
@@ -50,8 +50,8 @@ class TestLossWindowMargin(unittest.TestCase):
             loss = mod.validation_step((sequences, targets), 0)
             return float(loss.detach().cpu().item())
 
-        loss_no_margin = compute_loss(0.0)
-        loss_with_margin = compute_loss(0.25)  # masks 5 tokens per side for L=20
+        loss_no_margin = compute_loss(0)
+        loss_with_margin = compute_loss(5)  # masks 5 tokens per side for L=20
 
         # Sanity: without margin, edge errors dominate and loss should be high
         self.assertGreater(loss_no_margin, 1.0)

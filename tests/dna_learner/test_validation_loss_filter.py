@@ -17,7 +17,7 @@ class TestValidationLossFilter(unittest.TestCase):
             max_epochs=1,
             batch_size=1,
             class_weights=class_weights,
-            loss_window_margin_fraction=0.0,
+            loss_window_margin_bp=0,
             attention_masks=None,
             kmer_size=0,
         )

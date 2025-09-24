@@ -443,9 +443,8 @@ class GenePredictorModule(pl.LightningModule):
         # Keep a reference to class weights for manual per-token loss when needed
         self._class_weights_tensor = class_weights
 
-        # Optional edge masking for loss within each window: fraction of sequence length per side
-        # Default to 0.2 (20%) if not provided
-        self.loss_window_margin_fraction: float = float(loss_config.get('loss_window_margin_fraction', 0.2))
+        # Edge masking margin in base-pairs (per side). Default 200 bp.
+        self.loss_window_margin_bp: int = int(loss_config.get('loss_window_margin_bp', 200))
 
         # Focal loss options
         self.use_focal: bool = bool(loss_config.get('use_focal', False))
@@ -501,7 +500,7 @@ class GenePredictorModule(pl.LightningModule):
         targets_flat = targets.view(-1)
 
         # Edge mask (exclude window edges)
-        margin = int(max(0, min(seq_length // 2, round(self.loss_window_margin_fraction * seq_length))))
+        margin = int(max(0, min(seq_length // 2, int(self.loss_window_margin_bp))))
         if margin > 0 and seq_length > 2 * margin:
             center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
             center[:margin] = 0.0
@@ -669,7 +668,8 @@ def create_base_config(
     max_epochs: int = 25,
     batch_size: int = 8,
     class_weights: Optional[list] = None,
-    loss_window_margin_fraction: Optional[float] = 0.2,
+    loss_window_margin_fraction: Optional[float] = None,
+    loss_window_margin_bp: Optional[int] = 200,
     attention_masks: Optional[Dict[int, int]] = None,
     kmer_size: int = 0,
     use_focal: Optional[bool] = None,
@@ -705,7 +705,7 @@ def create_base_config(
         },
         'loss': {
             'class_weights': class_weights,
-            'loss_window_margin_fraction': loss_window_margin_fraction,
+            'loss_window_margin_bp': loss_window_margin_bp,
         },
         'class_names': class_names
     }
