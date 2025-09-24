@@ -218,6 +218,54 @@ class TestGenePredictorModel(unittest.TestCase):
         other_cols = [c for c in range(6) if c != 2]
         self.assertLess(torch.abs(delta[0, :, other_cols]).max().item(), 1e-6)
 
+    def test_fp_beta_penalty_increases_loss_on_background_fps(self):
+        # Config with 3 classes, class 1 weighted > 1
+        cfg = create_base_config(
+            max_seq_length=4,
+            num_classes=3,
+            class_names=['GENE','START','STOP'],
+            d_model=16,
+            n_layers=1,
+            n_heads=4,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=1,
+            class_weights=[1.0, 5.0, 1.0],
+            attention_masks={0: 2},
+            kmer_size=0,
+        )
+        cfg['loss']['entropy_lambda'] = 0.0
+        # First, set fp_beta=0
+        cfg['loss']['fp_beta'] = 0.0
+        mod_no_fp = GenePredictorModule(cfg)
+        # Now same with fp_beta>0
+        cfg2 = dict(cfg)
+        cfg2['loss'] = dict(cfg['loss'])
+        cfg2['loss']['fp_beta'] = 0.5
+        mod_with_fp = GenePredictorModule(cfg2)
+
+        # Construct logits to create FP toward START on background tokens
+        # batch=1, L=4, C=3
+        # targets: all GENE (0)
+        targets = torch.zeros((1, 4), dtype=torch.long)
+        # logits: high prob for START (class 1) on last two positions
+        logits = torch.tensor([
+            [[ 3.0, -1.0, -2.0],  # clearly GENE
+             [ 2.0, -0.5, -1.0],  # mostly GENE
+             [-1.0,  2.0, -1.0],  # FP toward START
+             [-1.0,  2.5, -1.5],  # stronger FP toward START
+            ]
+        ], dtype=torch.float32)
+
+        # Monkeypatch model forward for both modules
+        mod_no_fp.model.forward = lambda x: logits
+        mod_with_fp.model.forward = lambda x: logits
+
+        loss_no_fp = mod_no_fp.validation_step((torch.zeros_like(targets), targets), 0)
+        loss_with_fp = mod_with_fp.validation_step((torch.zeros_like(targets), targets), 0)
+        # With FP penalty, loss should be higher
+        self.assertGreater(float(loss_with_fp), float(loss_no_fp))
+
 
 if __name__ == '__main__':
     unittest.main()

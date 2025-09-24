@@ -468,6 +468,12 @@ class GenePredictorModule(pl.LightningModule):
         except Exception:
             self.entropy_lambda = 0
 
+        # False-positive penalty coefficient (beta). Applies one-vs-rest BCE for weighted classes
+        try:
+            self.fp_beta: float = float(loss_config.get('fp_beta', 0.1))
+        except Exception:
+            self.fp_beta = 0.1
+
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
@@ -534,7 +540,7 @@ class GenePredictorModule(pl.LightningModule):
         per_token_loss = ce_vec - lambda_h * ent_vec
 
         # Class weights per token
-        if getattr(self, '_class_weights_tensor', None) is not None:
+        if self._class_weights_tensor is not None:
             cw = self._class_weights_tensor.to(device=logits.device, dtype=per_token_loss.dtype)
             token_weights = cw[targets_flat]
         else:
@@ -544,7 +550,27 @@ class GenePredictorModule(pl.LightningModule):
         per_token_loss = per_token_loss[include_mask]
         token_weights = token_weights[include_mask]
         denom = torch.clamp(token_weights.sum(), min=1e-12)
-        return (per_token_loss * token_weights).sum() / denom
+        ce_entropy_loss = (per_token_loss * token_weights).sum() / denom
+
+        # Optional FP penalty (one-vs-rest BCE over weighted classes) on included tokens
+        beta = float(self.fp_beta)
+        if beta > 0.0 and self._class_weights_tensor is not None:
+            cw_full = self._class_weights_tensor.to(device=logits.device)
+            weighted_classes_mask = cw_full > 1.0
+            if weighted_classes_mask.any():
+                probs_full = probs[include_mask]  # (N_incl, C)
+                targets_incl = targets_flat[include_mask]
+                # clamp for numerical stability
+                probs_full = torch.clamp(probs_full, min=1e-6, max=1.0 - 1e-6)
+                # Select only weighted classes columns
+                class_indices = torch.nonzero(weighted_classes_mask, as_tuple=False).view(-1)
+                p_sel = probs_full[:, class_indices]  # (N_incl, C_w)
+                # Build y for selected classes
+                y_sel = (targets_incl.view(-1, 1) == class_indices.view(1, -1)).to(p_sel.dtype)
+                bce = -(y_sel * torch.log(p_sel) + (1.0 - y_sel) * torch.log(1.0 - p_sel))
+                fp_penalty = bce.mean()
+                return ce_entropy_loss + beta * fp_penalty
+        return ce_entropy_loss
 
     def training_step(self, batch, batch_idx):
         sequences, targets = batch

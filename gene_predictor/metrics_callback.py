@@ -52,17 +52,14 @@ class F1Callback(pl.Callback):
                 })
 
         # Pull class weights from model config if available
-        try:
-            class_weights = getattr(pl_module, 'config', {}).get('loss', {}).get('class_weights')
-        except Exception:
-            class_weights = None
+        class_weights = pl_module.config.get('loss', {}).get('class_weights')
 
         # Optional validity masks to exclude window edges using loss_window_margin_fraction
         valid_masks = None
 
         # If the module has model config, derive margin from model's max seq length
-        max_len = int(getattr(pl_module, 'config', {}).get('model', {}).get('max_seq_length', 0) or 0)
-        frac = float(getattr(pl_module, 'config', {}).get('loss', {}).get('loss_window_margin_fraction', 0.2) or 0.2)
+        max_len = int(pl_module.config.get('model', {}).get('max_seq_length', 0) or 0)
+        frac = float(pl_module.config.get('loss', {}).get('loss_window_margin_fraction', 0.2) or 0.2)
         if max_len > 0 and frac > 0.0:
             margin = int(max(0, min(max_len // 2, round(frac * max_len))))
             valid_masks = []
@@ -112,7 +109,7 @@ class F1Callback(pl.Callback):
 
         # Optional compact stdout summary
         should_print = self.print_per_class_every and (
-            (trainer is None) or ((getattr(trainer, 'current_epoch', 0) + 1) % self.print_per_class_every == 0)
+            (trainer is None) or (((trainer.current_epoch + 1) % self.print_per_class_every) == 0)
         )
         if should_print and per_class_f1:
             ordered = sorted(per_class_f1.items(), key=lambda kv: kv[0])

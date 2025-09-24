@@ -33,7 +33,7 @@ class BestCheckpointAlias(pl.Callback):
         best_path = None
         for cb in trainer.callbacks:
             if isinstance(cb, pl.callbacks.ModelCheckpoint):
-                path = getattr(cb, 'best_model_path', '')
+                path = cb.best_model_path
                 if path:
                     best_path = Path(path)
                     break

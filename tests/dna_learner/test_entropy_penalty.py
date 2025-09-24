@@ -24,6 +24,7 @@ class TestEntropyPenalty(unittest.TestCase):
         )
         cfg['loss']['use_focal'] = False
         cfg['loss']['entropy_lambda'] = entropy_lambda
+        cfg['loss']['fp_beta'] = 0.0
         mod = GenePredictorModule(cfg)
         return mod
 
