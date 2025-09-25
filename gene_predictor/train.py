@@ -16,6 +16,7 @@ from utils.constants import GenePredictionClass as P
 from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
 from gene_predictor.metrics_callback import F1Callback
+from gene_predictor.metrics_callback import LossComponentsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
@@ -164,7 +165,7 @@ def train(fna_fn: str, tsv_fn: str,
             save_last=False,
             auto_insert_metric_name=False,
         )
-        return [ F1Callback(val_loader), DualMetricEarlyStopping(patience=8), f1_ckpt ]
+        return [ F1Callback(val_loader), LossComponentsCallback(), DualMetricEarlyStopping(patience=8), f1_ckpt ]
     
     model, val_loader = run_trainer(
         dataset,
