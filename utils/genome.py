@@ -124,7 +124,6 @@ class AnnotatedGenomeDataset:
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
         self._debug_margin_fraction = float(debug_margin_fraction) if debug_margin_fraction is not None else None
-        print("Building/sampling windows for training", self._window_incl_classes)
         self._build(num_contigs)
 
     def __len__(self) -> int:

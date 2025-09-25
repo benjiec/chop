@@ -467,7 +467,7 @@ class GenePredictorModule(pl.LightningModule):
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
-    def _compute_adjusted_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    def _compute_adjusted_loss(self, logits: torch.Tensor, targets: torch.Tensor, components_out: Optional[Dict[str, Any]] = None) -> torch.Tensor:
         """Compute loss with edge masking over all classes and entropy regularization.
 
         - Includes all center tokens (no class filter); edge tokens excluded by margin
@@ -515,14 +515,22 @@ class GenePredictorModule(pl.LightningModule):
         else:
             token_weights = torch.ones_like(per_token_loss)
 
-        # Apply mask and compute weighted mean
-        per_token_loss = per_token_loss[include_mask]
-        token_weights = token_weights[include_mask]
-        denom = torch.clamp(token_weights.sum(), min=1e-12)
-        ce_entropy_loss = (per_token_loss * token_weights).sum() / denom
+        # Apply mask and compute weighted means
+        ce_masked = ce_vec[include_mask]
+        ent_masked = ent_vec[include_mask]
+        tw_masked = token_weights[include_mask]
+        denom = torch.clamp(tw_masked.sum(), min=1e-12)
+        # Base CE and entropy means (for reporting/components)
+        ce_mean = (ce_masked * tw_masked).sum() / denom
+        ent_mean = (ent_masked * tw_masked).sum() / denom
+        # Combined training objective mean
+        per_token_loss = (ce_masked - lambda_h * ent_masked)
+        ce_entropy_loss = (per_token_loss * tw_masked).sum() / denom
 
         # Optional FP penalty (one-vs-rest BCE over weighted classes) on included tokens
         beta = float(self.fp_beta)
+        fp_penalty = 0
+
         if beta > 0.0 and self._class_weights_tensor is not None:
             cw_full = self._class_weights_tensor.to(device=logits.device)
             weighted_classes_mask = cw_full > 1.0
@@ -538,8 +546,37 @@ class GenePredictorModule(pl.LightningModule):
                 y_sel = (targets_incl.view(-1, 1) == class_indices.view(1, -1)).to(p_sel.dtype)
                 bce = -(y_sel * torch.log(p_sel) + (1.0 - y_sel) * torch.log(1.0 - p_sel))
                 fp_penalty = bce.mean()
-                return ce_entropy_loss + beta * fp_penalty
-        return ce_entropy_loss
+        else:
+            beta = 0
+            fp_penalty = 0
+
+        total_loss = ce_entropy_loss + beta * fp_penalty
+
+        # Optionally emit loss components (overall and per-class CE aggregates) without recomputation
+        if components_out is not None:
+            # Per-class CE weighted sums and denominators
+            ce_weighted_sum_by_class: Dict[int, float] = {}
+            weight_sum_by_class: Dict[int, float] = {}
+            # Total weighted CE sum across included tokens (for share)
+            total_weighted_ce_sum = float((ce_masked * tw_masked).sum().detach().cpu().item())
+            C = int(logits.shape[-1])
+            for k in range(C):
+                cls_mask = include_mask & (targets_flat == k)
+                if cls_mask.any():
+                    num_k = float((ce_vec[cls_mask] * token_weights[cls_mask]).sum().detach().cpu().item())
+                    den_k = float(token_weights[cls_mask].sum().detach().cpu().item())
+                    ce_weighted_sum_by_class[int(k)] = num_k
+                    weight_sum_by_class[int(k)] = den_k
+
+            components_out['total'] = float(total_loss.detach().cpu().item())
+            components_out['ce'] = float(ce_mean.detach().cpu().item())
+            components_out['entropy'] = float(ent_mean.detach().cpu().item())
+            components_out['fp_penalty'] = float((fp_penalty if isinstance(fp_penalty, torch.Tensor) else torch.tensor(fp_penalty)).detach().cpu().item())
+            components_out['ce_weighted_sum_by_class'] = ce_weighted_sum_by_class
+            components_out['weight_sum_by_class'] = weight_sum_by_class
+            components_out['total_weighted_ce_sum'] = total_weighted_ce_sum
+
+        return total_loss
 
     def training_step(self, batch, batch_idx):
         sequences, targets = batch

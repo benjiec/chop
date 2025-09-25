@@ -128,6 +128,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     else:
                         logits_b = out
                         layer_attn_b = None
+                    logits_raw_np = logits_b[0].detach().cpu().numpy()
                     if temperature is not None and float(temperature) > 0:
                         logits_b = logits_b / float(temperature)
                     preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
@@ -150,7 +151,9 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                             out = out[0]
                         wl = out[0].detach().cpu().numpy()  # (win_len, C)
                         window_logits_np.append(wl)
-                    blended = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=None)
+                    blended_raw = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=None)
+                    logits_raw_np = blended_raw
+                    blended = blended_raw
                     if temperature is not None and float(temperature) > 0:
                         blended = blended / float(temperature)
                     probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
@@ -164,6 +167,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     'targets': targets_b,
                     'predictions': preds_b,
                     'probabilities': probs_b,
+                    'logits_raw': logits_raw_np,
                 }
                 if return_attention and attn_export is not None:
                     result_entry['attentions'] = attn_export
@@ -297,9 +301,19 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
 
     Included classes: any with weight>1.0 from class_weights; if None, defaults to START, STOP, DSS, ASS.
     """
-    # Determine included classes
-    if class_weights and len(class_weights) > 0:
-        include_classes = {idx for idx, w in enumerate(class_weights) if float(w) > 1.0}
+    # Determine included classes (robust to tensor/array inputs)
+    cw_list: Optional[List[float]] = None
+    try:
+        import torch as _torch
+        if class_weights is not None and isinstance(class_weights, _torch.Tensor):
+            cw_list = class_weights.detach().cpu().flatten().tolist()
+        elif class_weights is not None:
+            cw_list = list(class_weights)
+    except Exception:
+        cw_list = list(class_weights) if class_weights is not None else None
+
+    if cw_list is not None and len(cw_list) > 0:
+        include_classes = {idx for idx, w in enumerate(cw_list) if float(w) > 1.0}
     else:
         include_classes = {GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS}
 
@@ -527,6 +541,7 @@ def main():
     parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
     parser.add_argument('--no-ansi-colors', dest='ansi_colors', action='store_false', help='Disable ANSI colors in the report')
     parser.set_defaults(ansi_colors=True)
+    parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence (no temperature) and report means')
     
     args = parser.parse_args()
 
@@ -606,6 +621,64 @@ def main():
     # Compute metrics and motif-span prediction events for visualization (single call)
     generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
     
+    # Optionally compute loss components using the model (no recomputation here)
+    if args.report_loss_components:
+        try:
+            # Use module method for consistent behavior
+            model.eval()
+            total = 0.0
+            ce_total = 0.0
+            ent_total = 0.0
+            fp_total = 0.0
+            count = 0
+            # Per-class CE aggregates across all sequences (weighted sums)
+            ce_weighted_sum_by_class: Dict[int, float] = {}
+            weight_sum_by_class: Dict[int, float] = {}
+            total_weighted_ce_sum: float = 0.0
+            with torch.no_grad():
+                for r in results:
+                    logits_np = r.get('logits_raw')
+                    targets_np = r.get('targets')
+                    if logits_np is None or targets_np is None:
+                        continue
+                    logits = torch.from_numpy(logits_np).unsqueeze(0).to(args.device)
+                    targets = torch.from_numpy(np.array(targets_np, dtype=np.int64)).unsqueeze(0).to(args.device)
+
+                    # Ask model to emit components directly
+                    comp: Dict[str, Any] = {}
+                    _ = model._compute_adjusted_loss(logits, targets, components_out=comp)
+                    total += float(comp.get('total', 0.0))
+                    ce_total += float(comp.get('ce', 0.0))
+                    ent_total += float(comp.get('entropy', 0.0))
+                    fp_total += float(comp.get('fp_penalty', 0.0))
+
+                    # Aggregate per-class CE weighted sums across sequences
+                    ce_ws = comp.get('ce_weighted_sum_by_class', {}) or {}
+                    wt_ws = comp.get('weight_sum_by_class', {}) or {}
+                    total_weighted_ce_sum += float(comp.get('total_weighted_ce_sum', 0.0))
+                    for k, num_k in ce_ws.items():
+                        ce_weighted_sum_by_class[int(k)] = ce_weighted_sum_by_class.get(int(k), 0.0) + float(num_k)
+                    for k, den_k in wt_ws.items():
+                        weight_sum_by_class[int(k)] = weight_sum_by_class.get(int(k), 0.0) + float(den_k)
+                    count += 1
+            if count > 0:
+                print("Adjusted loss components (means across sequences):")
+                print(f"  total={total / count:.4f}  CE={ce_total / count:.4f}  entropy={ent_total / count:.4f}  fp_penalty={fp_total / count:.4f}")
+                # Per-class CE means and shares (aggregated across all sequences)
+                if weight_sum_by_class:
+                    print("CE per class (weighted means) and share of total CE:")
+                    for k in sorted(ce_weighted_sum_by_class.keys()):
+                        denom = weight_sum_by_class.get(k, 0.0)
+                        mean_k = (ce_weighted_sum_by_class[k] / denom) if denom > 0 else float('nan')
+                        share_k = (ce_weighted_sum_by_class[k] / total_weighted_ce_sum) if total_weighted_ce_sum > 0 else 0.0
+                        try:
+                            name = GenePredictionClass.idx_to_cls.get(int(k), str(int(k)))
+                        except Exception:
+                            name = str(int(k))
+                        print(f"  {name:>10s}: CE_mean={mean_k:.4f}  CE_share={share_k:.2%}")
+        except Exception as ex:
+            print(f"[warn] unable to compute loss components: {ex}")
+
     # Brier score on final results
     brier = compute_brier_scores(results, class_weights=cw, min_weight=1.0, event_only=True)
     print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
