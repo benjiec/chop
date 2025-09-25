@@ -35,7 +35,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
             self.assertEqual(len(ds), 1)
             seq_enc, tgt = ds[0]
             seq = f"NNNN{exon}NN"
@@ -48,6 +48,27 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             # INTERGENIC outside
             self.assertTrue(all(tgt[:4] == P.INTERGENIC))
             self.assertTrue(all(tgt[20:] == P.INTERGENIC))
+
+    def test_single_exon_plus_strand_intergenic_gene_class(self):
+        # Same setup as above but rely on default gene_class=INTERGENIC
+        exon = "ATG" + "G"*10 + "TAA"
+        fasta = f">contig1\nNNNN{exon}NN\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "contig1\tgene1\t5\t20\t5\t20\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "seq.fna.gz"
+            tsv_path = fp / "ann.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            _, tgt = ds[0]
+            # START at 4..6, STOP at 17..19; tokens between remain INTERGENIC with default gene_class
+            self.assertTrue(all(tgt[4:7] == P.START))
+            self.assertTrue(all(tgt[17:20] == P.STOP))
+            self.assertTrue(all(tgt[7:17] == P.INTERGENIC))
 
     def test_single_exon_minus_strand(self):
         # Minus strand exon; forward first 3 bases 'TTA' (RC->TAA STOP), last 3 bases 'CAT' (RC->ATG START)
@@ -63,7 +84,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
             seq_enc, tgt = ds[0]
             # For minus strand, START occupies last 3 bases of exon (indices 23..25), STOP occupies first 3 (10..12)
             self.assertTrue(all(tgt[23:26] == P.START))
@@ -91,7 +112,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
             _, tgt = ds[0]
             # Donor at 12..13, Acceptor at 18..19 (we label 2bp windows)
             self.assertTrue(all(tgt[12:14] == P.DSS))
@@ -118,7 +139,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE)
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -193,7 +214,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
             with self.assertRaises(AssertionError):
-                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
+                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE)
 
 
 if __name__ == '__main__':

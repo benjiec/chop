@@ -104,7 +104,8 @@ class AnnotatedGenomeDataset:
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
                  window_incl_classes: Optional[List[int]] = None,
-                 debug_margin_fraction: Optional[float] = 0.2):
+                 debug_margin_fraction: Optional[float] = 0.2,
+                 gene_class: int = P.INTERGENIC):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
@@ -124,6 +125,8 @@ class AnnotatedGenomeDataset:
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
         self._debug_margin_fraction = float(debug_margin_fraction) if debug_margin_fraction is not None else None
+        # Class to use for coding region between START and STOP (default: INTERGENIC)
+        self.gene_class: int = int(gene_class)
         self._build(num_contigs)
 
     def __len__(self) -> int:
@@ -193,7 +196,11 @@ class AnnotatedGenomeDataset:
             else:
                 coding_lo = stop_pos
                 coding_hi = first_exon[1] - 1
-            tgt[coding_lo:coding_hi+1] = np.where(tgt[coding_lo:coding_hi+1] == P.INTERGENIC, P.GENE, tgt[coding_lo:coding_hi+1])
+            tgt[coding_lo:coding_hi+1] = np.where(
+                tgt[coding_lo:coding_hi+1] == P.INTERGENIC,
+                self.gene_class,
+                tgt[coding_lo:coding_hi+1]
+            )
 
             # Intron labeling using genomic order of exons
             exon_list_sorted = sorted(ann.exons, key=lambda t: t[0])

@@ -31,7 +31,7 @@ def build_single_exon_contig(name: str, total_len: int, start_pos0: int, stop_po
 class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
     def _make_two_contigs_dataset(self, window: int = 16, stride: int = 8,
                                   class_weights=None, num_windows=None, seed: int = 17,
-                                  window_incl_classes=None):
+                                  window_incl_classes=None, gene_class=P.GENE):
         # Two contigs; exon spans create windows containing START-only, GENE-only, STOP-only, and combos
         total_len = 200
         # Contig c1: exon ~ [20, 73) with START at 20..22 and STOP at 70..72
@@ -54,7 +54,8 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=window, stride=stride,
                 num_windows=num_windows, class_weights=class_weights, seed=seed,
-                window_incl_classes=window_incl_classes
+                window_incl_classes=window_incl_classes,
+                gene_class=gene_class
             )
             return ds
 
@@ -64,7 +65,7 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
         cw[P.START] = 2.0
         cw[P.GENE] = 2.0
         cw[P.STOP] = 2.0
-        ds = self._make_two_contigs_dataset(class_weights=cw)
+        ds = self._make_two_contigs_dataset(class_weights=cw, gene_class=P.GENE)
         # At least one window should include {START, GENE} and another {GENE, STOP}; many include all three
         # Ensure keys are frozensets and contigs list is non-empty for a representative key
         has_key = False
@@ -74,6 +75,11 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             if {P.START, P.GENE, P.STOP}.issubset(set(key)) or key == frozenset({P.START, P.GENE}) or key == frozenset({P.GENE, P.STOP}):
                 has_key = True
         self.assertTrue(has_key, "Expected classset_to_contigs to contain START/GENE/STOP combinations")
+
+        # Repeat with INTERGENIC coding region to verify classsets omit GENE
+        ds2 = self._make_two_contigs_dataset(class_weights=cw, gene_class=P.INTERGENIC)
+        for key in ds2.classset_to_contigs.keys():
+            self.assertNotIn(P.GENE, key)
 
     def test_excludes_weight_one_classes_from_classsets(self):
         # Exclude everything except START
