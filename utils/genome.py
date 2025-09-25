@@ -104,7 +104,7 @@ class AnnotatedGenomeDataset:
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
                  window_incl_classes: Optional[List[int]] = None,
-                 debug_margin_fraction: Optional[float] = 0.2,
+                 exclude_margin_bps: Optional[int] = 200,
                  gene_class: int = P.INTERGENIC):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
@@ -124,7 +124,7 @@ class AnnotatedGenomeDataset:
         self._window_class_sets: List[Set[int]] = []
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
-        self._debug_margin_fraction = float(debug_margin_fraction) if debug_margin_fraction is not None else None
+        self._exclude_margin_bps = int(exclude_margin_bps) if exclude_margin_bps is not None else None
         # Class to use for coding region between START and STOP (default: INTERGENIC)
         self.gene_class: int = int(gene_class)
         self._build(num_contigs)
@@ -273,9 +273,9 @@ class AnnotatedGenomeDataset:
 
             # Exclude windows where weighted classes appear only on edges
             excluded_for_edge_only = False
-            if self._debug_margin_fraction is not None and self.window and self.class_weights is not None:
+            if self._exclude_margin_bps is not None and self.window and self.class_weights is not None:
                 Lw = len(tgt_slice)
-                margin = int(round(Lw * max(0.0, min(0.5, float(self._debug_margin_fraction)))))
+                margin = int(self._exclude_margin_bps)
                 if margin > 0 and (2 * margin) < Lw:
                     weighted_classes = {i for i, w in enumerate(self.class_weights) if w is not None and float(w) > 1.0}
                     if weighted_classes:

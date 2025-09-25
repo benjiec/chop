@@ -31,7 +31,8 @@ def build_single_exon_contig(name: str, total_len: int, start_pos0: int, stop_po
 class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
     def _make_two_contigs_dataset(self, window: int = 16, stride: int = 8,
                                   class_weights=None, num_windows=None, seed: int = 17,
-                                  window_incl_classes=None, gene_class=P.GENE):
+                                  window_incl_classes=None, gene_class=P.GENE,
+                                  exclude_margin_bps: int = 200):
         # Two contigs; exon spans create windows containing START-only, GENE-only, STOP-only, and combos
         total_len = 200
         # Contig c1: exon ~ [20, 73) with START at 20..22 and STOP at 70..72
@@ -55,7 +56,8 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
                 str(fasta_path), str(tsv_path), window=window, stride=stride,
                 num_windows=num_windows, class_weights=class_weights, seed=seed,
                 window_incl_classes=window_incl_classes,
-                gene_class=gene_class
+                gene_class=gene_class,
+                exclude_margin_bps=exclude_margin_bps
             )
             return ds
 
@@ -175,7 +177,7 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             write_temp(tsv_path, tsv)
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=16, stride=16,
-                class_weights=cw, seed=17
+                class_weights=cw, seed=17, exclude_margin_bps=3
             )
             # Expect two windows [0:16], [16:32]
             self.assertEqual(len(ds.windows), 2)
