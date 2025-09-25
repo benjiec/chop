@@ -583,7 +583,10 @@ class GenePredictorModule(pl.LightningModule):
         logits = self.model(sequences)
         
         # Unified loss (edge + class filter + entropy)
-        loss = self._compute_adjusted_loss(logits, targets)
+        comp = {}
+        loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        # Expose components for callback aggregation without extra forwards
+        self._last_train_components = comp
         
         # Log metrics - average across epoch not just last batch
         self.log('train_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -595,7 +598,10 @@ class GenePredictorModule(pl.LightningModule):
         logits = self.model(sequences)
         
         # Unified loss (edge + class filter + entropy)
-        loss = self._compute_adjusted_loss(logits, targets)
+        comp = {}
+        loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        # Expose components for callback aggregation
+        self._last_val_components = comp
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)

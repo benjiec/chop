@@ -153,54 +153,101 @@ class DualMetricEarlyStopping(pl.Callback):
 
 
 class LossComponentsCallback(pl.Callback):
-    """Aggregate and report validation loss components per epoch.
+    """Aggregate and report loss components for validation and training per epoch.
 
-    Uses model._compute_adjusted_loss(..., components_out=...) to ensure
-    components match training/validation logic exactly.
+    For validation, reads components precomputed by pl_module.validation_step.
+    For training, reuses components computed in training_step (no extra forward).
     """
 
+    def __init__(self, report_train_components: bool = True):
+        super().__init__()
+        self.report_train_components = bool(report_train_components)
+
+    # ---- Validation aggregation ----
     def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
-        self._sum_total = 0.0
-        self._sum_ce = 0.0
-        self._sum_entropy = 0.0
-        self._sum_fp = 0.0
-        self._count = 0
-        self._ce_sum_by_class = {}
-        self._wt_sum_by_class = {}
-        self._total_weighted_ce_sum = 0.0
+        self._v_sum_total = 0.0
+        self._v_sum_ce = 0.0
+        self._v_sum_entropy = 0.0
+        self._v_sum_fp = 0.0
+        self._v_count = 0
+        self._v_ce_sum_by_class = {}
+        self._v_wt_sum_by_class = {}
+        self._v_total_weighted_ce_sum = 0.0
 
     def on_validation_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs, batch, batch_idx: int, dataloader_idx: int = 0) -> None:
-        try:
-            sequences, targets = batch
-            logits = pl_module.model(sequences)
-            comp = {}
-            _ = pl_module._compute_adjusted_loss(logits, targets, components_out=comp)
-            self._sum_total += float(comp.get('total', 0.0))
-            self._sum_ce += float(comp.get('ce', 0.0))
-            self._sum_entropy += float(comp.get('entropy', 0.0))
-            self._sum_fp += float(comp.get('fp_penalty', 0.0))
-            self._total_weighted_ce_sum += float(comp.get('total_weighted_ce_sum', 0.0))
-            for k, v in (comp.get('ce_weighted_sum_by_class', {}) or {}).items():
-                self._ce_sum_by_class[int(k)] = self._ce_sum_by_class.get(int(k), 0.0) + float(v)
-            for k, v in (comp.get('weight_sum_by_class', {}) or {}).items():
-                self._wt_sum_by_class[int(k)] = self._wt_sum_by_class.get(int(k), 0.0) + float(v)
-            self._count += 1
-        except Exception:
-            pass
+        comp = getattr(pl_module, '_last_val_components', None)
+        if not isinstance(comp, dict):
+            return
+        self._v_sum_total += float(comp.get('total', 0.0))
+        self._v_sum_ce += float(comp.get('ce', 0.0))
+        self._v_sum_entropy += float(comp.get('entropy', 0.0))
+        self._v_sum_fp += float(comp.get('fp_penalty', 0.0))
+        self._v_total_weighted_ce_sum += float(comp.get('total_weighted_ce_sum', 0.0))
+        for k, v in (comp.get('ce_weighted_sum_by_class', {}) or {}).items():
+            self._v_ce_sum_by_class[int(k)] = self._v_ce_sum_by_class.get(int(k), 0.0) + float(v)
+        for k, v in (comp.get('weight_sum_by_class', {}) or {}).items():
+            self._v_wt_sum_by_class[int(k)] = self._v_wt_sum_by_class.get(int(k), 0.0) + float(v)
+        self._v_count += 1
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
-        if self._count <= 0:
+        if self._v_count > 0:
+            mean_total = self._v_sum_total / self._v_count
+            mean_ce = self._v_sum_ce / self._v_count
+            mean_entropy = self._v_sum_entropy / self._v_count
+            mean_fp = self._v_sum_fp / self._v_count
+            pl_module.print(f"Loss components (val epoch {trainer.current_epoch}): total={mean_total:.4f} CE={mean_ce:.4f} entropy={mean_entropy:.4f} fp_penalty={mean_fp:.4f}")
+            if self._v_wt_sum_by_class:
+                pl_module.print("CE per class (val weighted means) and share of total CE:")
+                for k in sorted(self._v_ce_sum_by_class.keys()):
+                    denom = self._v_wt_sum_by_class.get(k, 0.0)
+                    mean_k = (self._v_ce_sum_by_class[k] / denom) if denom > 0 else float('nan')
+                    share_k = (self._v_ce_sum_by_class[k] / self._v_total_weighted_ce_sum) if self._v_total_weighted_ce_sum > 0 else 0.0
+                    name = P.idx_to_cls.get(int(k), str(int(k)))
+                    pl_module.print(f"  {name:>10s}: CE_mean={mean_k:.4f} CE_share={share_k:.2%}")
+
+    # ---- Training aggregation ----
+    def on_train_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if not self.report_train_components:
             return
-        mean_total = self._sum_total / self._count
-        mean_ce = self._sum_ce / self._count
-        mean_entropy = self._sum_entropy / self._count
-        mean_fp = self._sum_fp / self._count
-        pl_module.print(f"Loss components (val epoch {trainer.current_epoch}): total={mean_total:.4f} CE={mean_ce:.4f} entropy={mean_entropy:.4f} fp_penalty={mean_fp:.4f}")
-        if self._wt_sum_by_class:
-            pl_module.print("CE per class (weighted means) and share of total CE:")
-            for k in sorted(self._ce_sum_by_class.keys()):
-                denom = self._wt_sum_by_class.get(k, 0.0)
-                mean_k = (self._ce_sum_by_class[k] / denom) if denom > 0 else float('nan')
-                share_k = (self._ce_sum_by_class[k] / self._total_weighted_ce_sum) if self._total_weighted_ce_sum > 0 else 0.0
+        self._t_sum_total = 0.0
+        self._t_sum_ce = 0.0
+        self._t_sum_entropy = 0.0
+        self._t_sum_fp = 0.0
+        self._t_count = 0
+        self._t_ce_sum_by_class = {}
+        self._t_wt_sum_by_class = {}
+        self._t_total_weighted_ce_sum = 0.0
+
+    def on_train_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs, batch, batch_idx: int) -> None:
+        if not self.report_train_components:
+            return
+        comp = getattr(pl_module, '_last_train_components', None)
+        if not isinstance(comp, dict):
+            return
+        self._t_sum_total += float(comp.get('total', 0.0))
+        self._t_sum_ce += float(comp.get('ce', 0.0))
+        self._t_sum_entropy += float(comp.get('entropy', 0.0))
+        self._t_sum_fp += float(comp.get('fp_penalty', 0.0))
+        self._t_total_weighted_ce_sum += float(comp.get('total_weighted_ce_sum', 0.0))
+        for k, v in (comp.get('ce_weighted_sum_by_class', {}) or {}).items():
+            self._t_ce_sum_by_class[int(k)] = self._t_ce_sum_by_class.get(int(k), 0.0) + float(v)
+        for k, v in (comp.get('weight_sum_by_class', {}) or {}).items():
+            self._t_wt_sum_by_class[int(k)] = self._t_wt_sum_by_class.get(int(k), 0.0) + float(v)
+        self._t_count += 1
+
+    def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if not self.report_train_components or self._t_count <= 0:
+            return
+        mean_total = self._t_sum_total / self._t_count
+        mean_ce = self._t_sum_ce / self._t_count
+        mean_entropy = self._t_sum_entropy / self._t_count
+        mean_fp = self._t_sum_fp / self._t_count
+        pl_module.print(f"Loss components (train epoch {trainer.current_epoch}): total={mean_total:.4f} CE={mean_ce:.4f} entropy={mean_entropy:.4f} fp_penalty={mean_fp:.4f}")
+        if self._t_wt_sum_by_class:
+            pl_module.print("CE per class (train weighted means) and share of total CE:")
+            for k in sorted(self._t_ce_sum_by_class.keys()):
+                denom = self._t_wt_sum_by_class.get(k, 0.0)
+                mean_k = (self._t_ce_sum_by_class[k] / denom) if denom > 0 else float('nan')
+                share_k = (self._t_ce_sum_by_class[k] / self._t_total_weighted_ce_sum) if self._t_total_weighted_ce_sum > 0 else 0.0
                 name = P.idx_to_cls.get(int(k), str(int(k)))
                 pl_module.print(f"  {name:>10s}: CE_mean={mean_k:.4f} CE_share={share_k:.2%}")
