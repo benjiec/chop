@@ -587,6 +587,14 @@ class GenePredictorModule(pl.LightningModule):
         loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
         # Expose components for callback aggregation without extra forwards
         self._last_train_components = comp
+
+        # Also log component means with on_epoch=True so epoch aggregator matches trainer's averaging
+        if 'ce' in comp:
+            self.log('train_loss_ce', comp['ce'], prog_bar=False, on_step=False, on_epoch=True)
+        if 'entropy' in comp:
+            self.log('train_loss_entropy', comp['entropy'], prog_bar=False, on_step=False, on_epoch=True)
+        if 'fp_penalty' in comp:
+            self.log('train_loss_fp', comp['fp_penalty'], prog_bar=False, on_step=False, on_epoch=True)
         
         # Log metrics - average across epoch not just last batch
         self.log('train_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -602,6 +610,14 @@ class GenePredictorModule(pl.LightningModule):
         loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
         # Expose components for callback aggregation
         self._last_val_components = comp
+
+        # Log component means for validation as well
+        if 'ce' in comp:
+            self.log('val_loss_ce', comp['ce'], prog_bar=False, on_step=False, on_epoch=True)
+        if 'entropy' in comp:
+            self.log('val_loss_entropy', comp['entropy'], prog_bar=False, on_step=False, on_epoch=True)
+        if 'fp_penalty' in comp:
+            self.log('val_loss_fp', comp['fp_penalty'], prog_bar=False, on_step=False, on_epoch=True)
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)

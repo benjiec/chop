@@ -270,8 +270,15 @@ class LossComponentsCallback(pl.Callback):
             # Only use logged metrics; if missing, leave blank in CSV
             val_loss = metrics.get('val_loss')
             train_loss = metrics.get('train_loss')
+            # Component means logged by the module (epoch-averaged by Lightning)
+            val_ce = metrics.get('val_loss_ce')
+            val_ent = metrics.get('val_loss_entropy')
+            val_fp = metrics.get('val_loss_fp')
+            tr_ce = metrics.get('train_loss_ce')
+            tr_ent = metrics.get('train_loss_entropy')
+            tr_fp = metrics.get('train_loss_fp')
 
-            # Per-class CE means for START/STOP/DSS/ASS
+            # Per-class CE means for key classes (use constants only here; model remains class-agnostic)
             start = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.START)
             stop = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.STOP)
             dss = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.DSS)
@@ -293,9 +300,9 @@ class LossComponentsCallback(pl.Callback):
                     ])
                 writer.writerow([
                     int(trainer.current_epoch),
-                    _safe_float(val_f1), _safe_float(val_brier), _safe_float(val_loss), _safe_float(v_ce), _safe_float(v_ent), _safe_float(v_fp),
+                    _safe_float(val_f1), _safe_float(val_brier), _safe_float(val_loss), _safe_float(val_ce), _safe_float(val_ent), _safe_float(val_fp),
                     _safe_float(start), _safe_float(stop), _safe_float(dss), _safe_float(ass),
-                    _safe_float(train_loss), _safe_float(t_ce), _safe_float(t_ent), _safe_float(t_fp),
+                    _safe_float(train_loss), _safe_float(tr_ce), _safe_float(tr_ent), _safe_float(tr_fp),
                     _safe_float(t_start), _safe_float(t_stop), _safe_float(t_dss), _safe_float(t_ass),
                 ])
         except Exception:
