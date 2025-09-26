@@ -35,7 +35,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE, random_prefix_ns=False)
             self.assertEqual(len(ds), 1)
             seq_enc, tgt = ds[0]
             seq = f"NNNN{exon}NN"
@@ -63,7 +63,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), random_prefix_ns=False)
             _, tgt = ds[0]
             # START at 4..6, STOP at 17..19; tokens between remain INTERGENIC with default gene_class
             self.assertTrue(all(tgt[4:7] == P.START))
@@ -84,7 +84,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE, random_prefix_ns=False)
             seq_enc, tgt = ds[0]
             # For minus strand, START occupies last 3 bases of exon (indices 23..25), STOP occupies first 3 (10..12)
             self.assertTrue(all(tgt[23:26] == P.START))
@@ -112,7 +112,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             tsv_path = fp / "ann.tsv"
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), gene_class=P.GENE, random_prefix_ns=False)
             _, tgt = ds[0]
             # Donor at 12..13, Acceptor at 18..19 (we label 2bp windows)
             self.assertTrue(all(tgt[12:14] == P.DSS))
@@ -139,7 +139,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE)
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE, random_prefix_ns=False)
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -161,7 +161,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), random_prefix_ns=False)
             _, tgt = ds[0]
             self.assertTrue(all(tgt[12:14] == P.DSS))
             self.assertTrue(all(tgt[18:20] == P.ASS))
@@ -190,7 +190,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"))
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), random_prefix_ns=False)
             _, tgt = ds[0]
             # START at last exon end: last exon [26,36) -> start_pos=33, labels 33..35 (slice 33:36)
             self.assertTrue(all(tgt[33:36] == P.START))
@@ -214,7 +214,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
             with self.assertRaises(AssertionError):
-                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE)
+                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE, random_prefix_ns=False)
 
 
 if __name__ == '__main__':

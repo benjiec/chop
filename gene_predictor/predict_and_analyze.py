@@ -82,7 +82,7 @@ def load_trained_model(model_path: Path, device='cpu', temperature: Optional[flo
 
 def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
     # not windowing in the dataset class, but rely on windowing here and then blending the results here
-    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None, num_contigs = num_contigs)
+    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None, num_contigs = num_contigs, random_prefix_ns=False)
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test samples - windowing and blending results...")
     return data_loader, dataset

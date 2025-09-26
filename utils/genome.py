@@ -105,7 +105,8 @@ class AnnotatedGenomeDataset:
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
                  window_incl_classes: Optional[List[int]] = None,
                  exclude_margin_bps: Optional[int] = 200,
-                 gene_class: int = P.INTERGENIC):
+                 gene_class: int = P.INTERGENIC,
+                 random_prefix_ns: bool = True):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
@@ -127,6 +128,7 @@ class AnnotatedGenomeDataset:
         self._exclude_margin_bps = int(exclude_margin_bps) if exclude_margin_bps is not None else None
         # Class to use for coding region between START and STOP (default: INTERGENIC)
         self.gene_class: int = int(gene_class)
+        self._random_prefix_ns: bool = bool(random_prefix_ns)
         self._build(num_contigs)
 
     def __len__(self) -> int:
@@ -229,6 +231,19 @@ class AnnotatedGenomeDataset:
                         acceptor_di = _reverse_complement(seq[acceptor_pos:acceptor_pos+2])
                         assert acceptor_di in ConventionalAcceptorDinucleotides, f"Acceptor(-) not in {ConventionalAcceptorDinucleotides}: {acceptor_di}"
                         tgt[acceptor_pos:acceptor_pos+2] = P.ASS
+
+            # Optional randomized N-prefix to avoid aligned START positions across sequences
+            pad_len = 0
+            if self._random_prefix_ns:
+                # Unseeded randomness per user request
+                try:
+                    pad_len = random.randint(100, 400)
+                except Exception:
+                    pad_len = 0
+            if pad_len > 0:
+                seq = ('N' * pad_len) + seq
+                pad_tgt = np.full(pad_len, P.INTERGENIC, dtype=np.int64)
+                tgt = np.concatenate([pad_tgt, tgt], axis=0)
 
             self.sequences.append(seq)
             self.targets.append(tgt)

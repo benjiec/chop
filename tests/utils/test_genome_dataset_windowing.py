@@ -39,7 +39,7 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
             write_temp(tsv_path, tsv)
 
             # Window smaller than contig -> expect multiple items
-            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=16, stride=8)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=16, stride=8, random_prefix_ns=False)
             expected = compute_window_slices(50, window=16, stride=8)
             self.assertEqual(len(ds), len(expected))
 
@@ -50,7 +50,7 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
                 self.assertEqual(y.shape[0], e - s)
 
             # No windowing -> single item of full length
-            ds_full = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path))
+            ds_full = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), random_prefix_ns=False)
             self.assertEqual(len(ds_full), 1)
             x_full, y_full = ds_full[0]
             self.assertEqual(x_full.shape[0], 50)

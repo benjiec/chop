@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import csv
 from pathlib import Path
 from typing import Optional, Dict, List, Iterable, Set
 
@@ -33,7 +32,7 @@ def build_class_weights(use_class_weights: bool,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="List windows containing a target class by dataset selection and class-aware sampler")
+    parser = argparse.ArgumentParser(description="List windows containing a target class after ClassAwareBatchSampler; writes highlighted FASTA")
     parser.add_argument('--fna-fn', type=str, required=True, help='Genome FASTA (can be .gz)')
     parser.add_argument('--tsv-fn', type=str, required=True, help='Annotations TSV (row-per-exon)')
     parser.add_argument('--class', dest='class_name', type=str, default='STOP',
@@ -55,8 +54,8 @@ def main():
     parser.add_argument('--dss-weight', type=float, default=8.0, help='Weight for DSS')
     parser.add_argument('--ass-weight', type=float, default=5.0, help='Weight for ASS')
 
-    parser.add_argument('--out-csv', type=str, default='stop_windows.csv',
-                        help='Output CSV path (will be overwritten)')
+    parser.add_argument('--out-fasta', type=str, default='class_windows.fasta',
+                        help='Output FASTA path (ANSI GREEN highlighting in sequence)')
 
     args = parser.parse_args()
 
@@ -85,6 +84,7 @@ def main():
             window=args.max_seq_length,
             num_windows=int(args.num_windows),
             class_weights=class_weights,
+            random_prefix_ns=False,
         )
     else:
         dataset = AnnotatedGenomeDataset(
@@ -92,19 +92,14 @@ def main():
             args.tsv_fn,
             window=args.max_seq_length,
             class_weights=class_weights,
+            random_prefix_ns=False,
         )
 
-    # Stage 1: AnnotatedGenomeDataset selection
+    # Candidate indices for sampler (dataset selection stage is not reported)
     if dataset._selected_window_indices is not None:
         selected_indices = list(dataset._selected_window_indices)
     else:
         selected_indices = list(range(len(dataset.windows)))
-
-    windows_with_class_dataset: List[int] = []
-    for w_idx in selected_indices:
-        cls_set = dataset._window_class_sets[w_idx]
-        if int(target_class) in cls_set:
-            windows_with_class_dataset.append(w_idx)
 
     # Stage 2: ClassAwareBatchSampler selection over same indices
     # Target classes for sampler are those whose class weight > 1 (as in training)
@@ -140,26 +135,7 @@ def main():
             if int(target_class) in cls_set:
                 sampled_indices_with_class.add(int(w_idx))
 
-    # Write CSV
-    out_path = Path(args.out_csv)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open('w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['source', 'window_index', 'contig_id', 'start', 'end'])
-        # Dataset selection
-        for w_idx in windows_with_class_dataset:
-            contig_idx, s, e = dataset.windows[w_idx]
-            contig_id = dataset.contig_ids[contig_idx]
-            writer.writerow(['dataset', int(w_idx), contig_id, int(s), int(e)])
-        # Sampler batches
-        for w_idx in sorted(sampled_indices_with_class):
-            contig_idx, s, e = dataset.windows[w_idx]
-            contig_id = dataset.contig_ids[contig_idx]
-            writer.writerow(['sampler', int(w_idx), contig_id, int(s), int(e)])
-
-    print(f"Wrote {out_path}")
-
-    # Pretty print with GREEN highlight for the chosen class (always)
+    # ANSI GREEN highlight for the chosen class
     GREEN = "\x1b[32m"
     RESET = "\x1b[0m"
 
@@ -172,19 +148,21 @@ def main():
                 chars.append(ch)
         return ''.join(chars)
 
-    def print_windows(title: str, indices: List[int]):
-        print(f"\n== {title} (showing {len(indices)}) ==")
-        for w_idx in indices:
+    # Write FASTA with highlighted sequences for sampler-selected windows
+    out_path = Path(args.out_fasta)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open('w') as f:
+        for w_idx in sorted(sampled_indices_with_class):
             contig_idx, s, e = dataset.windows[w_idx]
             contig_id = dataset.contig_ids[contig_idx]
             seq = dataset.sequences[contig_idx][s:e]
             tgt_slice = dataset.targets[contig_idx][s:e]
             colored = highlight(seq, tgt_slice, target_class)
-            print(f"{contig_id}[{s}:{e}] win#{w_idx}")
-            print(colored)
+            header = f">{contig_id} {s}:{e} win={w_idx} class={args.class_name.upper()}"
+            f.write(header + "\n")
+            f.write(colored + "\n")
 
-    print_windows("DATASET SELECTION", windows_with_class_dataset)
-    print_windows("SAMPLER SELECTION", sorted(sampled_indices_with_class))
+    print(f"Wrote {out_path}")
 
 
 if __name__ == '__main__':

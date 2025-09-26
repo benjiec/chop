@@ -1,1 +1,1 @@
-PYTHONPATH=. python scripts/list-class-windows.py --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv --class $1 --max-seq-length 1000 --num-windows $2 --out-csv windows_$1.csv
+PYTHONPATH=. python scripts/list-class-windows.py --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv --class $1 --max-seq-length 1000 --num-windows $2 --out-fasta windows_$1.fa

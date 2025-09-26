@@ -57,7 +57,8 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
                 num_windows=num_windows, class_weights=class_weights, seed=seed,
                 window_incl_classes=window_incl_classes,
                 gene_class=gene_class,
-                exclude_margin_bps=exclude_margin_bps
+                exclude_margin_bps=exclude_margin_bps,
+                random_prefix_ns=False
             )
             return ds
 
@@ -177,7 +178,8 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             write_temp(tsv_path, tsv)
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=16, stride=16,
-                class_weights=cw, seed=17, exclude_margin_bps=3
+                class_weights=cw, seed=17, exclude_margin_bps=3,
+                random_prefix_ns=False
             )
             # Expect two windows [0:16], [16:32]
             self.assertEqual(len(ds.windows), 2)
