@@ -84,7 +84,7 @@ def main():
             window=args.max_seq_length,
             num_windows=int(args.num_windows),
             class_weights=class_weights,
-            random_prefix_ns=False,
+            random_prefix_ns=True,
         )
     else:
         dataset = AnnotatedGenomeDataset(
