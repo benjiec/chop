@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import pytorch_lightning as pl
+import csv
+from pathlib import Path
 import torch
 import numpy as np
 
@@ -159,9 +161,10 @@ class LossComponentsCallback(pl.Callback):
     For training, reuses components computed in training_step (no extra forward).
     """
 
-    def __init__(self, report_train_components: bool = True):
+    def __init__(self, report_train_components: bool = True, run_dir: Path | None = None):
         super().__init__()
         self.report_train_components = bool(report_train_components)
+        self.run_dir = Path(run_dir) if run_dir is not None else None
 
     # ---- Validation aggregation ----
     def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
@@ -190,20 +193,23 @@ class LossComponentsCallback(pl.Callback):
         self._v_count += 1
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        # Compute means if available
+        v_ce = v_ent = v_fp = v_total = None
+        t_ce = t_ent = t_fp = t_total = None
         if self._v_count > 0:
-            mean_total = self._v_sum_total / self._v_count
-            mean_ce = self._v_sum_ce / self._v_count
-            mean_entropy = self._v_sum_entropy / self._v_count
-            mean_fp = self._v_sum_fp / self._v_count
-            pl_module.print(f"Loss components (val epoch {trainer.current_epoch}): total={mean_total:.4f} CE={mean_ce:.4f} entropy={mean_entropy:.4f} fp_penalty={mean_fp:.4f}")
-            if self._v_wt_sum_by_class:
-                pl_module.print("CE per class (val weighted means) and share of total CE:")
-                for k in sorted(self._v_ce_sum_by_class.keys()):
-                    denom = self._v_wt_sum_by_class.get(k, 0.0)
-                    mean_k = (self._v_ce_sum_by_class[k] / denom) if denom > 0 else float('nan')
-                    share_k = (self._v_ce_sum_by_class[k] / self._v_total_weighted_ce_sum) if self._v_total_weighted_ce_sum > 0 else 0.0
-                    name = P.idx_to_cls.get(int(k), str(int(k)))
-                    pl_module.print(f"  {name:>10s}: CE_mean={mean_k:.4f} CE_share={share_k:.2%}")
+            v_total = self._v_sum_total / self._v_count
+            v_ce = self._v_sum_ce / self._v_count
+            v_ent = self._v_sum_entropy / self._v_count
+            v_fp = self._v_sum_fp / self._v_count
+        if getattr(self, '_t_count', 0) > 0:
+            t_total = self._t_sum_total / self._t_count
+            t_ce = self._t_sum_ce / self._t_count
+            t_ent = self._t_sum_entropy / self._t_count
+            t_fp = self._t_sum_fp / self._t_count
+
+        # Optionally write CSV row
+        if self.run_dir is not None:
+            self._write_epoch_csv(trainer, pl_module, v_total, v_ce, v_ent, v_fp, t_total, t_ce, t_ent, t_fp)
 
     # ---- Training aggregation ----
     def on_train_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
@@ -236,18 +242,74 @@ class LossComponentsCallback(pl.Callback):
         self._t_count += 1
 
     def on_train_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
-        if not self.report_train_components or self._t_count <= 0:
+        # No console printing; values are written at validation end
+        return
+
+    # ---- Helpers ----
+    def _mean_ce_for(self, ce_sum_by_class: dict, wt_sum_by_class: dict, cls_idx: int) -> float | None:
+        if ce_sum_by_class is None or wt_sum_by_class is None:
+            return None
+        num = ce_sum_by_class.get(int(cls_idx))
+        den = wt_sum_by_class.get(int(cls_idx))
+        if num is None or den is None or den <= 0:
+            return None
+        return float(num) / float(den)
+
+    def _write_epoch_csv(self, trainer: pl.Trainer, pl_module: pl.LightningModule,
+                         v_total, v_ce, v_ent, v_fp,
+                         t_total, t_ce, t_ent, t_fp) -> None:
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = self.run_dir / 'epoch_summary.csv'
+            exists = csv_path.exists()
+
+            # Pull scalar metrics
+            metrics = trainer.callback_metrics or {}
+            val_f1 = metrics.get('val_f1')
+            val_brier = metrics.get('val_brier')
+            # Only use logged metrics; if missing, leave blank in CSV
+            val_loss = metrics.get('val_loss')
+            train_loss = metrics.get('train_loss')
+
+            # Per-class CE means for START/STOP/DSS/ASS
+            start = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.START)
+            stop = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.STOP)
+            dss = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.DSS)
+            ass = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.ASS)
+            t_start = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.START) if self.report_train_components else None
+            t_stop = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.STOP) if self.report_train_components else None
+            t_dss = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.DSS) if self.report_train_components else None
+            t_ass = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.ASS) if self.report_train_components else None
+
+            # Write
+            with csv_path.open('a', newline='') as f:
+                writer = csv.writer(f)
+                if not exists:
+                    writer.writerow([
+                        'epoch','val_f1','val_brier','val_loss','val_loss_CE','val_loss_entropy','val_loss_fp_penalty',
+                        'val_loss_START','val_loss_STOP','val_loss_DSS','val_loss_ASS',
+                        'train_loss','train_loss_CE','train_loss_entropy','train_loss_fp_penalty',
+                        'train_loss_START','train_loss_STOP','train_loss_DSS','train_loss_ASS',
+                    ])
+                writer.writerow([
+                    int(trainer.current_epoch),
+                    _safe_float(val_f1), _safe_float(val_brier), _safe_float(val_loss), _safe_float(v_ce), _safe_float(v_ent), _safe_float(v_fp),
+                    _safe_float(start), _safe_float(stop), _safe_float(dss), _safe_float(ass),
+                    _safe_float(train_loss), _safe_float(t_ce), _safe_float(t_ent), _safe_float(t_fp),
+                    _safe_float(t_start), _safe_float(t_stop), _safe_float(t_dss), _safe_float(t_ass),
+                ])
+        except Exception:
+            # Avoid breaking training if logging fails
             return
-        mean_total = self._t_sum_total / self._t_count
-        mean_ce = self._t_sum_ce / self._t_count
-        mean_entropy = self._t_sum_entropy / self._t_count
-        mean_fp = self._t_sum_fp / self._t_count
-        pl_module.print(f"Loss components (train epoch {trainer.current_epoch}): total={mean_total:.4f} CE={mean_ce:.4f} entropy={mean_entropy:.4f} fp_penalty={mean_fp:.4f}")
-        if self._t_wt_sum_by_class:
-            pl_module.print("CE per class (train weighted means) and share of total CE:")
-            for k in sorted(self._t_ce_sum_by_class.keys()):
-                denom = self._t_wt_sum_by_class.get(k, 0.0)
-                mean_k = (self._t_ce_sum_by_class[k] / denom) if denom > 0 else float('nan')
-                share_k = (self._t_ce_sum_by_class[k] / self._t_total_weighted_ce_sum) if self._t_total_weighted_ce_sum > 0 else 0.0
-                name = P.idx_to_cls.get(int(k), str(int(k)))
-                pl_module.print(f"  {name:>10s}: CE_mean={mean_k:.4f} CE_share={share_k:.2%}")
+
+
+def _safe_float(x):
+    try:
+        if x is None:
+            return ''
+        return float(x)
+    except Exception:
+        try:
+            return float(getattr(x, 'item')())
+        except Exception:
+            return ''
