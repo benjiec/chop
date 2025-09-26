@@ -110,6 +110,7 @@ def train(
             num_workers=0,
         )
     else:
+        print("Batch sampler disabled")
         train_loader = DataLoader(
             train_dataset, 
             batch_size=config['training']['batch_size'], 

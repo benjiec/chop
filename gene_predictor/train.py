@@ -23,8 +23,8 @@ from utils.genome import AnnotatedGenomeDataset
 
 def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-                  use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
-                  dss_weight: float = 5.0, ass_weight: float = 5.0,
+                  use_class_weights: bool = True, start_weight: float = 8.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+                  dss_weight: float = 8.0, ass_weight: float = 5.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                   max_seq_length: int = 1000,
                   use_focal: bool = False, focal_gamma: float = 1.5,
@@ -34,7 +34,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   stop_before: int = 0, stop_after: int = 300,
                   cc_gap: int = 0,
                   entropy_lambda: float = 0.0,
-                  fp_beta: float = 0.1,
+                  fp_beta: float = 1.0,
                   accumulate_grad_batches: int = 1,
                   min_per_class_per_batch: int = 1) -> dict:
 
@@ -96,8 +96,8 @@ def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
           num_contigs: int = 20, layouts_per_contig: int = 1,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-          use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
-          dss_weight: float = 5.0, ass_weight: float = 5.0,
+          use_class_weights: bool = True, start_weight: float = 8.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
+          dss_weight: float = 8.0, ass_weight: float = 5.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
           max_seq_length: int = 1000,
           num_windows: int = 5000,
@@ -108,7 +108,7 @@ def train(fna_fn: str, tsv_fn: str,
           stop_before: int = 0, stop_after: int = 300,
           cc_gap: int = 0,
           entropy_lambda: float = 0.0,
-          fp_beta: float = 0.1,
+          fp_beta: float = 1.0,
           accumulate_grad_batches: int = 1,
           min_per_class_per_batch: int = 1):
 
@@ -199,10 +199,10 @@ def main():
 
     # class weights
     parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
-    parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
+    parser.add_argument('--start-weight', type=float, default=8.0, help='Weight for START class')
     parser.add_argument('--stop-weight', type=float, default=10.0, help='Weight for STOP class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
-    parser.add_argument('--dss-weight', type=float, default=5.0, help='Weight for DSS class')
+    parser.add_argument('--dss-weight', type=float, default=8.0, help='Weight for DSS class')
     parser.add_argument('--ass-weight', type=float, default=5.0, help='Weight for ASS class')
 
     # focal loss
@@ -222,7 +222,7 @@ def main():
     # optimization and loss tuning
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--entropy-lambda', type=float, default=0.0, help='Entropy regularization strength')
-    parser.add_argument('--fp-beta', type=float, default=0.1, help='False positive penalty coefficient')
+    parser.add_argument('--fp-beta', type=float, default=1.0, help='False positive penalty coefficient')
     parser.add_argument('--min-per-class-per-batch', type=int, default=1, help='Minimum items per target class per batch (recycling allowed)')
 
     args = parser.parse_args()
