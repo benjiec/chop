@@ -209,7 +209,8 @@ class LossComponentsCallback(pl.Callback):
 
         # Optionally write CSV row
         if self.run_dir is not None:
-            self._write_epoch_csv(trainer, pl_module, v_total, v_ce, v_ent, v_fp, t_total, t_ce, t_ent, t_fp)
+            # Tall format (epoch_summary.csv)
+            self._write_epoch_csv_tall(trainer, pl_module, v_total, v_ce, v_ent, v_fp, t_total, t_ce, t_ent, t_fp)
 
     # ---- Training aggregation ----
     def on_train_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
@@ -255,9 +256,9 @@ class LossComponentsCallback(pl.Callback):
             return None
         return float(num) / float(den)
 
-    def _write_epoch_csv(self, trainer: pl.Trainer, pl_module: pl.LightningModule,
-                         v_total, v_ce, v_ent, v_fp,
-                         t_total, t_ce, t_ent, t_fp) -> None:
+    def _write_epoch_csv_tall(self, trainer: pl.Trainer, pl_module: pl.LightningModule,
+                              v_total, v_ce, v_ent, v_fp,
+                              t_total, t_ce, t_ent, t_fp) -> None:
         try:
             self.run_dir.mkdir(parents=True, exist_ok=True)
             csv_path = self.run_dir / 'epoch_summary.csv'
@@ -279,35 +280,52 @@ class LossComponentsCallback(pl.Callback):
             tr_fp = metrics.get('train_loss_fp')
 
             # Per-class CE means for key classes (use constants only here; model remains class-agnostic)
-            start = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.START)
-            stop = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.STOP)
-            dss = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.DSS)
-            ass = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.ASS)
+            v_start = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.START)
+            v_stop = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.STOP)
+            v_dss = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.DSS)
+            v_ass = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.ASS)
             t_start = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.START) if self.report_train_components else None
             t_stop = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.STOP) if self.report_train_components else None
             t_dss = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.DSS) if self.report_train_components else None
             t_ass = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.ASS) if self.report_train_components else None
 
+            # Prepare tall rows: (batch, metric_name -> value)
+            rows = []
+            def add(split, name, value):
+                rows.append([int(trainer.current_epoch), split, name, _safe_float(value)])
+
+            # Validation metrics
+            add('val', 'f1', val_f1)
+            add('val', 'brier', val_brier)
+            add('val', 'loss', val_loss)
+            add('val', 'loss_CE', val_ce)
+            add('val', 'loss_entropy', val_ent)
+            add('val', 'loss_fp_penalty', val_fp)
+            add('val', 'loss_START', v_start)
+            add('val', 'loss_STOP', v_stop)
+            add('val', 'loss_DSS', v_dss)
+            add('val', 'loss_ASS', v_ass)
+
+            # Training metrics
+            add('train', 'loss', train_loss)
+            add('train', 'loss_CE', tr_ce)
+            add('train', 'loss_entropy', tr_ent)
+            add('train', 'loss_fp_penalty', tr_fp)
+            add('train', 'loss_START', t_start)
+            add('train', 'loss_STOP', t_stop)
+            add('train', 'loss_DSS', t_dss)
+            add('train', 'loss_ASS', t_ass)
+
             # Write
             with csv_path.open('a', newline='') as f:
                 writer = csv.writer(f)
                 if not exists:
-                    writer.writerow([
-                        'epoch','val_f1','val_brier','val_loss','val_loss_CE','val_loss_entropy','val_loss_fp_penalty',
-                        'val_loss_START','val_loss_STOP','val_loss_DSS','val_loss_ASS',
-                        'train_loss','train_loss_CE','train_loss_entropy','train_loss_fp_penalty',
-                        'train_loss_START','train_loss_STOP','train_loss_DSS','train_loss_ASS',
-                    ])
-                writer.writerow([
-                    int(trainer.current_epoch),
-                    _safe_float(val_f1), _safe_float(val_brier), _safe_float(val_loss), _safe_float(val_ce), _safe_float(val_ent), _safe_float(val_fp),
-                    _safe_float(start), _safe_float(stop), _safe_float(dss), _safe_float(ass),
-                    _safe_float(train_loss), _safe_float(tr_ce), _safe_float(tr_ent), _safe_float(tr_fp),
-                    _safe_float(t_start), _safe_float(t_stop), _safe_float(t_dss), _safe_float(t_ass),
-                ])
+                    writer.writerow(['epoch', 'batch', 'metric', 'value'])
+                writer.writerows(rows)
         except Exception:
             # Avoid breaking training if logging fails
             return
+
 
 
 def _safe_float(x):
