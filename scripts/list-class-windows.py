@@ -105,7 +105,10 @@ def main():
         exclude_margin_bps=dataset._exclude_margin_bps,
         class_weights=class_weights,
     )
-    sampled_indices_with_class: Set[int] = set(candidate_indices) if target_class not in class_windows else set(candidate_indices[j] for j in class_windows[target_class])
+    if target_class in class_windows:
+        sampled_indices_with_class: Set[int] = set(candidate_indices[j] for j in class_windows[target_class])
+    else:
+        sampled_indices_with_class = set()
 
     # ANSI GREEN highlight for the chosen class
     GREEN = "\x1b[32m"
@@ -117,7 +120,7 @@ def main():
             if int(tgt_slice[i]) == int(highlight_cls):
                 chars.append(f"{GREEN}{ch.upper()}{RESET}")
             else:
-                chars.append(ch)
+                chars.append(ch.lower())
         return ''.join(chars)
 
     # Write FASTA with highlighted sequences for sampler-selected windows
