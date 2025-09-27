@@ -29,7 +29,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   max_seq_length: int = 1000,
                   use_focal: bool = False, focal_gamma: float = 1.5,
                   focal_alpha: Optional[list] = None,
-                  cc_enabled: bool = True,
+                  cc_enabled: bool = False,
                   start_before: int = 300, start_after: int = 0,
                   stop_before: int = 0, stop_after: int = 300,
                   cc_gap: int = 0,
@@ -102,7 +102,7 @@ def train(fna_fn: str, tsv_fn: str,
           num_windows: int = 5000,
           use_focal: bool = False, focal_gamma: float = 1.5,
           focal_alpha: Optional[list] = None,
-          cc_enabled: bool = True,
+          cc_enabled: bool = False,
           start_before: int = 300, start_after: int = 0,
           stop_before: int = 0, stop_after: int = 300,
           cc_gap: int = 0,
@@ -140,7 +140,7 @@ def train(fna_fn: str, tsv_fn: str,
             window=max_seq_length,
             stride=stride,
             num_windows=num_windows,
-            class_weights=dataset_class_weights,
+            class_weights=dataset_class_weights
         )
     else:
         dataset = AnnotatedGenomeDataset(
@@ -175,8 +175,7 @@ def train(fna_fn: str, tsv_fn: str,
         output_dir,
         mk_training_cb,
         monitor_metric='val_loss',
-        monitor_mode='min',
-        batch_sampling=True
+        monitor_mode='min'
     )
 
     print(f"results saved to: {output_dir}")
@@ -214,7 +213,7 @@ def main():
                         help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
 
     # class conditional readout
-    parser.add_argument('--disable-cc', action='store_true', help='Disable class-conditional readouts for START/STOP (enabled by default)')
+    parser.add_argument('--enable-cc', action='store_true', help='Enable class-conditional readouts for START/STOP (disabled by default)')
     parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
     parser.add_argument('--start-after', type=int, default=0, help='CC downstream window for START')
     parser.add_argument('--stop-before', type=int, default=0, help='CC upstream window for STOP')
@@ -280,7 +279,7 @@ def main():
         use_focal=args.use_focal,
         focal_gamma=args.focal_gamma,
         focal_alpha=focal_alpha,
-        cc_enabled=not args.disable_cc,
+        cc_enabled=args.enable_cc,
         start_before=args.start_before,
         start_after=args.start_after,
         stop_before=args.stop_before,
