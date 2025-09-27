@@ -248,11 +248,13 @@ class AnnotatedGenomeDataset:
             self.sequences.append(seq)
             self.targets.append(tgt)
             self.contig_ids.append(ann.sequence_id)
+        print(len(self.sequences),"sequences")
 
         if num_contigs and num_contigs > 0:
             self.sequences = self.sequences[0:num_contigs]
             self.targets = self.targets[0:num_contigs]
             self.contig_ids = self.contig_ids[0:num_contigs]
+            print(len(self.sequences),"sequences after limit by",num_contigs,"contigs")
 
         # If windowing is enabled, precompute windows over each contig
         if self.window:
@@ -263,6 +265,7 @@ class AnnotatedGenomeDataset:
                 slices = compute_window_slices(L, window=win, stride=st)
                 for s, e in slices:
                     self.windows.append((contig_idx, s, e))
+            print(len(self.windows),"windows")
 
             # Build accounting for classes per window and classset->contigs map
             self._compute_window_accounting_and_sampling()
@@ -355,7 +358,8 @@ class AnnotatedGenomeDataset:
             # Desired average count grows with selection; use current min target
             return min(per_class_count.values()) - per_class_count[cls]
 
-        # Pre-shuffle candidate lists deterministically
+	# Pre-shuffle candidate lists deterministically - this is very
+	# important to make sure we sample windows from all the sequences
         for c in classes_to_balance:
             rng.shuffle(class_to_windows.get(c, []))
 

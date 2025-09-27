@@ -94,7 +94,6 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 
 def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
-          num_contigs: int = 20, layouts_per_contig: int = 1,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
           use_class_weights: bool = True, start_weight: float = 8.0, stop_weight: float = 10.0, utr_weight: float = 3.0,
           dss_weight: float = 8.0, ass_weight: float = 5.0,

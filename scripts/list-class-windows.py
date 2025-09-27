@@ -77,11 +77,13 @@ def main():
     )
 
     # Build dataset (same as training)
+    stride = args.max_seq_length // 5
     if args.num_windows and int(args.num_windows) > 0:
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
             args.tsv_fn,
             window=args.max_seq_length,
+            stride=stride,
             num_windows=int(args.num_windows),
             class_weights=class_weights,
             random_prefix_ns=True,
@@ -91,6 +93,7 @@ def main():
             args.fna_fn,
             args.tsv_fn,
             window=args.max_seq_length,
+            stride=stride,
             class_weights=class_weights,
             random_prefix_ns=False,
         )
