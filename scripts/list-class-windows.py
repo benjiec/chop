@@ -5,8 +5,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Iterable, Set
 
 from utils.constants import GenePredictionClass as P
-from utils.genome import AnnotatedGenomeDataset
-from utils.samplers import ClassAwareBatchSampler
+from utils.genome import AnnotatedGenomeDataset, build_class_windows
 from gene_predictor.train import create_config
 
 
@@ -32,7 +31,7 @@ def build_class_weights(use_class_weights: bool,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="List windows containing a target class after ClassAwareBatchSampler; writes highlighted FASTA")
+    parser = argparse.ArgumentParser(description="List windows containing a target class after dataset balancing; writes highlighted FASTA")
     parser.add_argument('--fna-fn', type=str, required=True, help='Genome FASTA (can be .gz)')
     parser.add_argument('--tsv-fn', type=str, required=True, help='Annotations TSV (row-per-exon)')
     parser.add_argument('--class', dest='class_name', type=str, default='STOP',
@@ -41,10 +40,7 @@ def main():
                         help='Window size (must match training)')
     parser.add_argument('--num-windows', type=int, default=5000,
                         help='Number of training windows; 0 for all')
-    parser.add_argument('--batch-size', type=int, default=8, help='Sampler batch size')
-    parser.add_argument('--min-per-class-per-batch', type=int, default=1,
-                        help='Minimum items per target class per batch (recycling allowed)')
-    parser.add_argument('--seed', type=int, default=17, help='Deterministic seed for sampler')
+    parser.add_argument('--seed', type=int, default=17, help='Deterministic seed for selection')
 
     # Class-weight args to match training
     parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
@@ -98,45 +94,18 @@ def main():
             random_prefix_ns=False,
         )
 
-    # Candidate indices for sampler (dataset selection stage is not reported)
-    if dataset._selected_window_indices is not None:
-        selected_indices = list(dataset._selected_window_indices)
-    else:
-        selected_indices = list(range(len(dataset.windows)))
+    # Use dataset-selected windows directly; if none, fall back to all
+    candidate_indices = list(dataset._selected_window_indices)
 
-    # Stage 2: ClassAwareBatchSampler selection over same indices
-    # Target classes for sampler are those whose class weight > 1 (as in training)
-    target_class_ids: List[int] = []
-    if class_weights is not None:
-        for i, w in enumerate(class_weights):
-            try:
-                if float(w) > 1.0:
-                    target_class_ids.append(int(i))
-            except Exception:
-                continue
-    else:
-        # If no weights provided, include all classes
-        target_class_ids = [int(i) for i in P.idx_to_cls.keys()]
-
-    def index_to_classset(idx: int) -> Iterable[int]:
-        return dataset._window_class_sets[idx]
-
-    sampler = ClassAwareBatchSampler(
-        indices=selected_indices,
-        batch_size=int(args.batch_size),
-        target_class_ids=target_class_ids,
-        index_to_classset=index_to_classset,
-        seed=int(args.seed),
-        drop_last=False,
-        min_per_class_per_batch=int(args.min_per_class_per_batch),
+    # Restrict to windows assigned to the target class (based on center-only rule)
+    class_windows = build_class_windows(
+        windows=[dataset.windows[i] for i in candidate_indices],
+        targets=dataset.targets,
+        classes_to_balance=[target_class],
+        exclude_margin_bps=dataset._exclude_margin_bps,
+        class_weights=class_weights,
     )
-
-    sampled_indices_with_class: Set[int] = set()
-    for batch in sampler:
-        for w_idx in batch:
-            cls_set = dataset._window_class_sets[w_idx]
-            if int(target_class) in cls_set:
-                sampled_indices_with_class.add(int(w_idx))
+    sampled_indices_with_class: Set[int] = set(candidate_indices) if target_class not in class_windows else set(candidate_indices[j] for j in class_windows[target_class])
 
     # ANSI GREEN highlight for the chosen class
     GREEN = "\x1b[32m"

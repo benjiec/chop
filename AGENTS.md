@@ -54,3 +54,8 @@ Specificity = TN / (TN + FP)
 dna_learner - Re-usable DNA learning NN transformer model code
 gene_predictor - Training and prediction code for detection gene boundary and splice sites from GFF
 synthetic - Various experiments to learn how to use transformers to detect genomic features
+
+14. Do not ever hide errors using try-except blocks, unless you are explicitly
+catching a specific exception. Otherwise better expose any exceptions so we can
+fix the code.
+

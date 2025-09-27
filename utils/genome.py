@@ -18,6 +18,67 @@ from utils.constants import (
 from utils.windowing import compute_window_slices
 
 
+def build_class_windows(
+    windows: List[Tuple[int, int, int]],
+    targets: List[np.ndarray],
+    classes_to_balance: List[int],
+    exclude_margin_bps: Optional[int],
+    class_weights: Optional[List[float]] = None,
+) -> Dict[int, List[int]]:
+    """Build mapping from class index to list of window indices.
+
+    For each window, iterate target tokens within the center region excluding
+    edges defined by ``exclude_margin_bps``. Consider only classes in
+    ``classes_to_balance``; assign the window to the present class with the
+    highest weight (ties broken by smaller class id). Windows with no relevant
+    classes present are skipped.
+    """
+    class_windows: Dict[int, List[int]] = {}
+    if not windows:
+        return class_windows
+
+    classes_set = set(int(c) for c in classes_to_balance)
+    for w_idx, (contig_idx, s, e) in enumerate(windows):
+        tgt = targets[contig_idx]
+        Lw = e - s
+        if Lw <= 0:
+            continue
+        margin = int(exclude_margin_bps) if exclude_margin_bps is not None else 0
+        inner_start = s + margin
+        inner_end = e - margin
+        if inner_start >= inner_end:
+            # No central region to evaluate
+            continue
+
+        # Track highest-weight class present in the center region
+        top_class: Optional[int] = None
+        top_weight: float = float('-inf')
+        for pos in range(inner_start, inner_end):
+            cls = int(tgt[pos])
+            if cls not in classes_set:
+                continue
+            w = 1.0
+            if class_weights is not None:
+                cw = class_weights[cls]
+                w = 1.0 if cw is None else float(cw)
+            if (w > top_weight) or (w == top_weight and (top_class is None or cls < top_class)):
+                top_weight = w
+                top_class = cls
+
+        if top_class is None:
+            # No relevant classes present in the center
+            continue
+
+        assigned_cls = top_class
+        class_windows.setdefault(assigned_cls, []).append(w_idx)
+
+    return class_windows
+
+
+# Removed old balanced_select_from_class_windows helper; balancing with recycling
+# is handled directly inside _sample_windows.
+
+
 @dataclass
 class GeneAnnotation:
     sequence_id: str
@@ -121,8 +182,6 @@ class AnnotatedGenomeDataset:
         self.class_weights: Optional[List[float]] = list(class_weights) if class_weights is not None else None
         self.seed: int = int(seed)
         # Derived/accounting structures
-        self.classset_to_contigs: Dict[frozenset, List[str]] = {}
-        self._window_class_sets: List[Set[int]] = []
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
         self._exclude_margin_bps = int(exclude_margin_bps) if exclude_margin_bps is not None else None
@@ -267,10 +326,10 @@ class AnnotatedGenomeDataset:
                     self.windows.append((contig_idx, s, e))
             print(len(self.windows),"windows")
 
-            # Build accounting for classes per window and classset->contigs map
-            self._compute_window_accounting_and_sampling()
+            # Build accounting for classes per window and classset->contigs map, then sample
+            self._sample_windows()
 
-    def _compute_window_accounting_and_sampling(self) -> None:
+    def _sample_windows(self) -> None:
         # Classes to consider for balancing: exclude any with weight == 1.0 if provided
         weights = self.class_weights
         exclude_weight_one: Set[int] = set()
@@ -280,49 +339,6 @@ class AnnotatedGenomeDataset:
                     exclude_weight_one.add(i)
 
         rng = random.Random(self.seed)
-
-        # Compute class set for each window
-        self._window_class_sets = []
-        class_to_windows: Dict[int, List[int]] = {}
-        for w_idx, (contig_idx, s, e) in enumerate(self.windows):
-            tgt_slice = self.targets[contig_idx][s:e]
-            present = set(int(c) for c in np.unique(tgt_slice))
-            present_considered = {c for c in present if c not in exclude_weight_one}
-
-            # Exclude windows where weighted classes appear only on edges
-            excluded_for_edge_only = False
-            if self._exclude_margin_bps is not None and self.window and self.class_weights is not None:
-                Lw = len(tgt_slice)
-                margin = int(self._exclude_margin_bps)
-                if margin > 0 and (2 * margin) < Lw:
-                    weighted_classes = {i for i, w in enumerate(self.class_weights) if w is not None and float(w) > 1.0}
-                    if weighted_classes:
-                        pos_weighted = [i for i, v in enumerate(tgt_slice.tolist()) if int(v) in weighted_classes]
-                        if pos_weighted:
-                            in_center = [p for p in pos_weighted if (p >= margin and p < (Lw - margin))]
-                            if len(in_center) == 0:
-                                excluded_for_edge_only = True
-                                contig_id = self.contig_ids[contig_idx]
-                                # print(f"excluding window {w_idx} {contig_id}[{s}:{e}] (weighted targets only on edges); positions={pos_weighted}, margin={margin}, length={Lw}")
-
-            if excluded_for_edge_only:
-                # Mark as no informative classes for balancing; do not add to class_to_windows
-                self._window_class_sets.append(set())
-                continue
-
-            self._window_class_sets.append(present_considered)
-            for c in present_considered:
-                class_to_windows.setdefault(c, []).append(w_idx)
-
-        # Build classset->contigs mapping (order-insensitive)
-        classset_to_contigs: Dict[frozenset, Set[str]] = {}
-        for w_idx, cls_set in enumerate(self._window_class_sets):
-            key = frozenset(cls_set)
-            contig_idx, _, _ = self.windows[w_idx]
-            contig_id = self.contig_ids[contig_idx]
-            classset_to_contigs.setdefault(key, set()).add(contig_id)
-        # Convert sets to sorted lists for determinism
-        self.classset_to_contigs = {k: sorted(list(v)) for k, v in classset_to_contigs.items()}
 
         # If no sampling requested, we're done
         if self.num_windows is None:
@@ -336,72 +352,60 @@ class AnnotatedGenomeDataset:
             return
 
         # Determine classes to balance
-        classes_to_balance: List[int]
         if weights is not None:
             classes_to_balance = [i for i, w in enumerate(weights) if w != 1.0]
-            if self._window_incl_classes is not None:
-                classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
         else:
-            # All classes observed across windows
-            observed: Set[int] = set()
-            for s in self._window_class_sets:
-                observed.update(s)
-            classes_to_balance = sorted(list(observed))
-            if self._window_incl_classes is not None:
-                classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
+            # If no explicit weights, consider indices based on available weights length when present; otherwise default to [0]
+            classes_to_balance = list(range(len(weights))) if weights else [0]
+        if self._window_incl_classes is not None:
+            classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
 
-        # Greedy round-robin selection to balance per-class counts
-        selected: Set[int] = set()
-        per_class_count: Dict[int, int] = {c: 0 for c in classes_to_balance}
+        # Build class->windows assignment using center-only counting and max-weight rule
+        class_windows = build_class_windows(
+            windows=self.windows,
+            targets=self.targets,
+            classes_to_balance=classes_to_balance,
+            exclude_margin_bps=self._exclude_margin_bps,
+            class_weights=self.class_weights,
+        )
 
-        def deficit(cls: int) -> int:
-            # Desired average count grows with selection; use current min target
-            return min(per_class_count.values()) - per_class_count[cls]
+        # If specific classes are requested, restrict candidates to allowed classes only
+        if self._window_incl_classes is not None:
+            allowed = set(self._window_incl_classes)
+            class_windows = {c: lst for c, lst in class_windows.items() if c in allowed}
 
-	# Pre-shuffle candidate lists deterministically - this is very
-	# important to make sure we sample windows from all the sequences
-        for c in classes_to_balance:
-            rng.shuffle(class_to_windows.get(c, []))
+        # Determine per-class target and perform recycling-based balancing via list replication
+        nonempty = {c: list(lst) for c, lst in class_windows.items() if lst}
+        if not nonempty:
+            self._selected_window_indices = []
+            return
 
-        while len(selected) < target_num:
-            # Choose the class with the smallest count so far (tie-broken deterministically)
-            cls_order = sorted(classes_to_balance, key=lambda c: (per_class_count[c], c))
-            picked_window = None
-            for cls in cls_order:
-                candidates = [w for w in class_to_windows.get(cls, []) if w not in selected]
-                if not candidates:
-                    continue
-                # Prefer candidate window that improves balance across included classes
-                def score(wi: int) -> Tuple[int, int, int]:
-                    included = self._window_class_sets[wi]
-                    # Higher score for covering more underrepresented classes
-                    underrep = sum(1 for c in included if c in per_class_count and per_class_count[c] == min(per_class_count.values()))
-                    # Fewer already well-represented classes
-                    overrep = sum(1 for c in included if c in per_class_count and per_class_count[c] > min(per_class_count.values()))
-                    # Tie-breaker: prefer smaller index for determinism after RNG shuffle
-                    return (underrep, -overrep, -wi)
-                candidates.sort(key=score, reverse=True)
-                picked_window = candidates[0]
-                break
+        num_classes = len(nonempty)
+        per_class_target = max(1, target_num // num_classes)
 
-            if picked_window is None:
-                break
+        selected_list: List[int] = []
+        for c in sorted(nonempty.keys()):
+            lst = list(nonempty[c])
+            if len(lst) == 0:
+                continue
+            if len(lst) < per_class_target:
+                from math import ceil
+                k = int(ceil(per_class_target / float(len(lst))))
+                print("taking", per_class_target, "for class", c, "after expanding by", k, "from", len(lst))
+                expanded = (lst * k)[:per_class_target]
+                selected_list.extend(expanded)
+            else:
+                print("taking", per_class_target, "for class", c)
+                selected_list.extend(lst[:per_class_target])
 
-            selected.add(picked_window)
-            for c in self._window_class_sets[picked_window]:
-                if c in per_class_count:
-                    per_class_count[c] += 1
+        # If total is short due to rounding, fill from union
+        if len(selected_list) < target_num:
+            union_pool: List[int] = []
+            for c in sorted(nonempty.keys()):
+                union_pool.extend(nonempty[c])
+            need = target_num - len(selected_list)
+            selected_list.extend(union_pool[:need])
 
-        print(f"After balanced selection: {per_class_count}")
-
-        # If still short (e.g., no informative windows), fill with remaining windows deterministically if we are not specifically looking for some classes
-        if len(selected) < target_num and self._window_incl_classes is None:
-            remaining = [i for i in range(total_available) if i not in selected]
-            # Deterministic order
-            selected_list = list(selected)
-            remaining.sort()
-            needed = target_num - len(selected_list)
-            selected_list.extend(remaining[:needed])
-            self._selected_window_indices = selected_list
-        else:
-            self._selected_window_indices = sorted(list(selected))
+        # Final shuffle for batch-level distribution
+        rng.shuffle(selected_list)
+        self._selected_window_indices = selected_list[:target_num]

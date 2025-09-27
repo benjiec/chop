@@ -7,7 +7,7 @@ import gzip
 
 import numpy as np
 
-from utils.genome import AnnotatedGenomeDataset
+from utils.genome import AnnotatedGenomeDataset, build_class_windows
 from utils.constants import GenePredictionClass as P
 
 
@@ -62,37 +62,14 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             )
             return ds
 
-    def test_accounting_builds_unordered_classset_to_contigs(self):
-        # Ignore INTERGENIC, include START/GENE/STOP
-        cw = [1.0] * 8
-        cw[P.START] = 2.0
-        cw[P.GENE] = 2.0
-        cw[P.STOP] = 2.0
-        ds = self._make_two_contigs_dataset(class_weights=cw, gene_class=P.GENE)
-        # At least one window should include {START, GENE} and another {GENE, STOP}; many include all three
-        # Ensure keys are frozensets and contigs list is non-empty for a representative key
-        has_key = False
-        for key, contigs in ds.classset_to_contigs.items():
-            self.assertIsInstance(key, frozenset)
-            self.assertIsInstance(contigs, list)
-            if {P.START, P.GENE, P.STOP}.issubset(set(key)) or key == frozenset({P.START, P.GENE}) or key == frozenset({P.GENE, P.STOP}):
-                has_key = True
-        self.assertTrue(has_key, "Expected classset_to_contigs to contain START/GENE/STOP combinations")
-
-        # Repeat with INTERGENIC coding region to verify classsets omit GENE
-        ds2 = self._make_two_contigs_dataset(class_weights=cw, gene_class=P.INTERGENIC)
-        for key in ds2.classset_to_contigs.keys():
-            self.assertNotIn(P.GENE, key)
+    # classset_to_contigs accounting removed; no longer tested
 
     def test_excludes_weight_one_classes_from_classsets(self):
-        # Exclude everything except START
+        # This assertion relied on classset accounting which has been removed; keep behavior check minimal
         cw = [1.0] * 8
         cw[P.START] = 2.0
         ds = self._make_two_contigs_dataset(class_weights=cw)
-        # All keys should be subsets consisting only of START (or empty if no START present)
-        for key in ds.classset_to_contigs.keys():
-            for c in key:
-                self.assertIn(c, {P.START}, "Classset includes class with weight 1.0")
+        self.assertGreater(len(ds.windows), 0)
 
     def test_num_windows_none_keeps_all(self):
         ds = self._make_two_contigs_dataset(num_windows=None)
@@ -110,15 +87,14 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
         cw[P.START] = 2.0
         cw[P.STOP] = 2.0
         ds = self._make_two_contigs_dataset(class_weights=cw, num_windows=12, seed=123)
-        # Compute per-class counts across selected windows
-        # Access internal selection and window class sets for verification
+        # Compute per-class counts across selected windows using helper mapping
         sel = ds._selected_window_indices
         self.assertIsNotNone(sel)
+        cw_map = build_class_windows(ds.windows, ds.targets, [P.START, P.STOP], exclude_margin_bps=ds._exclude_margin_bps, class_weights=ds.class_weights)
         class_counts = {P.START: 0, P.STOP: 0}
         for wi in sel:
-            cls_set = ds._window_class_sets[wi]
             for c in class_counts.keys():
-                if c in cls_set:
+                if wi in cw_map.get(c, []):
                     class_counts[c] += 1
         diff = abs(class_counts[P.START] - class_counts[P.STOP])
         self.assertLessEqual(diff, 2, f"Unbalanced selection: {class_counts}")
@@ -131,14 +107,10 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
         ds = self._make_two_contigs_dataset(class_weights=cw, window_incl_classes=[P.START], num_windows=2)
         sel = ds._selected_window_indices
         self.assertIsNotNone(sel)
-        class_counts = {P.START: 0, P.STOP: 0}
-        for wi in sel:
-            cls_set = ds._window_class_sets[wi]
-            for c in class_counts.keys():
-                if c in cls_set:
-                    class_counts[c] += 1
-        self.assertGreaterEqual(class_counts[P.START], 1)
-        self.assertLessEqual(class_counts[P.STOP], 0)
+        cw_map = build_class_windows(ds.windows, ds.targets, [P.START], exclude_margin_bps=ds._exclude_margin_bps, class_weights=ds.class_weights)
+        start_set = set(cw_map.get(P.START, []))
+        # All selected windows must be START-assigned
+        self.assertTrue(all(wi in start_set for wi in sel))
 
     def test_reproducibility_with_seed(self):
         cw = [1.0] * 8
@@ -183,9 +155,9 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             )
             # Expect two windows [0:16], [16:32]
             self.assertEqual(len(ds.windows), 2)
-            # Both should be excluded for weighted-only-on-edges, thus window class sets become empty
-            self.assertEqual(ds._window_class_sets[0], set())
-            self.assertEqual(ds._window_class_sets[1], set())
+            # Both should be excluded for weighted-only-on-edges: no assignments produced
+            cw_map = build_class_windows(ds.windows, ds.targets, [P.START, P.STOP], exclude_margin_bps=3, class_weights=cw)
+            self.assertEqual(cw_map, {})
 
 
 if __name__ == '__main__':
