@@ -192,17 +192,12 @@ class AnnotatedGenomeDataset:
 
     def __len__(self) -> int:
         if self.window:
-            if self._selected_window_indices is not None:
-                return len(self._selected_window_indices)
-            return len(self.windows)
+            return len(self._selected_window_indices)
         return len(self.sequences)
 
     def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
         if self.window:
-            if self._selected_window_indices is not None:
-                real_idx = self._selected_window_indices[idx]
-            else:
-                real_idx = idx
+            real_idx = self._selected_window_indices[idx]
             contig_idx, start, end = self.windows[real_idx]
             seq = self.sequences[contig_idx][start:end]
             tgt = self.targets[contig_idx][start:end]
@@ -340,9 +335,9 @@ class AnnotatedGenomeDataset:
 
         rng = random
 
-        # If no sampling requested, we're done
+        # If no sampling requested, select all windows
         if self.num_windows is None:
-            self._selected_window_indices = None
+            self._selected_window_indices = list(range(len(self.windows)))
             return
 
         target_num = max(0, int(self.num_windows))
@@ -423,31 +418,30 @@ class AnnotatedGenomeDataset:
                 val_size = 0
         # If windowing is enabled, split by contigs to avoid overlapping windows across splits
         if self.window:
-            # Build all indices per contig
-            contig_to_indices: Dict[int, List[int]] = {}
-            for w_idx, (contig_idx, _, _) in enumerate(self.windows):
-                contig_to_indices.setdefault(contig_idx, []).append(w_idx)
-            contig_ids = list(contig_to_indices.keys())
+            # Always split using positions into the selected list
+            contig_to_positions: Dict[int, List[int]] = {}
+            for pos, w_idx in enumerate(self._selected_window_indices):
+                contig_idx, _, _ = self.windows[w_idx]
+                contig_to_positions.setdefault(contig_idx, []).append(pos)
+            contig_ids = list(contig_to_positions.keys())
             random.shuffle(contig_ids)
-            train_indices: List[int] = []
-            val_indices: List[int] = []
+            train_positions: List[int] = []
+            val_positions: List[int] = []
             for cid in contig_ids:
-                group = contig_to_indices[cid]
-                # Greedily assign whole contig to the split that is currently smaller relative to target
-                if len(train_indices) + len(group) <= train_size or (len(train_indices) < train_size and len(val_indices) >= val_size):
-                    train_indices.extend(group)
+                group = contig_to_positions[cid]
+                if len(train_positions) + len(group) <= train_size or (len(train_positions) < train_size and len(val_positions) >= val_size):
+                    train_positions.extend(group)
                 else:
-                    val_indices.extend(group)
-            # If we overshot due to group granularity, trim excess
-            if len(train_indices) > train_size:
-                overflow = len(train_indices) - train_size
-                val_indices.extend(train_indices[-overflow:])
-                train_indices = train_indices[:-overflow]
-            if len(val_indices) > val_size:
-                overflow = len(val_indices) - val_size
-                train_indices.extend(val_indices[-overflow:])
-                val_indices = val_indices[:-overflow]
-            return Subset(self, train_indices), Subset(self, val_indices)
+                    val_positions.extend(group)
+            if len(train_positions) > train_size:
+                overflow = len(train_positions) - train_size
+                val_positions.extend(train_positions[-overflow:])
+                train_positions = train_positions[:-overflow]
+            if len(val_positions) > val_size:
+                overflow = len(val_positions) - val_size
+                train_positions.extend(val_positions[-overflow:])
+                val_positions = val_positions[:-overflow]
+            return Subset(self, train_positions), Subset(self, val_positions)
         else:
             # No windowing; split by sequence index deterministically
             idxs = list(range(len(self.sequences)))
