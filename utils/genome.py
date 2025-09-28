@@ -16,6 +16,7 @@ from utils.constants import (
     ConventionalAcceptorDinucleotides,
 )
 from utils.windowing import compute_window_slices
+from torch.utils.data import Subset
 
 
 def build_class_windows(
@@ -163,7 +164,7 @@ def _encode_sequence(seq: str) -> np.ndarray:
 class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str,
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
-                 num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None, seed: int = 17,
+                 num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None,
                  window_incl_classes: Optional[List[int]] = None,
                  exclude_margin_bps: Optional[int] = 200,
                  gene_class: int = P.INTERGENIC,
@@ -180,7 +181,6 @@ class AnnotatedGenomeDataset:
         # Sampling/accounting options
         self.num_windows: Optional[int] = int(num_windows) if num_windows is not None else None
         self.class_weights: Optional[List[float]] = list(class_weights) if class_weights is not None else None
-        self.seed: int = int(seed)
         # Derived/accounting structures
         self._selected_window_indices: Optional[List[int]] = None
         self._window_incl_classes = window_incl_classes
@@ -338,7 +338,7 @@ class AnnotatedGenomeDataset:
                 if w == 1.0:
                     exclude_weight_one.add(i)
 
-        rng = random.Random(self.seed)
+        rng = random
 
         # If no sampling requested, we're done
         if self.num_windows is None:
@@ -409,3 +409,49 @@ class AnnotatedGenomeDataset:
         # Final shuffle for batch-level distribution
         rng.shuffle(selected_list)
         self._selected_window_indices = selected_list[:target_num]
+
+    def split(self, train_size: int, val_size: int):
+        total = len(self)
+        if train_size + val_size != total:
+            # scale proportionally if sizes sum to ratio
+            ratio = (train_size + val_size)
+            if ratio > 0:
+                train_size = int(round(total * (train_size / ratio)))
+                val_size = total - train_size
+            else:
+                train_size = total
+                val_size = 0
+        # If windowing is enabled, split by contigs to avoid overlapping windows across splits
+        if self.window:
+            # Build all indices per contig
+            contig_to_indices: Dict[int, List[int]] = {}
+            for w_idx, (contig_idx, _, _) in enumerate(self.windows):
+                contig_to_indices.setdefault(contig_idx, []).append(w_idx)
+            contig_ids = list(contig_to_indices.keys())
+            random.shuffle(contig_ids)
+            train_indices: List[int] = []
+            val_indices: List[int] = []
+            for cid in contig_ids:
+                group = contig_to_indices[cid]
+                # Greedily assign whole contig to the split that is currently smaller relative to target
+                if len(train_indices) + len(group) <= train_size or (len(train_indices) < train_size and len(val_indices) >= val_size):
+                    train_indices.extend(group)
+                else:
+                    val_indices.extend(group)
+            # If we overshot due to group granularity, trim excess
+            if len(train_indices) > train_size:
+                overflow = len(train_indices) - train_size
+                val_indices.extend(train_indices[-overflow:])
+                train_indices = train_indices[:-overflow]
+            if len(val_indices) > val_size:
+                overflow = len(val_indices) - val_size
+                train_indices.extend(val_indices[-overflow:])
+                val_indices = val_indices[:-overflow]
+            return Subset(self, train_indices), Subset(self, val_indices)
+        else:
+            # No windowing; split by sequence index deterministically
+            idxs = list(range(len(self.sequences)))
+            random.shuffle(idxs)
+            train_idx = idxs[:train_size]
+            val_idx = idxs[train_size:train_size + val_size]
+            return Subset(self, train_idx), Subset(self, val_idx)

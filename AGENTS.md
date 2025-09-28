@@ -27,10 +27,13 @@ configuration.
 8. Follow DRY model in code development. Abstract common code into functions
 that can be re-called as much as possible.
 
-9. Always use chop_env virtual env. For example, running python should be like
+9. DO NOT seed the random number generator in code. Put random seeding in unit
+tests instead to get consistent behavior.
+
+10. Always use chop_env virtual env. For example, running python should be like
 ```source chop_env/bin/activate && python ...```
 
-10. Whenever possible, use constants in utils/constants.py. Specifically,
+11. Whenever possible, use constants in utils/constants.py. Specifically,
 always use the GenePredictionClass enums from that module to refer to training
 target values, and DNAEmbed enums to refer to embeddings. If you need embedding
 integer to DNA base pair mapping, use utils.constants.DNAEmbed.idx_to_bp. If
@@ -38,24 +41,24 @@ you need class index to class name mapping, use
 utils.constants.GenePredictionClass.idx_to_cls. Don't roll your own
 dictionaries.
 
-11. When removing old code we are not using, which you should almost always do,
+12. When removing old code we are not using, which you should almost always do,
 please remove all the code including the function signature/definitino, and
 don't just leave an empty "pass" or "return None" as a placeholder. And remove
 tests for logic we don't use anymore. And, DO NOT leave a comment saying you
 removed something.
 
-12. Use these metrics and terminology.
+13. Use these metrics and terminology.
 Sensitivity = TP / (TP + FN)
 Precision = TP / (TP + FP)
 Specificity = TN / (TN + FP)
 
-13. Directory structure
+14. Directory structure
 
 dna_learner - Re-usable DNA learning NN transformer model code
 gene_predictor - Training and prediction code for detection gene boundary and splice sites from GFF
 synthetic - Various experiments to learn how to use transformers to detect genomic features
 
-14. Do not ever hide errors using try-except blocks, unless you are explicitly
+15. Do not ever hide errors using try-except blocks, unless you are explicitly
 catching a specific exception. Otherwise better expose any exceptions so we can
 fix the code.
 

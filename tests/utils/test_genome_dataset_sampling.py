@@ -52,9 +52,11 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             tsv_path = fp / 'ann.tsv'
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
+            import random as _r
+            _r.seed(seed)
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=window, stride=stride,
-                num_windows=num_windows, class_weights=class_weights, seed=seed,
+                num_windows=num_windows, class_weights=class_weights,
                 window_incl_classes=window_incl_classes,
                 gene_class=gene_class,
                 exclude_margin_bps=exclude_margin_bps,
@@ -148,9 +150,11 @@ class TestAnnotatedGenomeDatasetSampling(unittest.TestCase):
             tsv_path = fp / 'a.tsv'
             write_temp(fasta_path, fasta)
             write_temp(tsv_path, tsv)
+            import random as _r
+            _r.seed(17)
             ds = AnnotatedGenomeDataset(
                 str(fasta_path), str(tsv_path), window=16, stride=16,
-                class_weights=cw, seed=17, exclude_margin_bps=3,
+                class_weights=cw, exclude_margin_bps=3,
                 random_prefix_ns=False
             )
             # Expect two windows [0:16], [16:32]

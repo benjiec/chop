@@ -57,7 +57,12 @@ def train(
     # Split dataset
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    # Prefer dataset-provided split (e.g., contig-aware) if available
+    if hasattr(dataset, 'split') and callable(getattr(dataset, 'split')):
+        print("Customized dataset splitting for training and validation")
+        train_dataset, val_dataset = dataset.split(train_size, val_size)
+    else:
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
     # Class-aware sampling removed; dataset does balancing and shuffling internally
     batch_sampler = None
