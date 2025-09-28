@@ -23,7 +23,7 @@ from utils.genome import AnnotatedGenomeDataset
 
 def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-                  use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 15.0, utr_weight: float = 3.0,
+                  use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 12.0, utr_weight: float = 3.0,
                   dss_weight: float = 8.0, ass_weight: float = 5.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                   max_seq_length: int = 1000,
@@ -95,7 +95,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-          use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 15.0, utr_weight: float = 3.0,
+          use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 12.0, utr_weight: float = 3.0,
           dss_weight: float = 8.0, ass_weight: float = 5.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
           max_seq_length: int = 1000,
@@ -201,7 +201,7 @@ def main():
     # class weights
     parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
     parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
-    parser.add_argument('--stop-weight', type=float, default=15.0, help='Weight for STOP class')
+    parser.add_argument('--stop-weight', type=float, default=12.0, help='Weight for STOP class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
     parser.add_argument('--dss-weight', type=float, default=8.0, help='Weight for DSS class')
     parser.add_argument('--ass-weight', type=float, default=5.0, help='Weight for ASS class')
