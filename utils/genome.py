@@ -423,24 +423,20 @@ class AnnotatedGenomeDataset:
             for pos, w_idx in enumerate(self._selected_window_indices):
                 contig_idx, _, _ = self.windows[w_idx]
                 contig_to_positions.setdefault(contig_idx, []).append(pos)
-            contig_ids = list(contig_to_positions.keys())
-            random.shuffle(contig_ids)
+            # Sort contigs by group size (largest first) for stable, group-wise assignment
+            contig_ids = sorted(contig_to_positions.keys(), key=lambda cid: len(contig_to_positions[cid]), reverse=True)
             train_positions: List[int] = []
             val_positions: List[int] = []
             for cid in contig_ids:
                 group = contig_to_positions[cid]
-                if len(train_positions) + len(group) <= train_size or (len(train_positions) < train_size and len(val_positions) >= val_size):
+                # Greedy assignment: push the next whole contig to the split that is currently farther from its target size
+                # Avoid trimming; accept slight size mismatch to keep contigs disjoint
+                train_gap = max(0, train_size - len(train_positions))
+                val_gap = max(0, val_size - len(val_positions))
+                if train_gap >= val_gap:
                     train_positions.extend(group)
                 else:
                     val_positions.extend(group)
-            if len(train_positions) > train_size:
-                overflow = len(train_positions) - train_size
-                val_positions.extend(train_positions[-overflow:])
-                train_positions = train_positions[:-overflow]
-            if len(val_positions) > val_size:
-                overflow = len(val_positions) - val_size
-                train_positions.extend(val_positions[-overflow:])
-                val_positions = val_positions[:-overflow]
             return Subset(self, train_positions), Subset(self, val_positions)
         else:
             # No windowing; split by sequence index deterministically

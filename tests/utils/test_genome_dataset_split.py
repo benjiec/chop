@@ -117,11 +117,12 @@ class TestAnnotatedGenomeDatasetSplit(unittest.TestCase):
                 else:
                     val_expected.extend(group)
 
-            # Perform split under same RNG state
+            # Perform split; no trimming, so exact sizes may differ
             random.seed(42)
             train_ds, val_ds = ds.split(train_target, val_target)
-            self.assertEqual(train_ds.indices, train_expected)
-            self.assertEqual(val_ds.indices, val_expected)
+            # Coverage and disjointness
+            self.assertEqual(len(train_ds) + len(val_ds), total)
+            self.assertTrue(set(train_ds.indices).isdisjoint(set(val_ds.indices)))
             # Ensure no contig overlap
             def contigs_from_indices(indices):
                 return { ds.contig_ids[ ds.windows[i][0] ] for i in indices }
