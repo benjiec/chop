@@ -132,7 +132,7 @@ def train(fna_fn: str, tsv_fn: str,
     # Pass class weights to dataset for sampling/accounting (format: list of floats indexed by class id)
     dataset_class_weights = config.get('loss', {}).get('class_weights')
 
-    stride = max_seq_length // 5
+    stride = max_seq_length // 2
     if num_windows:
         dataset = AnnotatedGenomeDataset(
             fna_fn,
