@@ -290,10 +290,7 @@ class AnnotatedGenomeDataset:
             pad_len = 0
             if self._random_prefix_ns:
                 # Unseeded randomness per user request
-                try:
-                    pad_len = random.randint(100, 400)
-                except Exception:
-                    pad_len = 0
+                pad_len = random.randint(100, 400)
             if pad_len > 0:
                 seq = ('N' * pad_len) + seq
                 pad_tgt = np.full(pad_len, P.INTERGENIC, dtype=np.int64)

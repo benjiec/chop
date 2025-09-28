@@ -366,23 +366,17 @@ class GenePredictorModel(nn.Module):
 
             # Resolve class indices map if provided via config
             name_to_idx = {}
-            try:
-                # Prefer config class_names if present
-                # self.class_names is available only in LightningModule, not here. So use constants if available.
-                from utils.constants import GenePredictionClass as P
-                name_to_idx = {v: k for k, v in P.idx_to_cls.items()}
-            except Exception:
-                name_to_idx = {}
+            # Prefer config class_names if present
+            # self.class_names is available only in LightningModule, not here. So use constants if available.
+            from utils.constants import GenePredictionClass as P
+            name_to_idx = {v: k for k, v in P.idx_to_cls.items()}
 
             for idx, entry in enumerate(self.cc_entries):
                 cls_spec = entry.get('class')
                 if isinstance(cls_spec, str):
                     cls_idx = name_to_idx.get(cls_spec.upper(), None)
                 else:
-                    try:
-                        cls_idx = int(cls_spec)
-                    except Exception:
-                        cls_idx = None
+                    cls_idx = int(cls_spec)
                 if cls_idx is None or cls_idx >= logits.size(-1):
                     continue
                 before = int(entry.get('before', 0))
