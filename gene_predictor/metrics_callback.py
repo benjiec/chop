@@ -283,10 +283,10 @@ class LossComponentsCallback(pl.Callback):
         v_stop = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.STOP)
         v_dss = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.DSS)
         v_ass = self._mean_ce_for(self._v_ce_sum_by_class, self._v_wt_sum_by_class, P.ASS)
-        t_start = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.START) if self.report_train_components else None
-        t_stop = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.STOP) if self.report_train_components else None
-        t_dss = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.DSS) if self.report_train_components else None
-        t_ass = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.ASS) if self.report_train_components else None
+        t_start = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.START) if self.report_train_components and hasattr(self, "_t_ce_sum_by_class") else None
+        t_stop = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.STOP) if self.report_train_components and hasattr(self, "_t_ce_sum_by_class") else None
+        t_dss = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.DSS) if self.report_train_components and hasattr(self, "_t_ce_sum_by_class") else None
+        t_ass = self._mean_ce_for(self._t_ce_sum_by_class, self._t_wt_sum_by_class, P.ASS) if self.report_train_components and hasattr(self, "_t_ce_sum_by_class") else None
 
         # Prepare tall rows: (batch, metric_name -> value)
         rows = []

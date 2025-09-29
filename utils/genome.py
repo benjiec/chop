@@ -161,6 +161,148 @@ def _encode_sequence(seq: str) -> np.ndarray:
     return np.array([vocab.get(ch, DNAEmbed.N) for ch in seq], dtype=np.int64)
 
 
+def build_targets_for_annotation(
+    seq: str,
+    ann: GeneAnnotation,
+    gene_class: int,
+    allow_nonconforming_start: bool = False,
+    allow_nonconforming_stop: bool = False,
+    allow_nonconforming_ass: bool = False,
+    allow_nonconforming_dss: bool = False,
+    failure_counts: Optional[Dict[str, int]] = None,
+) -> Optional[np.ndarray]:
+    L = len(seq)
+    tgt = np.full(L, P.INTERGENIC, dtype=np.int64)
+
+    # START/STOP based on half-open exons
+    if ann.strand == '+':
+        first_exon = ann.exons[0]
+        last_exon = ann.exons[-1]
+        start_pos = first_exon[0]
+        stop_pos = last_exon[1] - 3
+        start_codon = seq[start_pos:start_pos+3]
+        stop_codon = seq[stop_pos:stop_pos+3]
+        start_ok = (start_codon == 'ATG')
+        stop_ok = (stop_codon in ConventionalStopCodons)
+        if not start_ok:
+            if failure_counts is not None:
+                failure_counts['start'] = failure_counts.get('start', 0) + 1
+            if not allow_nonconforming_start:
+                return None
+        if not stop_ok:
+            if failure_counts is not None:
+                failure_counts['stop'] = failure_counts.get('stop', 0) + 1
+            if not allow_nonconforming_stop:
+                return None
+        tgt[start_pos:start_pos+3] = P.START
+        tgt[stop_pos:stop_pos+3] = P.STOP
+    else:
+        # minus strand: START at last exon end, STOP at first exon start (reverse complemented)
+        first_exon = ann.exons[0]
+        last_exon = ann.exons[-1]
+        start_pos = last_exon[1] - 3
+        stop_pos = first_exon[0]
+        start_codon = _reverse_complement(seq[start_pos:last_exon[1]])
+        stop_codon = _reverse_complement(seq[stop_pos:stop_pos+3])
+        start_ok = (start_codon == 'ATG')
+        stop_ok = (stop_codon in ConventionalStopCodons)
+        if not start_ok:
+            if failure_counts is not None:
+                failure_counts['start'] = failure_counts.get('start', 0) + 1
+            if not allow_nonconforming_start:
+                return None
+        if not stop_ok:
+            if failure_counts is not None:
+                failure_counts['stop'] = failure_counts.get('stop', 0) + 1
+            if not allow_nonconforming_stop:
+                return None
+        tgt[start_pos:last_exon[1]] = P.START
+        tgt[stop_pos:stop_pos+3] = P.STOP
+
+    # GENE region between START and STOP default to GENE; refine DSS/ASS
+    # Determine coding span (inclusive) by strand
+    if ann.strand == '+':
+        coding_lo = start_pos
+        coding_hi = stop_pos + 2
+    else:
+        coding_lo = stop_pos
+        coding_hi = first_exon[1] - 1
+    tgt[coding_lo:coding_hi+1] = np.where(
+        tgt[coding_lo:coding_hi+1] == P.INTERGENIC,
+        gene_class,
+        tgt[coding_lo:coding_hi+1]
+    )
+
+    # Intron labeling using genomic order of exons
+    exon_list_sorted = sorted(ann.exons, key=lambda t: t[0])
+    for i in range(len(exon_list_sorted) - 1):
+        e1 = exon_list_sorted[i]
+        e2 = exon_list_sorted[i + 1]
+        if ann.strand == '+':
+            donor_pos = e1[1]
+            acceptor_pos = e2[0] - 2
+            if 0 <= donor_pos+1 < L:
+                donor_di = seq[donor_pos:donor_pos+2]
+                donor_ok = (donor_di in ConventionalDonorDinucleotides)
+                if not donor_ok:
+                    if failure_counts is not None:
+                        failure_counts['dss'] = failure_counts.get('dss', 0) + 1
+                    if not allow_nonconforming_dss:
+                        return None
+                tgt[donor_pos:donor_pos+2] = P.DSS
+            if 0 <= acceptor_pos+1 < L:
+                acceptor_di = seq[acceptor_pos:acceptor_pos+2]
+                acceptor_ok = (acceptor_di in ConventionalAcceptorDinucleotides)
+                if not acceptor_ok:
+                    if failure_counts is not None:
+                        failure_counts['ass'] = failure_counts.get('ass', 0) + 1
+                    if not allow_nonconforming_ass:
+                        return None
+                tgt[acceptor_pos:acceptor_pos+2] = P.ASS
+        else:
+            donor_pos = e2[0] - 2
+            acceptor_pos = e1[1]
+            if 0 <= donor_pos and donor_pos+1 < L:
+                donor_di = _reverse_complement(seq[donor_pos:donor_pos+2])
+                donor_ok = (donor_di in ConventionalDonorDinucleotides)
+                if not donor_ok:
+                    if failure_counts is not None:
+                        failure_counts['dss'] = failure_counts.get('dss', 0) + 1
+                    if not allow_nonconforming_dss:
+                        return None
+                tgt[donor_pos:donor_pos+2] = P.DSS
+            if 0 <= acceptor_pos and acceptor_pos+1 < L:
+                acceptor_di = _reverse_complement(seq[acceptor_pos:acceptor_pos+2])
+                acceptor_ok = (acceptor_di in ConventionalAcceptorDinucleotides)
+                if not acceptor_ok:
+                    if failure_counts is not None:
+                        failure_counts['ass'] = failure_counts.get('ass', 0) + 1
+                    if not allow_nonconforming_ass:
+                        return None
+                tgt[acceptor_pos:acceptor_pos+2] = P.ASS
+
+    return tgt
+
+
+def add_random_n_prefix(
+    seq: str,
+    tgt: np.ndarray,
+    enabled: bool,
+    rng: Optional[object] = None,
+    min_len: int = 100,
+    max_len: int = 400,
+) -> Tuple[str, np.ndarray, int]:
+    pad_len = 0
+    if enabled:
+        r = rng if rng is not None else random
+        pad_len = r.randint(int(min_len), int(max_len))
+    if pad_len > 0:
+        seq = ('N' * pad_len) + seq
+        pad_tgt = np.full(pad_len, P.INTERGENIC, dtype=np.int64)
+        tgt = np.concatenate([pad_tgt, tgt], axis=0)
+    return seq, tgt, pad_len
+
+
 class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str,
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
@@ -168,7 +310,11 @@ class AnnotatedGenomeDataset:
                  window_incl_classes: Optional[List[int]] = None,
                  exclude_margin_bps: Optional[int] = 200,
                  gene_class: int = P.INTERGENIC,
-                 random_prefix_ns: bool = True):
+                 random_prefix_ns: bool = True,
+                 allow_nonconforming_start: bool = False,
+                 allow_nonconforming_stop: bool = False,
+                 allow_nonconforming_ass: bool = False,
+                 allow_nonconforming_dss: bool = False):
         self.fasta_records = _load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
@@ -188,6 +334,11 @@ class AnnotatedGenomeDataset:
         # Class to use for coding region between START and STOP (default: INTERGENIC)
         self.gene_class: int = int(gene_class)
         self._random_prefix_ns: bool = bool(random_prefix_ns)
+        self.allow_nonconforming_start = bool(allow_nonconforming_start)
+        self.allow_nonconforming_stop = bool(allow_nonconforming_stop)
+        self.allow_nonconforming_ass = bool(allow_nonconforming_ass)
+        self.allow_nonconforming_dss = bool(allow_nonconforming_dss)
+        self.motif_fail_counts: Dict[str, int] = {"start": 0, "stop": 0, "ass": 0, "dss": 0}
         self._build(num_contigs)
 
     def __len__(self) -> int:
@@ -208,98 +359,39 @@ class AnnotatedGenomeDataset:
             return _encode_sequence(seq), tgt
 
     def _build(self, num_contigs: Optional[int] = 0):
+
+        print(len(self.annotations),"sequences parsed")
+
         for ann in self.annotations:
             if ann.sequence_id not in self.fasta_records:
                 continue
             seq = self.fasta_records[ann.sequence_id]
-            L = len(seq)
-            tgt = np.full(L, P.INTERGENIC, dtype=np.int64)
 
-            # START/STOP based on half-open exons
-            if ann.strand == '+':
-                first_exon = ann.exons[0]
-                last_exon = ann.exons[-1]
-                start_pos = first_exon[0]
-                stop_pos = last_exon[1] - 3
-                start_codon = seq[start_pos:start_pos+3]
-                stop_codon = seq[stop_pos:stop_pos+3]
-                assert start_codon == 'ATG', f"Expected ATG at + strand START: got {start_codon}"
-                assert stop_codon in ConventionalStopCodons, f"Expected STOP at + strand: got {stop_codon}"
-                tgt[start_pos:start_pos+3] = P.START
-                tgt[stop_pos:stop_pos+3] = P.STOP
-                coding_lo = start_pos
-                coding_hi_excl = last_exon[1]
-            else:
-                # minus strand: START at last exon end, STOP at first exon start (reverse complemented)
-                first_exon = ann.exons[0]
-                last_exon = ann.exons[-1]
-                start_pos = last_exon[1] - 3
-                stop_pos = first_exon[0]
-                start_codon = _reverse_complement(seq[start_pos:last_exon[1]])
-                stop_codon = _reverse_complement(seq[stop_pos:stop_pos+3])
-                assert start_codon == 'ATG', f"Expected ATG at - strand START: got {start_codon}"
-                assert stop_codon in ConventionalStopCodons, f"Expected STOP at - strand: got {stop_codon}"
-                tgt[start_pos:last_exon[1]] = P.START
-                tgt[stop_pos:stop_pos+3] = P.STOP
-                coding_lo = first_exon[0]
-                coding_hi_excl = last_exon[1]
-
-            # GENE region between START and STOP default to GENE; refine DSS/ASS
-            # Determine coding span (inclusive) by strand
-            if ann.strand == '+':
-                coding_lo = start_pos
-                coding_hi = stop_pos + 2
-            else:
-                coding_lo = stop_pos
-                coding_hi = first_exon[1] - 1
-            tgt[coding_lo:coding_hi+1] = np.where(
-                tgt[coding_lo:coding_hi+1] == P.INTERGENIC,
-                self.gene_class,
-                tgt[coding_lo:coding_hi+1]
+            tgt = build_targets_for_annotation(
+                seq=seq,
+                ann=ann,
+                gene_class=self.gene_class,
+                allow_nonconforming_start=self.allow_nonconforming_start,
+                allow_nonconforming_stop=self.allow_nonconforming_stop,
+                allow_nonconforming_ass=self.allow_nonconforming_ass,
+                allow_nonconforming_dss=self.allow_nonconforming_dss,
+                failure_counts=self.motif_fail_counts,
             )
 
-            # Intron labeling using genomic order of exons
-            exon_list_sorted = sorted(ann.exons, key=lambda t: t[0])
-            for i in range(len(exon_list_sorted) - 1):
-                e1 = exon_list_sorted[i]
-                e2 = exon_list_sorted[i + 1]
-                if ann.strand == '+':
-                    donor_pos = e1[1]
-                    acceptor_pos = e2[0] - 2
-                    if 0 <= donor_pos+1 < L:
-                        donor_di = seq[donor_pos:donor_pos+2]
-                        assert donor_di in ConventionalDonorDinucleotides, f"Donor not in {ConventionalDonorDinucleotides}: {donor_di}"
-                        tgt[donor_pos:donor_pos+2] = P.DSS
-                    if 0 <= acceptor_pos+1 < L:
-                        acceptor_di = seq[acceptor_pos:acceptor_pos+2]
-                        assert acceptor_di in ConventionalAcceptorDinucleotides, f"Acceptor not in {ConventionalAcceptorDinucleotides}: {acceptor_di}"
-                        tgt[acceptor_pos:acceptor_pos+2] = P.ASS
-                else:
-                    donor_pos = e2[0] - 2
-                    acceptor_pos = e1[1]
-                    if 0 <= donor_pos and donor_pos+1 < L:
-                        donor_di = _reverse_complement(seq[donor_pos:donor_pos+2])
-                        assert donor_di in ConventionalDonorDinucleotides, f"Donor(-) not in {ConventionalDonorDinucleotides}: {donor_di}"
-                        tgt[donor_pos:donor_pos+2] = P.DSS
-                    if 0 <= acceptor_pos and acceptor_pos+1 < L:
-                        acceptor_di = _reverse_complement(seq[acceptor_pos:acceptor_pos+2])
-                        assert acceptor_di in ConventionalAcceptorDinucleotides, f"Acceptor(-) not in {ConventionalAcceptorDinucleotides}: {acceptor_di}"
-                        tgt[acceptor_pos:acceptor_pos+2] = P.ASS
+            if tgt is None:
+                continue
 
-            # Optional randomized N-prefix to avoid aligned START positions across sequences
-            pad_len = 0
-            if self._random_prefix_ns:
-                # Unseeded randomness per user request
-                pad_len = random.randint(100, 400)
-            if pad_len > 0:
-                seq = ('N' * pad_len) + seq
-                pad_tgt = np.full(pad_len, P.INTERGENIC, dtype=np.int64)
-                tgt = np.concatenate([pad_tgt, tgt], axis=0)
+            seq, tgt, _ = add_random_n_prefix(
+                seq=seq,
+                tgt=tgt,
+                enabled=self._random_prefix_ns,
+            )
 
             self.sequences.append(seq)
             self.targets.append(tgt)
             self.contig_ids.append(ann.sequence_id)
-        print(len(self.sequences),"sequences")
+
+        print(len(self.sequences),"sequences accepted")
 
         if num_contigs and num_contigs > 0:
             self.sequences = self.sequences[0:num_contigs]

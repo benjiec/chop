@@ -198,7 +198,7 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             self.assertTrue(all(tgt[10:13] == P.STOP))
 
     def test_invalid_gene_end_without_stop(self):
-        # Last exon does not end with a STOP codon -> expect assertion error
+        # Last exon does not end with a STOP codon -> dataset skips this contig
         seq = list('N'*30)
         # Place START ok
         seq[5:8] = list('ATG')
@@ -213,8 +213,8 @@ class TestAnnotatedGenomeDataset(unittest.TestCase):
             fp = Path(td)
             write_temp(fp/"seq.fna.gz", fasta)
             write_temp(fp/"ann.tsv", tsv)
-            with self.assertRaises(AssertionError):
-                AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE, random_prefix_ns=False)
+            ds = AnnotatedGenomeDataset(str(fp/"seq.fna.gz"), str(fp/"ann.tsv"), gene_class=P.GENE, random_prefix_ns=False)
+            self.assertEqual(len(ds), 0)
 
 
 if __name__ == '__main__':
