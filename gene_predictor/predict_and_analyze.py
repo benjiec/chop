@@ -17,6 +17,9 @@ from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
 from utils.metrics import compute_brier_scores
+import pickle
+from gene_decoder.types import PredictedSequence
+from utils.metrics import convert_tokens_to_sequence
 
 
 def load_trained_model(model_path: Path, device='cpu', temperature: Optional[float] = None):
@@ -542,6 +545,7 @@ def main():
     parser.add_argument('--no-ansi-colors', dest='ansi_colors', action='store_false', help='Disable ANSI colors in the report')
     parser.set_defaults(ansi_colors=True)
     parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence (no temperature) and report means')
+    parser.add_argument('--write-decoder-input-pkl', type=str, default=None, help='If set, write a pickle list of PredictedSequence for decoder input')
     
     args = parser.parse_args()
 
@@ -691,6 +695,25 @@ def main():
 
     # Save results (FASTA + per-contig colored report)
     base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)
+
+    # Optionally write decoder input pickle
+    if args.write_decoder_input_pkl:
+        class_order = [GenePredictionClass.idx_to_cls[i] for i in sorted(GenePredictionClass.idx_to_cls.keys())]
+        items = []
+        for r in results:
+            seq = convert_tokens_to_sequence(r['sequence_tokens'])
+            items.append(PredictedSequence(
+                sequence_index=r['sequence_index'],
+                sequence=seq,
+                probabilities=r['probabilities'],
+                class_order=class_order,
+            ))
+        pkl_path = Path(args.write_decoder_input_pkl)
+        if not pkl_path.is_absolute():
+            pkl_path = output_dir / pkl_path
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(items, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"✓ Decoder input pickle written to: {pkl_path}")
 
    # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
