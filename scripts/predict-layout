@@ -1,1 +1,6 @@
-PYTHONPATH=. python gene_predictor/predict_and_analyze.py --run-dir $1 --fna-fn data/$4_round0_test_query.fna.gz --tsv-fn data/$4_round0_test_annotations.tsv --model-path $2 --num-contigs $3 --report-loss-components
+PYTHONPATH=. python gene_predictor/predict_and_analyze.py \
+  --fna-fn data/$1_round0_test_query.fna.gz --tsv-fn data/$1_round0_test_annotations.tsv  \
+  --num-contigs $2 \
+  --run-dir $3 \
+  --model-path $4 \
+  --report-loss-components

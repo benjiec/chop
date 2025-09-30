@@ -2,11 +2,11 @@
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60,3:300:40:0" --num-windows 20000 --stride 100 --stop-weight 8
 
-scripts/predict-layout gene_predictor/gene_predictor_run_20250928_142721 model_epoch=04_val_f1=0.224.ckpt 99 GCA_001939145.1
+scripts/predict-layout GCA_001939145.1 99 gene_predictor/gene_predictor_run_20250928_142721 model_epoch=04_val_f1=0.224.ckpt
 
 
 # coral
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60:12:60,3:140:40:140,4:220:120:0" --num-windows 20000 --stride 330
 
-scripts/predict-layout gene_predictor/gene_predictor_run_20250929_071216 model_epoch=04_val_f1=0.645.ckpt 1000 GCF_002042975.1
+scripts/predict-layout GCF_002042975.1 1000 gene_predictor/gene_predictor_run_20250929_071216 model_epoch=04_val_f1=0.645.ckpt 
