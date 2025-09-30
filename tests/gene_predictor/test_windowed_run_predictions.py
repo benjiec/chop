@@ -52,7 +52,14 @@ class TestWindowedRunPredictions(unittest.TestCase):
         loader = DataLoader(LongSeqDummyDataset(seq_len), batch_size=1, shuffle=False)
         model = SmallMaxLenDummyModel(model_max)
 
-        results = run_predictions(model, loader, device='cpu', return_attention=False)
+        results = run_predictions(
+            model,
+            loader,
+            device='cpu',
+            return_attention=False,
+            blending_window_margin_bp=0,
+            random_prefix_ns=False,
+        )
         self.assertEqual(len(results), 1)
         r = results[0]
         self.assertEqual(r['probabilities'].shape[0], seq_len)

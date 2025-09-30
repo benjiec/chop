@@ -75,6 +75,11 @@ class F1Callback(pl.Callback):
 
         metrics_by_class = calculate_generic_metrics(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
 
+        # Optional compact stdout summary
+        should_print = self.print_per_class_every and (
+            (trainer is None) or (((trainer.current_epoch + 1) % self.print_per_class_every) == 0)
+        )
+
         # Compute macro-average F1 across all classes returned
         f1_values = []
         per_class_f1 = {}
@@ -86,7 +91,8 @@ class F1Callback(pl.Callback):
             f1_values.append(f1)
             cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             per_class_f1[cls_name] = f1
-            print("f1",cls_name,"sen",sensitivity,"pre",precision)
+            if should_print:
+                print(cls_name,"sen",sensitivity,"pre",precision,"f1",f1)
 
         macro_f1 = float(np.median(f1_values)) if f1_values else 0.0
 
@@ -104,15 +110,6 @@ class F1Callback(pl.Callback):
         for cls_idx, val in by_class.items():
             name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             pl_module.log(f"val_brier_classes/{name}", float(val), prog_bar=False, on_epoch=True)
-
-        # Optional compact stdout summary
-        should_print = self.print_per_class_every and (
-            (trainer is None) or (((trainer.current_epoch + 1) % self.print_per_class_every) == 0)
-        )
-        if should_print and per_class_f1:
-            ordered = sorted(per_class_f1.items(), key=lambda kv: kv[0])
-            summary = ' '.join([f"{k}={v:.2f}" for k, v in ordered])
-            print(f"\nF1 per class: {summary}")
 
 
 class DualMetricEarlyStopping(pl.Callback):

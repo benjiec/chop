@@ -9,6 +9,8 @@ import argparse
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import hashlib
+import pickle
+import random
 import re
 
 from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_codons
@@ -17,9 +19,118 @@ from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
 from utils.metrics import compute_brier_scores
-import pickle
 from gene_decoder.types import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
+from utils.windowing import compute_window_slices, blend_logits
+from utils.windowing import window_weights
+from utils.constants import DNAEmbed
+
+
+def predict_sequence_outputs(model, max_seq_len,
+                             seq_tokens_b: torch.Tensor,
+                             device: str = 'cpu',
+                             return_attention: bool = False,
+                             temperature: Optional[float] = None,
+                             blending_window_margin_bp: int = 200,
+                             aggregator: str = 'blend',  # 'blend' | 'max_weight' | 'max_prob'
+                             random_prefix_ns: bool = True,
+                             random_prefix_min: int = 100,
+                             random_prefix_max: int = 400) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Predict a single sequence (shape (1, L)) and return (preds, probs, logits_raw).
+
+    Handles windowed inference and blending when sequence length exceeds model max length.
+    """
+
+    L = int(seq_tokens_b.size(1))
+
+    # Optional random N-prefix to reduce edge effects; apply only when windowing will occur
+    pad_len = 0
+    if random_prefix_ns and (L > max_seq_len) and random_prefix_max > 0 and random_prefix_max >= random_prefix_min:
+        pad_len = random.randint(int(random_prefix_min), int(random_prefix_max))
+        if pad_len > 0:
+            pad = torch.full((1, pad_len), int(DNAEmbed.N), dtype=seq_tokens_b.dtype, device=seq_tokens_b.device)
+            seq_tokens_b = torch.cat([pad, seq_tokens_b], dim=1)
+            L = int(seq_tokens_b.size(1))
+
+    # Normalize aggregator: default to 'blend' if unrecognized
+    if aggregator not in ('blend', 'max_weight', 'max_prob'):
+        aggregator = 'blend'
+
+    if L <= max_seq_len:
+        _layer_attn_b = None
+        out = model(seq_tokens_b, return_attention=return_attention)
+        if return_attention and isinstance(out, tuple) and len(out) == 2:
+            logits_b, _layer_attn_b = out
+        else:
+            logits_b = out
+        logits_raw_np = logits_b[0].detach().cpu().numpy()
+        if temperature is not None and float(temperature) > 0:
+            logits_b = logits_b / float(temperature)
+        preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
+        probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
+        # Strip prefix if applied
+        if pad_len > 0:
+            preds_b = preds_b[pad_len:]
+            probs_b = probs_b[pad_len:]
+            logits_raw_np = logits_raw_np[pad_len:]
+        return preds_b, probs_b, logits_raw_np, _layer_attn_b
+
+    else:
+        # Windowed inference and blending
+        stride = max_seq_len // 2 if max_seq_len > 1 else 1
+        slices = compute_window_slices(L, window=max_seq_len, stride=stride)
+        window_logits_np = []
+        for (s, e) in slices:
+            win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
+            out = model(win_tokens, return_attention=False)
+            if isinstance(out, tuple):
+                out = out[0]
+            wl = out[0].detach().cpu().numpy()  # (win_len, C)
+            window_logits_np.append(wl)
+        # Cap margin to avoid leaving uncovered gaps when stride is small
+        eff_margin = int(blending_window_margin_bp)
+        eff_margin = max(0, min(eff_margin, max(0, stride // 2 - 1)))
+
+        if aggregator in ('max_weight', 'max_prob'):
+            # Build per-position choices from overlapping windows
+            num_classes = int(window_logits_np[0].shape[-1])
+            logits_raw_np = np.zeros((L, num_classes), dtype=np.float32)
+            weight_sums = np.zeros((L,), dtype=np.float32)
+            for (s, e), wl in zip(slices, window_logits_np):
+                win_len = e - s
+                w = window_weights(win_len, mode='cosine', margin=eff_margin)
+                if aggregator == 'max_weight':
+                    # At each position, choose window with highest weight
+                    for i in range(win_len):
+                        pos = s + i
+                        if w[i] >= weight_sums[pos]:
+                            logits_raw_np[pos, :] = wl[i, :]
+                            weight_sums[pos] = w[i]
+                else:  # max_prob
+                    # Choose window with highest top-class logit
+                    top_vals = wl.max(axis=1)
+                    for i in range(win_len):
+                        pos = s + i
+                        if top_vals[i] >= weight_sums[pos]:
+                            logits_raw_np[pos, :] = wl[i, :]
+                            weight_sums[pos] = top_vals[i]
+        else:
+            blended_raw = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=eff_margin, exclude_edges=True)
+            logits_raw_np = blended_raw
+
+        blended = logits_raw_np
+        if temperature is not None and float(temperature) > 0:
+            blended = blended / float(temperature)
+        probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
+        preds_b = np.argmax(probs_b, axis=-1)
+
+        # Strip prefix if applied
+        if pad_len > 0:
+            preds_b = preds_b[pad_len:]
+            probs_b = probs_b[pad_len:]
+            logits_raw_np = logits_raw_np[pad_len:]
+
+        return preds_b, probs_b, logits_raw_np, None
 
 
 def load_trained_model(model_path: Path, device='cpu', temperature: Optional[float] = None):
@@ -46,22 +157,22 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
     return data_loader, dataset
 
 
-def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None, log_every: Optional[int] = 10):
+def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None, log_every: Optional[int] = 10,
+                    blending_window_margin_bp: int = 200, aggregator: str = 'blend', random_prefix_ns: bool = True,
+                    random_prefix_min: int = 100, random_prefix_max: int = 400):
     """Run predictions on test data. Optionally return encoder attention per layer."""
     
     print("Running predictions on test data...")
     
     all_results = []
     predicted_count = 0
-    
+
+    max_len = int(model.model.embedding.max_seq_length)
+
     with torch.no_grad():
         for batch_idx, (sequences, targets) in enumerate(data_loader):
             sequences = sequences.to(device)
             targets = targets.to(device)
-            
-            # Convert to numpy for analysis (batch-agnostic), with optional windowed inference for long sequences
-            # Defer model calls to per-sequence to support windowing when needed
-            from utils.windowing import compute_window_slices, blend_logits
 
             B = sequences.size(0)
             for b in range(B):
@@ -69,54 +180,27 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                 targets_b = targets[b].cpu().numpy()
                 L = int(seq_tokens_b.size(1))
 
-                # Resolve model max length
-                try:
-                    max_len = int(model.model.embedding.max_seq_length)
-                except Exception:
-                    # Fallback if model is a bare nn.Module with attribute
-                    max_len = int(getattr(getattr(model, 'embedding', None), 'max_seq_length', L))
+                # Run per-sequence prediction via helper
+                preds_b, probs_b, logits_raw_np, layer_attn_b = predict_sequence_outputs(
+                    model, max_len,
+                    seq_tokens_b,
+                    device=device,
+                    return_attention=False,
+                    temperature=temperature,
+                    blending_window_margin_bp=blending_window_margin_bp,
+                    aggregator=aggregator,
+                    random_prefix_ns=random_prefix_ns,
+                    random_prefix_min=random_prefix_min,
+                    random_prefix_max=random_prefix_max,
+                )
 
-                if L <= max_len:
-                    out = model(seq_tokens_b, return_attention=return_attention)
-                    predicted_count += 1
-                    if (predicted_count + 1) % log_every == 0:
-                        print(f"  Processed {predicted_count + 1} windows...")
-                    if return_attention and isinstance(out, tuple) and len(out) == 2:
-                        logits_b, layer_attn_b = out
-                    else:
-                        logits_b = out
-                        layer_attn_b = None
-                    logits_raw_np = logits_b[0].detach().cpu().numpy()
-                    if temperature is not None and float(temperature) > 0:
-                        logits_b = logits_b / float(temperature)
-                    preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
-                    probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
-                    attn_export = None
-                    if return_attention and layer_attn_b is not None:
-                        attn_export = {name: tensor[0].cpu().numpy() for name, tensor in layer_attn_b.items() if tensor is not None}
-                else:
-                    # Windowed inference and blending
-                    stride = max_len // 2 if max_len > 1 else 1
-                    slices = compute_window_slices(L, window=max_len, stride=stride)
-                    window_logits_np = []
-                    for (s, e) in slices:
-                        win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
-                        out = model(win_tokens, return_attention=False)
-                        predicted_count += 1
-                        if (predicted_count + 1) % log_every == 0:
-                            print(f"  Processed {predicted_count + 1} windows...")
-                        if isinstance(out, tuple):
-                            out = out[0]
-                        wl = out[0].detach().cpu().numpy()  # (win_len, C)
-                        window_logits_np.append(wl)
-                    blended_raw = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=None)
-                    logits_raw_np = blended_raw
-                    blended = blended_raw
-                    if temperature is not None and float(temperature) > 0:
-                        blended = blended / float(temperature)
-                    probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
-                    preds_b = np.argmax(probs_b, axis=-1)
-                    attn_export = None  # Not supported for windowed case
+                predicted_count += 1
+                if (predicted_count + 1) % log_every == 0:
+                    print(f"  Processed {predicted_count + 1} windows...")
+
+                attn_export = None
+                if return_attention and layer_attn_b:
+                    attn_export = {name: tensor[0].cpu().numpy() for name, tensor in layer_attn_b.items() if tensor is not None}
 
                 seq_np = seq_tokens_b[0].cpu().numpy()
                 result_entry = {
@@ -262,8 +346,7 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
     # Determine included classes (robust to tensor/array inputs)
     cw_list: Optional[List[float]] = None
     try:
-        import torch as _torch
-        if class_weights is not None and isinstance(class_weights, _torch.Tensor):
+        if class_weights is not None and isinstance(class_weights, torch.Tensor):
             cw_list = class_weights.detach().cpu().flatten().tolist()
         elif class_weights is not None:
             cw_list = list(class_weights)
@@ -499,6 +582,13 @@ def main():
     parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
     parser.add_argument('--no-ansi-colors', dest='ansi_colors', action='store_false', help='Disable ANSI colors in the report')
     parser.set_defaults(ansi_colors=True)
+    # New options for blending/windowing behavior
+    parser.add_argument('--aggregator', type=str, default='blend', choices=['blend', 'max_weight', 'max_prob'], help='Window aggregation mode')
+    parser.add_argument('--blending-window-margin-bp', type=int, default=200, help='Edge margin for blending/selection')
+    parser.add_argument('--random-prefix-ns', action='store_true', default=True, help='Enable random N-prefix before windowing')
+    parser.add_argument('--no-random-prefix-ns', dest='random_prefix_ns', action='store_false', help='Disable random N-prefix before windowing')
+    parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
+    parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
     parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence (no temperature) and report means')
     parser.add_argument('--write-decoder-input-pkl', type=str, default=None, help='If set, write a pickle list of PredictedSequence for decoder input')
     
@@ -574,7 +664,18 @@ def main():
             args.temperature = sweep_best[1]
 
     # Run predictions (with attention if requested) using final temperature
-    results = run_predictions(model, data_loader, args.device, return_attention=True, temperature=args.temperature)
+    results = run_predictions(
+        model,
+        data_loader,
+        args.device,
+        return_attention=True,
+        temperature=args.temperature,
+        blending_window_margin_bp=int(args.blending_window_margin_bp),
+        aggregator=str(args.aggregator),
+        random_prefix_ns=bool(args.random_prefix_ns),
+        random_prefix_min=int(args.random_prefix_min),
+        random_prefix_max=int(args.random_prefix_max),
+    )
     
     # Compute metrics and motif-span prediction events for visualization (single call)
     generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)

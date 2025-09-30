@@ -47,4 +47,24 @@ class TestWindowingUtils(unittest.TestCase):
         self.assertTrue(np.allclose(blended[0:4], 0.0, atol=1e-5))
         self.assertTrue(np.allclose(blended[8:12], 1.0, atol=1e-5))
 
+    def test_blend_logits_margin_excludes_edges(self):
+        # Two windows covering [0,8) and [4,12); set margin=2 and exclude_edges
+        # For positions inside the first/last 2 tokens of each window, weight should be 0
+        L = 12
+        C = 1
+        w1 = np.zeros((8, C), dtype=np.float32) + 1.0  # window1 logits = 1.0
+        w2 = np.zeros((8, C), dtype=np.float32) + 2.0  # window2 logits = 2.0
+        slices = [(0, 8), (4, 12)]
+        # With margin=2 and exclude_edges, positions [0,1] of w1 and [6,7] of w1 get zeroed;
+        # positions [4,5] of w2 (local indices 0,1) and [10,11] (local 6,7) get zeroed.
+        blended = blend_logits(L, slices, [w1, w2], weight_mode='cosine', margin=2, exclude_edges=True)
+        # At absolute positions 0..11, only contributions where local index in [2..5] should count per window
+        # Check a few boundary points explicitly
+        # pos 0,1: only w1 exists but its edge is excluded -> weight sums should fallback via eps, result ~0
+        self.assertTrue(np.allclose(blended[0:2], 0.0, atol=1e-6))
+        # pos 2: w1 center allowed, equals 1.0
+        self.assertTrue(np.allclose(blended[2], 1.0, atol=1e-6))
+        # pos 10,11: only w2 window covers but edges excluded -> ~0
+        self.assertTrue(np.allclose(blended[10:12], 0.0, atol=1e-6))
+
 

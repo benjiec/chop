@@ -68,6 +68,7 @@ def blend_logits(
     window_logits: Sequence[np.ndarray],  # each (win_len, num_classes)
     weight_mode: Literal['cosine', 'triangular'] = 'cosine',
     margin: Optional[int] = None,
+    exclude_edges: bool = False,
     eps: float = 1e-8,
 ) -> np.ndarray:
     """
@@ -87,6 +88,12 @@ def blend_logits(
         if wl.shape[0] != win_len:
             raise ValueError(f"Window logits length {wl.shape[0]} does not match slice length {win_len}")
         w = window_weights(win_len, mode=weight_mode, margin=margin).reshape(win_len, 1)
+        if exclude_edges and margin is not None and margin > 0:
+            # Ensure we don't zero the entire window: keep at least one position
+            m = min(int(margin), max(0, (win_len // 2) - 1))
+            if m > 0:
+                w[:m, 0] = 0.0
+                w[-m:, 0] = 0.0
         sums[s:e, :] += (w * wl).astype(np.float32)
         weight_sums[s:e] += w.squeeze(1).astype(np.float32)
     # Avoid division by zero; if a position has zero weight (shouldn't), keep zeros
