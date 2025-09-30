@@ -49,7 +49,6 @@ class TestTrainerSamplerIntegration(unittest.TestCase):
                 additional_callback_generator=lambda v: [],
                 monitor_metric='val_loss',
                 monitor_mode='min',
-                batch_sampling=True,
             )
             self.assertIsNotNone(model)
             self.assertTrue(hasattr(val_loader, '__iter__'))

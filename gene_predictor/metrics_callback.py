@@ -79,17 +79,14 @@ class F1Callback(pl.Callback):
         f1_values = []
         per_class_f1 = {}
         for cls_idx, m in metrics_by_class.items():
-            tp = float(m.get('tp', 0))
-            fp = float(m.get('fp', 0))
-            fn = float(m.get('fn', 0))
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            precision = float(m.get('precision', 0.0))
+            sensitivity = float(m.get('sensitivity', 0.0))
             denom = precision + sensitivity
             f1 = (2.0 * precision * sensitivity / denom) if denom > 0.0 else 0.0
             f1_values.append(f1)
             cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             per_class_f1[cls_name] = f1
-            print("f1",cls_name,"tp",tp,"fp",fp,"fn",fn,"sen",sensitivity,"pre",precision)
+            print("f1",cls_name,"sen",sensitivity,"pre",precision)
 
         macro_f1 = float(np.median(f1_values)) if f1_values else 0.0
 
