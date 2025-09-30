@@ -9,49 +9,13 @@ from dna_learner.model import GenePredictorModule
 import shutil
 
 
-class BestCheckpointAlias(pl.Callback):
-    """Maintain an alias checkpoints/best.ckpt pointing to the current best model.
-
-    This avoids adding a second ModelCheckpoint while ensuring consumers can load
-    the best checkpoint deterministically.
-    """
-
-    def __init__(self, checkpoints_dir: Path):
-        super().__init__()
-        self.checkpoints_dir = Path(checkpoints_dir)
-        self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
-
-    def on_validation_end(self, trainer: pl.Trainer, pl_module):
-        self._update_best_alias(trainer)
-
-    def on_fit_end(self, trainer: pl.Trainer, pl_module):
-        self._update_best_alias(trainer)
-
-    def _update_best_alias(self, trainer: pl.Trainer):
-        # Find primary ModelCheckpoint callback and get its best_model_path
-        best_path = None
-        for cb in trainer.callbacks:
-            if isinstance(cb, pl.callbacks.ModelCheckpoint):
-                path = cb.best_model_path
-                if path:
-                    best_path = Path(path)
-                    break
-        if best_path and best_path.exists():
-            alias = self.checkpoints_dir / 'best.ckpt'
-            try:
-                shutil.copyfile(best_path, alias)
-            except Exception:
-                pass
-
-
 def train(
     dataset,
     config,
     output_dir: Path,
     additional_callback_generator: Optional[Callable[[DataLoader], List[pl.Callback]]] = None,
     monitor_metric: str = 'val_loss',
-    monitor_mode: str = 'min',
-    batch_sampling: bool = False,
+    monitor_mode: str = 'min'
 ):
 
     # Split dataset
@@ -64,9 +28,6 @@ def train(
     else:
         train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     
-    # Class-aware sampling removed; dataset does balancing and shuffling internally
-    batch_sampler = None
-
     train_loader = DataLoader(
         train_dataset, 
         batch_size=config['training']['batch_size'], 
@@ -111,9 +72,6 @@ def train(
         save_last=True,
         auto_insert_metric_name=False,
     ))
-
-    # Neutral alias and early stopping on the primary metric only
-    callbacks.append(BestCheckpointAlias(output_dir / "checkpoints"))
 
     if additional_callback_generator:
         callbacks.extend(additional_callback_generator(val_loader))

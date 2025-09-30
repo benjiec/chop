@@ -26,61 +26,16 @@ def load_trained_model(model_path: Path, device='cpu', temperature: Optional[flo
     """Load the trained model from checkpoint, restoring exact architecture."""
     print(f"Loading model from: {model_path}")
 
-    # First, try Lightning's native loader which restores saved hyperparameters
-    try:
-        model = ModelModule.load_from_checkpoint(model_path, map_location=device)
-        model.eval()
-        model = model.to(device)
-        cfg = getattr(model, 'config', None)
-        if cfg and 'model' in cfg:
-            m = cfg['model']
-            print(f"✓ Model loaded successfully (layers={m.get('n_layers')}, heads={m.get('n_heads')}, kmer={m.get('kmer_size')})")
-        else:
-            print("✓ Model loaded successfully")
-        return model
-    except Exception:
-        pass  # Fallback to manual
-
-    try:
-        checkpoint = torch.load(model_path, map_location=device)
-
-        # Extract config from checkpoint hyperparameters
-        config = None
-        for hp_key in ('hyper_parameters', 'hparams'):
-            if hp_key in checkpoint:
-                hp = checkpoint[hp_key]
-                if isinstance(hp, dict):
-                    if 'model' in hp and 'training' in hp:
-                        config = hp
-                        break
-                    if 'config' in hp and isinstance(hp['config'], dict):
-                        config = hp['config']
-                        break
-
-        if config is None:
-            raise RuntimeError("Checkpoint does not contain saved hyperparameters/config; cannot safely reconstruct model.")
-
-        model = ModelModule(config)
-
-        # Load state dict, filtering out non-model parameters
-        state_dict = checkpoint.get('state_dict', checkpoint)
-        model_state_dict = {k: v for k, v in state_dict.items() if not k.startswith('criterion')}
-
-        missing, unexpected = model.load_state_dict(model_state_dict, strict=False)
-        if missing:
-            print(f"Warning: Missing keys while loading: {sorted(missing)[:5]}{' ...' if len(missing) > 5 else ''}")
-        if unexpected:
-            print(f"Warning: Unexpected keys while loading: {sorted(unexpected)[:5]}{' ...' if len(unexpected) > 5 else ''}")
-
-        model.eval()
-        model = model.to(device)
-        m = config.get('model', {})
+    model = ModelModule.load_from_checkpoint(model_path, map_location=device)
+    model.eval()
+    model = model.to(device)
+    cfg = getattr(model, 'config', None)
+    if cfg and 'model' in cfg:
+        m = cfg['model']
         print(f"✓ Model loaded successfully (layers={m.get('n_layers')}, heads={m.get('n_heads')}, kmer={m.get('kmer_size')})")
-        return model
-
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        return None
+    else:
+        print("✓ Model loaded successfully")
+    return model
 
 
 def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
@@ -550,7 +505,6 @@ def main():
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir)
-    # Resolve model path: if absolute, use as-is; if relative, place under run_dir/checkpoints
     raw_model_path = Path(args.model_path)
     ckpt_path = raw_model_path if raw_model_path.is_absolute() else (run_dir / 'checkpoints' / raw_model_path)
     output_dir = Path(args.output_dir) if args.output_dir else run_dir

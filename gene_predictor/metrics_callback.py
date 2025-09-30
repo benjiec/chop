@@ -89,6 +89,7 @@ class F1Callback(pl.Callback):
             f1_values.append(f1)
             cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             per_class_f1[cls_name] = f1
+            print("f1",cls_name,"tp",tp,"fp",fp,"fn",fn,"sen",sensitivity,"pre",precision)
 
         macro_f1 = float(np.median(f1_values)) if f1_values else 0.0
 
