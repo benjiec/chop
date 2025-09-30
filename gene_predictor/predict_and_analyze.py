@@ -26,8 +26,8 @@ from utils.windowing import window_weights
 from utils.constants import DNAEmbed
 
 
-def predict_sequence_outputs(model, max_seq_len,
-                             seq_tokens_b: torch.Tensor,
+def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
+                             stride: Optional[int] = None,
                              device: str = 'cpu',
                              return_attention: bool = False,
                              temperature: Optional[float] = None,
@@ -77,7 +77,8 @@ def predict_sequence_outputs(model, max_seq_len,
 
     else:
         # Windowed inference and blending
-        stride = max_seq_len // 2 if max_seq_len > 1 else 1
+        if stride is None:
+            stride = max_seq_len // 2 if max_seq_len > 1 else 1
         slices = compute_window_slices(L, window=max_seq_len, stride=stride)
         window_logits_np = []
         for (s, e) in slices:
@@ -182,8 +183,8 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
 
                 # Run per-sequence prediction via helper
                 preds_b, probs_b, logits_raw_np, layer_attn_b = predict_sequence_outputs(
-                    model, max_len,
-                    seq_tokens_b,
+                    model, max_len, seq_tokens_b,
+                    stride=max_len // 3,
                     device=device,
                     return_attention=False,
                     temperature=temperature,
@@ -196,7 +197,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
 
                 predicted_count += 1
                 if (predicted_count + 1) % log_every == 0:
-                    print(f"  Processed {predicted_count + 1} windows...")
+                    print(f"  Processed {predicted_count + 1} sequences...")
 
                 attn_export = None
                 if return_attention and layer_attn_b:
