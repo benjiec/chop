@@ -108,6 +108,70 @@ class TestDecoder(unittest.TestCase):
         res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
         self.assertEqual(len(res.global_topk), 0)
 
+    def test_start_then_two_ass_ignored(self):
+        # START then ASS, ASS inside EXON should have no effect; STOP in-frame
+        L = 40
+        seq = list('A' * L)
+        s = 3
+        a1 = 10
+        a2 = 14
+        t = 30  # in-frame with START at 3 (30 - (3+3) = 24)
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[a1:a1+2] = list('AG')
+        seq[a2:a2+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, s, P.START, 3, 0.99)
+        _set_event(probs, a1, P.ASS, 2, 0.99)
+        _set_event(probs, a2, P.ASS, 2, 0.99)
+        _set_event(probs, t, P.STOP, 3, 0.99)
+
+        ps = PredictedSequence(15, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=16)
+        self.assertEqual(len(res.global_topk), 1)
+        cand = res.global_topk[0]
+        # Single exon; ASS inside exon ignored
+        self.assertEqual(cand.exons, [(s, t+3)])
+        self.assertEqual(cand.events['ass'], [])
+
+    def test_two_dss_back_to_back_only_first_taken(self):
+        # START -> DSS -> DSS (back-to-back), then ASS, STOP
+        # After the first DSS we are in INTRON, so the second DSS must be ignored
+        L = 50
+        seq = list('A' * L)
+        s = 3
+        d1 = 12
+        d2 = 14  # second DSS inside INTRON region
+        a = 20
+        t = 40  # choose STOP: split path in-frame, single-exon out-of-frame
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d1:d1+2] = list('GT')
+        seq[d2:d2+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, s, P.START, 3, 0.99)
+        _set_event(probs, d1, P.DSS, 2, 0.99)
+        _set_event(probs, d2, P.DSS, 2, 0.99)
+        _set_event(probs, a, P.ASS, 2, 0.99)
+        _set_event(probs, t, P.STOP, 3, 0.99)
+
+        ps = PredictedSequence(16, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16)
+        self.assertGreaterEqual(len(res.global_topk), 1)
+        cand = res.global_topk[0]
+        # Only the first DSS should be recorded
+        self.assertIn(d1, cand.events['dss'])
+        self.assertNotIn(d2, cand.events['dss'])
+
     def test_codon_usage_scoring(self):
         # Build a small codon model that favors AAA heavily
         model = CodonUsageModel(logp={c: np.log(1.0/64.0) for c in [a+b+c for a in 'ATGC' for b in 'ATGC' for c in 'ATGC']})
