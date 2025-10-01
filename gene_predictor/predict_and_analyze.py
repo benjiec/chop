@@ -591,7 +591,7 @@ def main():
     parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
     parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence (no temperature) and report means')
-    parser.add_argument('--write-decoder-input-pkl', type=str, default=None, help='If set, write a pickle list of PredictedSequence for decoder input')
+    parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
     
     args = parser.parse_args()
 
@@ -764,14 +764,14 @@ def main():
                 probabilities=r['probabilities'],
                 class_order=class_order,
             ))
-        pkl_path = Path(args.write_decoder_input_pkl)
+        pkl_path = Path(f"{base_name}_decoder.pickle")
         if not pkl_path.is_absolute():
             pkl_path = output_dir / pkl_path
         with open(pkl_path, 'wb') as f:
             pickle.dump(items, f, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"✓ Decoder input pickle written to: {pkl_path}")
 
-   # Dump attention fragments to FASTA
+    # Dump attention fragments to FASTA
     attn_fa = output_dir / f"{base_name}_attn.fa"
     dump_attention_fragments(results, events, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
     print(f"✓ Attention fragments written to: {attn_fa}")
