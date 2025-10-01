@@ -1,8 +1,9 @@
 import unittest
+import math
 import numpy as np
 
 from gene_decoder import PredictedSequence
-from gene_decoder.decoder import decode_sequence
+from gene_decoder.decoder import decode_sequence, _event_logp
 from gene_decoder.codon_usage import CodonUsageModel, build_codon_usage_from_cds
 from utils.constants import GenePredictionClass as P
 
@@ -171,6 +172,128 @@ class TestDecoder(unittest.TestCase):
         # Only the first DSS should be recorded
         self.assertIn(d1, cand.events['dss'])
         self.assertNotIn(d2, cand.events['dss'])
+
+    def test_boundary_and_hazard_exact_single_exon_math(self):
+        # Exact math: no DSS/ASS present, hazard == boundary == sum logp of taken events
+        L = 40
+        seq = list('A' * L)
+        s = 3
+        t = 27  # in-frame: 27 - (3+3) = 21
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        p_start, p_stop = 0.8, 0.7
+        _set_event(probs, s, P.START, 3, p_start)
+        _set_event(probs, t, P.STOP, 3, p_stop)
+
+        ps = PredictedSequence(20, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res_b = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8, scoring='boundary')
+        res_h = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8, scoring='hazard')
+        self.assertEqual(len(res_b.global_topk), 1)
+        self.assertEqual(len(res_h.global_topk), 1)
+        cb = res_b.global_topk[0]
+        ch = res_h.global_topk[0]
+        expected = _event_logp(probs, s, P.START) + _event_logp(probs, t, P.STOP)
+        self.assertAlmostEqual(cb.boundary_logp, expected, places=6)
+        self.assertAlmostEqual(cb.total, expected, places=6)
+        self.assertAlmostEqual(ch.boundary_logp, expected, places=6)
+        self.assertAlmostEqual(ch.total, expected, places=6)
+
+    def test_hazard_exact_exon_skips_dss_math(self):
+        # Two DSS along exon are skipped; hazard adds log(1 - p_dss_span) at each DSS index
+        L = 60
+        seq = list('A' * L)
+        s = 3
+        d1 = 12
+        d2 = 20
+        t = 45  # in-frame single-exon
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d1:d1+2] = list('GT')
+        seq[d2:d2+2] = list('GT')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        p_start, p_stop, p_dss = 0.9, 0.9, 0.6
+        _set_event(probs, s, P.START, 3, p_start)
+        _set_event(probs, d1, P.DSS, 2, p_dss)
+        _set_event(probs, d2, P.DSS, 2, p_dss)
+        _set_event(probs, t, P.STOP, 3, p_stop)
+
+        ps = PredictedSequence(21, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res_h = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=16, scoring='hazard')
+        self.assertEqual(len(res_h.global_topk), 1)
+        cand = res_h.global_topk[0]
+        # choose the single-exon candidate (no dss taken)
+        self.assertEqual(cand.events['dss'], [])
+        # Compute boundary directly from candidate events to match decoder
+        expected_boundary = 0.0
+        for pos in cand.events['start']:
+            expected_boundary += _event_logp(probs, pos, P.START)
+        for pos in cand.events['dss']:
+            expected_boundary += _event_logp(probs, pos, P.DSS)
+        for pos in cand.events['ass']:
+            expected_boundary += _event_logp(probs, pos, P.ASS)
+        for pos in cand.events['stop']:
+            expected_boundary += _event_logp(probs, pos, P.STOP)
+        # hazard penalties for skipping each DSS event: log(1 - prod(span probs))
+        p1 = float(np.prod(probs[d1:d1+2, int(P.DSS)]))
+        p2 = float(np.prod(probs[d2:d2+2, int(P.DSS)]))
+        pen = math.log(max(1e-12, 1.0 - p1)) + math.log(max(1e-12, 1.0 - p2))
+        expected_total = expected_boundary + pen
+        self.assertAlmostEqual(cand.boundary_logp, expected_boundary, places=6)
+        self.assertAlmostEqual(cand.total, expected_total, places=6)
+
+    def test_hazard_no_penalty_for_dss_in_intron_math(self):
+        # Path: START -> DSS -> INTRON (has extra DSS, which should NOT penalize) -> ASS -> STOP
+        # Expect: hazard == boundary (no penalties from DSS while in INTRON)
+        L = 60
+        seq = list('A' * L)
+        s = 3
+        d = 12
+        d_intr = 16  # DSS inside intron
+        a = 22
+        t = 40
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d:d+2] = list('GT')
+        seq[d_intr:d_intr+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        p_start, p_dss, p_ass, p_stop = 0.92, 0.88, 0.91, 0.87
+        _set_event(probs, s, P.START, 3, p_start)
+        _set_event(probs, d, P.DSS, 2, p_dss)
+        _set_event(probs, d_intr, P.DSS, 2, p_dss)
+        _set_event(probs, a, P.ASS, 2, p_ass)
+        _set_event(probs, t, P.STOP, 3, p_stop)
+
+        ps = PredictedSequence(22, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res_h = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=16, scoring='hazard')
+        self.assertGreaterEqual(len(res_h.global_topk), 1)
+        # pick the split candidate (one dss and one ass recorded)
+        cand = next(c for c in res_h.global_topk if len(c.events['dss']) == 1 and len(c.events['ass']) == 1)
+        expected_boundary = 0.0
+        for pos in cand.events['start']:
+            expected_boundary += _event_logp(probs, pos, P.START)
+        for pos in cand.events['dss']:
+            expected_boundary += _event_logp(probs, pos, P.DSS)
+        for pos in cand.events['ass']:
+            expected_boundary += _event_logp(probs, pos, P.ASS)
+        for pos in cand.events['stop']:
+            expected_boundary += _event_logp(probs, pos, P.STOP)
+        # No DSS-skip penalties should be applied during INTRON
+        self.assertAlmostEqual(cand.boundary_logp, expected_boundary, places=6)
+        self.assertAlmostEqual(cand.total, expected_boundary, places=6)
 
     def test_codon_usage_scoring(self):
         # Build a small codon model that favors AAA heavily
