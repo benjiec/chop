@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 
-from gene_decoder.types import PredictedSequence
+from gene_decoder import PredictedSequence
 from gene_decoder.decoder import decode_sequence
 from gene_decoder.codon_usage import CodonUsageModel, build_codon_usage_from_cds
 from utils.constants import GenePredictionClass as P

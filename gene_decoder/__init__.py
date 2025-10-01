@@ -1,17 +1,44 @@
 """Gene decoder package for decoding gene structures from per-base class probabilities.
 
-Modules:
-- types: Data transfer objects used by decoder CLI and exporter
-- decoder: Phase-aware k-best decoder enforcing gene structure constraints
-- codon_usage: Utilities to build and score codon usage models
-- decode: CLI entry point to run the decoder
-- build_codon_usage: CLI to compute codon usage JSON from training data
+Public API:
+- PredictedSequence, CandidateGene, DecodedResult (DTOs)
+- decoder, codon_usage modules
 """
 
+from dataclasses import dataclass
+from typing import List, Tuple, Union, Dict, Optional
+import numpy as np
+
+
+@dataclass
+class PredictedSequence:
+    sequence_index: Union[int, str]
+    sequence: str
+    probabilities: np.ndarray
+    class_order: List[str]
+
+
+@dataclass
+class CandidateGene:
+    exons: List[Tuple[int, int]]
+    events: Dict[str, List[int]]
+    boundary_logp: float
+    codon_logp: Optional[float]
+    total: float
+
+
+@dataclass
+class DecodedResult:
+    sequence_index: Union[int, str]
+    per_start: Dict[int, List[CandidateGene]]
+    global_topk: List[CandidateGene]
+
+
 __all__ = [
-    "types",
+    "PredictedSequence",
+    "CandidateGene",
+    "DecodedResult",
     "decoder",
     "codon_usage",
 ]
-
 

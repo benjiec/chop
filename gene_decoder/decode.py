@@ -5,7 +5,7 @@ import json
 import pickle
 from pathlib import Path
 from typing import List
-from gene_decoder.types import PredictedSequence, DecodedResult, CandidateGene
+from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
 from gene_decoder.decoder import decode_sequence
 from gene_decoder.codon_usage import CodonUsageModel
 from utils.constants import GenePredictionClass as P

@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
 from utils.metrics import compute_brier_scores
-from gene_decoder.types import PredictedSequence
+from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits
 from utils.windowing import window_weights

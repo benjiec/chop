@@ -12,3 +12,5 @@ PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCF_002042975.1_round0
 scripts/predict-layout GCF_002042975.1 1000 gene_predictor/gene_predictor_run_20250929_071216 model_epoch=04_val_loss=0.078.ckpt
 
 PYTHONPATH=. python gene_predictor/window_validation.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv --run-dir gene_predictor/gene_predictor_run_20250930_071840 --model-path model_epoch=06_val_f1=0.427.ckpt --num-windows 2000 --window-stride 330
+
+PYTHONPATH=. python gene_decoder/build_codon_usage.py --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv --output data/GCF_002042975.1.codon_usage.json

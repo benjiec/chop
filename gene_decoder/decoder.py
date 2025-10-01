@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple, Optional
 import numpy as np
 import math
 from utils.constants import GenePredictionClass as P, ConventionalStopCodons, ConventionalDonorDinucleotides, ConventionalAcceptorDinucleotides
-from gene_decoder.types import PredictedSequence, CandidateGene, DecodedResult
+from gene_decoder import PredictedSequence, CandidateGene, DecodedResult
 
 
 def _log(x: float) -> float:
