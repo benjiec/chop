@@ -3,6 +3,7 @@
 import argparse
 import json
 import pickle
+import numpy as np
 from pathlib import Path
 from typing import List
 from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
@@ -44,6 +45,7 @@ def main():
     p.add_argument('--beam-size', type=int, default=16)
     p.add_argument('--max-introns', type=int, default=None)
     p.add_argument('--no-overlap', action='store_true')
+    p.add_argument('--scoring', type=str, default='boundary', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
     p.add_argument('--codon-usage-json', default=None)
     p.add_argument('--lambda', dest='lambda_', type=float, default=0.0)
     p.add_argument('--output-json', required=True)
@@ -53,6 +55,8 @@ def main():
 
     with open(args.input_pkl, 'rb') as f:
         items: List[PredictedSequence] = pickle.load(f)
+    print("there are", len(items), "sequences")
+    items = items[:1]
 
     codon_model = None
     if args.codon_usage_json:
@@ -61,6 +65,7 @@ def main():
     decoded: List[DecodedResult] = []
     ps_map = {ps.sequence_index: ps for ps in items}
     for ps in items:
+        print("decoding",ps.sequence_index)
         res = decode_sequence(
             ps,
             k_per_start=args.topk_per_start,
@@ -68,6 +73,7 @@ def main():
             beam_size=args.beam_size,
             max_introns=args.max_introns,
             allow_overlap=not args.no_overlap,
+            scoring=str(args.scoring),
         )
 
         # Rerank with codon usage if requested
@@ -125,14 +131,12 @@ def main():
     with open(args.output_tsv, 'w') as f:
         f.write('\t'.join(header) + '\n')
         for dr in decoded:
-            # Build per-start ranking maps (1-based)
+            # Build per-start ranking maps (1-based) directly from this result
             per_start_rank: dict = {}
-            for s, cands in decoded[[d.sequence_index for d in decoded].index(dr)].per_start.items():
+            for s, cands in dr.per_start.items():
                 # Determine sort key depending on reranking
                 sorted_cands = sorted(cands, key=lambda c: (c.total if c.codon_logp is not None else c.boundary_logp), reverse=True)
-                rank_map = {}
-                for idx, c in enumerate(sorted_cands, start=1):
-                    rank_map[id(c)] = idx
+                rank_map = {id(c): idx for idx, c in enumerate(sorted_cands, start=1)}
                 per_start_rank[s] = rank_map
 
             # Global ranking k
