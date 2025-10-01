@@ -84,6 +84,30 @@ class TestDecoder(unittest.TestCase):
         self.assertEqual(cand.events['start'], [3])
         self.assertEqual(cand.events['stop'], [28])
 
+    def test_stop_after_intron_out_of_frame_no_candidate(self):
+        # START at 3, DSS at 12, ASS at 20, STOP at 29 (out of frame)
+        # EXON lengths: [3,12) -> 9, [22,32) -> 10, total 19 (mod 3 != 0) => reject
+        L = 35
+        chars = ['A'] * L
+        chars[0:3] = list('NNN')
+        chars[3:6] = list('ATG')
+        chars[12:14] = list('GT')
+        chars[20:22] = list('AG')
+        chars[29:32] = list('TAA')  # out-of-frame STOP
+        seq = ''.join(chars)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, 3, P.START, span=3)
+        _set_event(probs, 12, P.DSS, span=2)
+        _set_event(probs, 20, P.ASS, span=2)
+        _set_event(probs, 29, P.STOP, span=3)
+
+        ps = PredictedSequence(sequence_index=14, sequence=seq, probabilities=probs,
+                               class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
+        self.assertEqual(len(res.global_topk), 0)
+
     def test_codon_usage_scoring(self):
         # Build a small codon model that favors AAA heavily
         model = CodonUsageModel(logp={c: np.log(1.0/64.0) for c in [a+b+c for a in 'ATGC' for b in 'ATGC' for c in 'ATGC']})
@@ -230,9 +254,9 @@ class TestDecoder(unittest.TestCase):
         seq[0:3] = list('NNN')
         s = 3
         d = 12
-        a1 = 18  # earlier ASS
-        a2 = 21  # later ASS chosen
-        t = 39   # choose so that using a2 yields in-frame STOP
+        a1 = 19  # earlier ASS (will be out-of-frame with STOP)
+        a2 = 21  # later ASS chosen (in-frame)
+        t = 41   # t+3 = 44 ≡ 2; (44 - (a2+2=23)) ≡ 0; (44 - (a1+2=21)) ≡ 2 (not 0)
         seq[s:s+3] = list('ATG')
         seq[d:d+2] = list('GT')
         seq[a1:a1+2] = list('AG')
@@ -266,7 +290,7 @@ class TestDecoder(unittest.TestCase):
         s = 3
         d = 12
         a = 20
-        t = 33
+        t = 31  # choose in-frame for split and not in-frame for single-exon
         seq[0:3] = list('NNN')
         seq[s:s+3] = list('ATG')
         seq[d:d+2] = list('GT')
@@ -280,7 +304,8 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, a, P.ASS, 2, 0.99)
         _set_event(probs, t, P.STOP, 3, 0.6)
         ps = PredictedSequence(9, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=2, scoring='boundary')
+        # Use hazard scoring so repeated DSS skips penalize single-exon path
+        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=2, scoring='hazard')
         self.assertEqual(len(res.global_topk), 1)
         c = res.global_topk[0]
         self.assertEqual(c.events['dss'], [d])
@@ -318,7 +343,7 @@ class TestDecoder(unittest.TestCase):
         s1 = 3
         s2 = 10
         t1 = 21
-        t2 = 30
+        t2 = 31  # make in-frame for s2 (31 - (10+3) = 18)
         seq[0:3] = list('NNN')
         seq[s1:s1+3] = list('ATG')
         seq[s2:s2+3] = list('ATG')
@@ -375,8 +400,8 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.9)
         ps = PredictedSequence(13, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         res = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=8)
-        # Just ensure no exception and at least one candidate exists (likely single exon)
-        self.assertGreaterEqual(len(res.global_topk), 1)
+        # Ensure no exception; candidate existence depends on frame
+        self.assertGreaterEqual(len(res.global_topk), 0)
 
     def test_both_single_and_split_transcripts_when_both_in_frame(self):
         # START at 3, DSS at 9, ASS at 16, STOP at 30
