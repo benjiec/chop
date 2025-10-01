@@ -1,4 +1,5 @@
 from typing import List, Dict, Tuple, Optional
+from dataclasses import dataclass
 import numpy as np
 import math
 from utils.constants import GenePredictionClass as P, ConventionalStopCodons, ConventionalDonorDinucleotides, ConventionalAcceptorDinucleotides
@@ -98,29 +99,53 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
     start_lp = _event_logp(probs, start_pos, P.START)
 
-    # Beam item: (pos, state, phase, boundary_lp, total_lp, exons, events_map, intron_count, exon_start)
+    @dataclass
+    class Beam:
+        pos: int
+        state: int
+        phase: int
+        boundary_lp: float
+        total_lp: float
+        exons: List[Tuple[int, int]]
+        events: Dict[str, List[int]]
+        intron_count: int
+        exon_start: int
+
+        def score(self, mode: str) -> float:
+            return self.total_lp if mode == 'hazard' else self.boundary_lp
+
     EXON, INTRON = 0, 1
-    beams: List[Tuple[int, int, int, float, float, List[Tuple[int, int]], Dict[str, List[int]], int, int]] = []
-    beams.append((start_pos + 3, EXON, 0, start_lp, start_lp, [], {"start": [start_pos], "stop": [], "dss": [], "ass": []}, 0, start_pos))
+    beams: List[Beam] = []
+    beams.append(Beam(
+        pos=start_pos + 3,
+        state=EXON,
+        phase=0,
+        boundary_lp=start_lp,
+        total_lp=start_lp,
+        exons=[],
+        events={"start": [start_pos], "stop": [], "dss": [], "ass": []},
+        intron_count=0,
+        exon_start=start_pos,
+    ))
 
     completed: List[CandidateGene] = []
 
     for i in range(start_pos + 3, L):
         if not beams:
             break
-        next_beam: List[Tuple[int, int, int, float, float, List[Tuple[int, int]], Dict[str, List[int]], int, int]] = []
-        for (pos, state, phase, b_lp, t_lp, exons, ev, n_introns, exon_start) in beams:
-            if pos > i:
+        next_beam: List[Beam] = []
+        for b in beams:
+            if b.pos > i:
                 # carry forward untouched
-                next_beam.append((pos, state, phase, b_lp, t_lp, exons, ev, n_introns, exon_start))
+                next_beam.append(b)
                 continue
-            if state == EXON:
+            if b.state == EXON:
                 # STOP (only if in-frame)
-                if has_stop[i] and phase == 0:
+                if has_stop[i] and b.phase == 0:
                     # Recompute boundary strictly from taken events to avoid drift
-                    exons_fin = list(exons)
-                    exons_fin.append((exon_start, i + 3))
-                    ev_fin = {k: list(v) for k, v in ev.items()}
+                    exons_fin = list(b.exons)
+                    exons_fin.append((b.exon_start, i + 3))
+                    ev_fin = {k: list(v) for k, v in b.events.items()}
                     ev_fin["stop"].append(i)
                     # Sum boundary over events
                     boundary_stop = 0.0
@@ -133,52 +158,49 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     for pos in ev_fin.get("stop", []):
                         boundary_stop += _event_logp(probs, pos, P.STOP)
                     # Total = boundary + accumulated hazard penalties (difference between total and boundary trackers)
-                    hazard_delta = t_lp - b_lp
+                    hazard_delta = b.total_lp - b.boundary_lp
                     total_stop = boundary_stop + hazard_delta
                     completed.append(CandidateGene(exons=exons_fin, events=ev_fin, boundary_logp=boundary_stop, codon_logp=None, total=total_stop))
                     # Do not allow staying or splicing past an in-frame STOP at the same position
                     continue
                 else:
                     # DSS -> INTRON
-                    if (max_introns is None or n_introns < max_introns) and has_dss[i]:
-                        new_b_lp = b_lp + lp_dss[i]
-                        new_t_lp = t_lp + lp_dss[i]
-                        new_exons = list(exons)
-                        new_exons.append((exon_start, i))
-                        new_ev = {k: list(v) for k, v in ev.items()}
+                    if (max_introns is None or b.intron_count < max_introns) and has_dss[i]:
+                        new_b_lp = b.boundary_lp + lp_dss[i]
+                        new_t_lp = b.total_lp + lp_dss[i]
+                        new_exons = list(b.exons)
+                        new_exons.append((b.exon_start, i))
+                        new_ev = {k: list(v) for k, v in b.events.items()}
                         new_ev["dss"].append(i)
-                        next_beam.append((i + 2, INTRON, phase, new_b_lp, new_t_lp, new_exons, new_ev, n_introns + 1, -1))
+                        next_beam.append(Beam(i + 2, INTRON, b.phase, new_b_lp, new_t_lp, new_exons, new_ev, b.intron_count + 1, -1))
                     # stay in EXON
                     if i + 1 < L:
-                        stay_b_lp = b_lp
-                        stay_t_lp = t_lp
+                        stay_b_lp = b.boundary_lp
+                        stay_t_lp = b.total_lp
                         if scoring == 'hazard':
                             if has_dss[i]:
                                 stay_t_lp += _log(max(1e-12, 1.0 - p_dss[i]))
-                        next_beam.append((i + 1, EXON, (phase + 1) % 3, stay_b_lp, stay_t_lp, exons, ev, n_introns, exon_start))
+                        next_beam.append(Beam(i + 1, EXON, (b.phase + 1) % 3, stay_b_lp, stay_t_lp, b.exons, b.events, b.intron_count, b.exon_start))
             else:  # INTRON
                 # ASS -> EXON
                 if has_ass[i]:
-                    new_b_lp = b_lp + lp_ass[i]
-                    new_t_lp = t_lp + lp_ass[i]
-                    new_ev = {k: list(v) for k, v in ev.items()}
+                    new_b_lp = b.boundary_lp + lp_ass[i]
+                    new_t_lp = b.total_lp + lp_ass[i]
+                    new_ev = {k: list(v) for k, v in b.events.items()}
                     new_ev["ass"].append(i)
-                    next_beam.append((i + 2, EXON, phase, new_b_lp, new_t_lp, exons, new_ev, n_introns, i + 2))
+                    next_beam.append(Beam(i + 2, EXON, b.phase, new_b_lp, new_t_lp, b.exons, new_ev, b.intron_count, i + 2))
                 # stay in INTRON
                 if i + 1 < L:
-                    stay_b_lp = b_lp
-                    stay_t_lp = t_lp
+                    stay_b_lp = b.boundary_lp
+                    stay_t_lp = b.total_lp
                     if scoring == 'hazard' and has_ass[i]:
                         stay_t_lp += _log(max(1e-12, 1.0 - p_ass[i]))
-                    next_beam.append((i + 1, INTRON, phase, stay_b_lp, stay_t_lp, exons, ev, n_introns, exon_start))
+                    next_beam.append(Beam(i + 1, INTRON, b.phase, stay_b_lp, stay_t_lp, b.exons, b.events, b.intron_count, b.exon_start))
 
         if not next_beam:
             break
         # Sort by mode-appropriate score
-        if scoring == 'hazard':
-            next_beam.sort(key=lambda t: t[4], reverse=True)  # total_lp
-        else:
-            next_beam.sort(key=lambda t: t[3], reverse=True)  # boundary_lp
+        next_beam.sort(key=lambda bb: bb.score(scoring), reverse=True)
         beams = next_beam[:beam_size]
         if len(completed) >= k:
             break
