@@ -66,7 +66,8 @@ class TestWindowedRunPredictions(unittest.TestCase):
         self.assertEqual(r['predictions'].shape[0], seq_len)
 
         # Verify windowing actually occurred: multiple forwards with lengths <= max_len
-        expected_slices = compute_window_slices(seq_len, window=model_max, stride=model_max // 2)
+        # Default stride is one-third overlap windows
+        expected_slices = compute_window_slices(seq_len, window=model_max, stride=model_max // 3)
         self.assertEqual(model.calls, len(expected_slices))
         self.assertTrue(all(l <= model_max for l in model.call_lengths))
         if seq_len > model_max:

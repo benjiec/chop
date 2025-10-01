@@ -49,6 +49,7 @@ def run_test(dataset, model):
     print(f"validation samples: {len(val_dataset)}")
     
     device = "cpu"
+    losses = []
     with torch.no_grad():
         results_data = []
         for sequences, targets in val_loader:
@@ -57,6 +58,8 @@ def run_test(dataset, model):
             logits = model.model(sequences)
             predictions = logits.argmax(dim=-1)
             probabilities = torch.softmax(logits, dim=-1)
+            loss = model._compute_adjusted_loss(logits, targets)
+            losses.append(loss)
 
             batch_size = sequences.size(0)
             for b in range(batch_size):
@@ -90,6 +93,7 @@ def run_test(dataset, model):
 
         class_weights = model.config.get('loss', {}).get('class_weights')
         metrics_by_class = calculate_generic_metrics(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
+        print("avg loss", sum(losses)/len(losses))
 
         # Compute macro-average F1 across all classes returned
         f1_values = []

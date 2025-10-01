@@ -78,7 +78,8 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
     else:
         # Windowed inference and blending
         if stride is None:
-            stride = max_seq_len // 2 if max_seq_len > 1 else 1
+            # Default stride: one-third overlap windows
+            stride = max(max_seq_len // 3, 1)
         slices = compute_window_slices(L, window=max_seq_len, stride=stride)
         window_logits_np = []
         for (s, e) in slices:
@@ -184,7 +185,6 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                 # Run per-sequence prediction via helper
                 preds_b, probs_b, logits_raw_np, layer_attn_b = predict_sequence_outputs(
                     model, max_len, seq_tokens_b,
-                    stride=max_len // 3,
                     device=device,
                     return_attention=False,
                     temperature=temperature,

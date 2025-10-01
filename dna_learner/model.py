@@ -478,53 +478,44 @@ class GenePredictorModule(pl.LightningModule):
             center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
             center[:margin] = 0.0
             center[-margin:] = 0.0
-            edge_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
+            include_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
         else:
-            edge_mask = torch.ones_like(targets_flat, dtype=torch.bool)
+            include_mask = torch.ones_like(targets_flat, dtype=torch.bool)
 
-        include_mask = edge_mask  # include all center tokens, no class filtering
         if not include_mask.any():
             # Return a zero loss connected to the graph to allow backward()
             return logits_flat.sum() * 0.0
 
-        # Per-token CE (unweighted), then apply class weights if any
-        ce_vec = torch.nn.functional.cross_entropy(
-            logits_flat, targets_flat,
-            weight=None,
-            reduction='none'
-        )
+        # Shared primitives (compute once)
+        log_probs = F.log_softmax(logits_flat, dim=-1)
+        probs = torch.exp(log_probs)
+
+        # Per-token CE (unreduced) via negative log-likelihood of true class
+        idx = torch.arange(logits_flat.size(0), device=logits.device)
+        ce_vec = -log_probs[idx, targets_flat]
 
         # Entropy per-token
-        probs = torch.softmax(logits_flat, dim=-1)
         ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
 
-        # Per-token combined loss
-        lambda_h = float(getattr(self, 'entropy_lambda', 0.0))
-        per_token_loss = ce_vec - lambda_h * ent_vec
-
-        # Class weights per token
+        # Build unified per-token weights (mask × class weights if provided)
         if self._class_weights_tensor is not None:
-            cw = self._class_weights_tensor.to(device=logits.device, dtype=per_token_loss.dtype)
-            token_weights = cw[targets_flat]
+            cw = self._class_weights_tensor.to(device=logits.device, dtype=logits_flat.dtype)
+            token_weights_full = cw[targets_flat]
         else:
-            token_weights = torch.ones_like(per_token_loss)
+            token_weights_full = torch.ones_like(ce_vec)
 
-        # Apply mask and compute weighted means
-        ce_masked = ce_vec[include_mask]
-        ent_masked = ent_vec[include_mask]
-        tw_masked = token_weights[include_mask]
-        denom = torch.clamp(tw_masked.sum(), min=1e-12)
-        # Base CE and entropy means (for reporting/components)
-        ce_mean = (ce_masked * tw_masked).sum() / denom
-        ent_mean = (ent_masked * tw_masked).sum() / denom
-        # Combined training objective mean
-        per_token_loss = (ce_masked - lambda_h * ent_masked)
-        ce_entropy_loss = (per_token_loss * tw_masked).sum() / denom
+        w = include_mask.to(token_weights_full.dtype) * token_weights_full
+        denom = torch.clamp(w.sum(), min=1e-12)
+
+        # Weighted means for CE, entropy, and combined objective
+        ce_mean = (ce_vec * w).sum() / denom
+        ent_mean = (ent_vec * w).sum() / denom
+        lambda_h = float(getattr(self, 'entropy_lambda', 0.0))
+        ce_entropy_loss = ((ce_vec - lambda_h * ent_vec) * w).sum() / denom
 
         # Optional FP penalty (one-vs-rest BCE over weighted classes) on included tokens
         beta = float(self.fp_beta)
         fp_penalty = 0
-
         if beta > 0.0 and self._class_weights_tensor is not None:
             cw_full = self._class_weights_tensor.to(device=logits.device)
             weighted_classes_mask = cw_full > 1.0
@@ -539,6 +530,7 @@ class GenePredictorModule(pl.LightningModule):
                 # Build y for selected classes
                 y_sel = (targets_incl.view(-1, 1) == class_indices.view(1, -1)).to(p_sel.dtype)
                 bce = -(y_sel * torch.log(p_sel) + (1.0 - y_sel) * torch.log(1.0 - p_sel))
+                # Keep FP penalty unweighted: mean over tokens and selected classes
                 fp_penalty = bce.mean()
         else:
             beta = 0
@@ -546,19 +538,18 @@ class GenePredictorModule(pl.LightningModule):
 
         total_loss = ce_entropy_loss + beta * fp_penalty
 
-        # Optionally emit loss components (overall and per-class CE aggregates) without recomputation
+        # Optionally emit loss components (overall and per-class CE aggregates)
         if components_out is not None:
-            # Per-class CE weighted sums and denominators
+            # Per-class CE weighted sums and denominators (included tokens only)
             ce_weighted_sum_by_class: Dict[int, float] = {}
             weight_sum_by_class: Dict[int, float] = {}
-            # Total weighted CE sum across included tokens (for share)
-            total_weighted_ce_sum = float((ce_masked * tw_masked).sum().detach().cpu().item())
+            total_weighted_ce_sum = float(((ce_vec * w).sum()).detach().cpu().item())
             C = int(logits.shape[-1])
             for k in range(C):
                 cls_mask = include_mask & (targets_flat == k)
                 if cls_mask.any():
-                    num_k = float((ce_vec[cls_mask] * token_weights[cls_mask]).sum().detach().cpu().item())
-                    den_k = float(token_weights[cls_mask].sum().detach().cpu().item())
+                    num_k = float(((ce_vec[cls_mask] * token_weights_full[cls_mask]).sum()).detach().cpu().item())
+                    den_k = float((token_weights_full[cls_mask].sum()).detach().cpu().item())
                     ce_weighted_sum_by_class[int(k)] = num_k
                     weight_sum_by_class[int(k)] = den_k
 
