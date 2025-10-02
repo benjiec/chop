@@ -17,7 +17,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 EVENT_CLASSES: List[int] = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
 
 
-def batch_global_logit_standardize(batch_probs: List[np.ndarray], beta: float = 1.0) -> List[np.ndarray]:
+def global_z_normalize_prob(batch_probs: List[np.ndarray], beta: float = 1.0) -> List[np.ndarray]:
     """Apply per-class global logit standardization across a batch of sequences.
 
     For each event class c, gather logits over the batch, compute mean/std, then
