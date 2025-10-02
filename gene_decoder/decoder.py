@@ -278,14 +278,12 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
         if not next_beam:
             break
-        # Sort by mode-appropriate score (compute on the fly)
+        # Sort by mode-appropriate score (compute on the fly) and cap to beam_size
         if scoring == 'hazard':
             next_beam.sort(key=lambda bb: bb.compute_scores(probs)[1], reverse=True)
         else:
             next_beam.sort(key=lambda bb: bb.compute_scores(probs)[0], reverse=True)
         beams = next_beam[:beam_size]
-        if len(completed) >= k:
-            break
 
     # Sort completed candidates by appropriate score
     if scoring == 'hazard':
@@ -308,7 +306,8 @@ def decode_sequence(ps: PredictedSequence, k_per_start: int = 3, k_global: int =
         all_candidates.extend(cands)
 
     # Global top-k with optional non-overlap policy (simple score sort; no packing)
-    all_candidates.sort(key=lambda c: c.total, reverse=True)
+    key_fn = (lambda c: c.total) if scoring == 'hazard' else (lambda c: c.boundary_logp)
+    all_candidates.sort(key=key_fn, reverse=True)
     global_top = []
     if allow_overlap:
         global_top = all_candidates[:k_global]

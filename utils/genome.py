@@ -360,8 +360,6 @@ class AnnotatedGenomeDataset:
 
     def _build(self, num_contigs: Optional[int] = 0):
 
-        print(len(self.annotations),"sequences parsed")
-
         for ann in self.annotations:
             if ann.sequence_id not in self.fasta_records:
                 continue
@@ -391,14 +389,12 @@ class AnnotatedGenomeDataset:
             self.targets.append(tgt)
             self.contig_ids.append(ann.sequence_id)
 
-        print(len(self.sequences),"sequences accepted")
-
         if num_contigs and num_contigs > 0:
             self.sequences = self.sequences[0:num_contigs]
             self.targets = self.targets[0:num_contigs]
             self.contig_ids = self.contig_ids[0:num_contigs]
-            print(len(self.sequences),"sequences after limit by",num_contigs,"contigs")
 
+        print(len(self.sequences), "sequences")
         # If windowing is enabled, precompute windows over each contig
         if self.window:
             win = int(self.window)
@@ -408,7 +404,7 @@ class AnnotatedGenomeDataset:
                 slices = compute_window_slices(L, window=win, stride=st)
                 for s, e in slices:
                     self.windows.append((contig_idx, s, e))
-            print(len(self.windows),"windows")
+            print(len(self.windows), "windows")
 
             # Build accounting for classes per window and classset->contigs map, then sample
             self._sample_windows()
