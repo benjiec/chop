@@ -19,15 +19,20 @@ def _event_span_len(cls_idx: int) -> int:
     return 1
 
 
-def _event_logp(probs: np.ndarray, pos: int, cls_idx: int) -> float:
+def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bool] = False) -> float:
     L = probs.shape[0]
     span = _event_span_len(cls_idx)
     s = pos
     e = min(L, pos + span)
     v = 0.0
+    total_p = 1
     for i in range(s, e):
-        v += _log(float(probs[i, cls_idx]))
-    return v
+        p = float(probs[i, cls_idx])
+        total_p *= p
+        print("  @", i, "cls", cls_idx, "p=", p)
+    if negative:
+        total_p = 1 - total_p
+    return _log(total_p)
 
 
 def _scan_events(seq: str) -> Dict[str, List[int]]:
@@ -162,40 +167,32 @@ class Beam:
         # boundary = sum of taken events
         boundary = 0.0
         for pos in self.events.get("start", []):
-            event_score = _event_logp(probs, pos, P.START)
+            event_score = _event_logp(probs, pos, P.START, False)
             boundary += event_score
             ordered_log.append((pos, "start", event_score))
         for pos in self.events.get("dss", []):
-            event_score = _event_logp(probs, pos, P.DSS)
+            event_score = _event_logp(probs, pos, P.DSS, False)
             boundary += event_score
-            ordered_log.append((pos, "dss", event_score))
+            ordered_log.append((pos, "dss+", event_score))
         for pos in self.events.get("ass", []):
-            event_score = _event_logp(probs, pos, P.ASS)
+            event_score = _event_logp(probs, pos, P.ASS, False)
             boundary += event_score
-            ordered_log.append((pos, "ass", event_score))
+            ordered_log.append((pos, "ass+", event_score))
         for pos in self.events.get("stop", []):
-            event_score = _event_logp(probs, pos, P.STOP)
+            event_score = _event_logp(probs, pos, P.STOP, False)
             boundary += event_score
             ordered_log.append((pos, "stop", event_score))
 
         # hazard penalties from skipped eligible transitions recorded during forward moves
         hazard = 0.0
         for idx in self.skips.get("dss", []):
-            span = _event_span_len(P.DSS)
-            p = 1.0
-            for i in range(idx, min(probs.shape[0], idx + span)):
-                p *= max(1e-12, float(probs[i, P.DSS]))
-            event_score = math.log(max(1e-12, 1.0 - p))
+            event_score = _event_logp(probs, idx, P.DSS, True)
             hazard += event_score
-            ordered_log.append((idx, "dss*", event_score))
+            ordered_log.append((idx, "dss-", event_score))
         for idx in self.skips.get("ass", []):
-            span = _event_span_len(P.ASS)
-            p = 1.0
-            for i in range(idx, min(probs.shape[0], idx + span)):
-                p *= max(1e-12, float(probs[i, P.ASS]))
-            event_score = math.log(max(1e-12, 1.0 - p))
+            event_score = _event_logp(probs, idx, P.ASS, True)
             hazard += event_score
-            ordered_log.append((idx, "ass*", event_score))
+            ordered_log.append((idx, "ass-", event_score))
 
         total = boundary + hazard
 
