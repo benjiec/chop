@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from gene_decoder import PredictedSequence
-from gene_decoder.decoder import decode_sequence, _event_logp
+from gene_decoder.decoder import decode_sequence, _event_logp, Beam
 from gene_decoder.codon_usage import CodonUsageModel, build_codon_usage_from_cds
 from utils.constants import GenePredictionClass as P
 
@@ -21,6 +21,58 @@ def _set_event(probs: np.ndarray, pos: int, cls_idx: int, span: int, p: float = 
 
 
 class TestDecoder(unittest.TestCase):
+    def test_beam_forward_and_branch_and_score(self):
+        # Minimal sequence and probs to exercise Beam methods
+        L = 40
+        seq = list('A' * L)
+        s = 3
+        d = 12
+        a = 20
+        t = 30
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d:d+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, s, P.START, 3, 0.9)
+        _set_event(probs, d, P.DSS, 2, 0.8)
+        _set_event(probs, a, P.ASS, 2, 0.85)
+        _set_event(probs, t, P.STOP, 3, 0.9)
+
+        # Start in EXON after START
+        b = Beam.start(s)
+        # Move forward over a few bases without events
+        b.forward(None, s+3)
+        self.assertEqual(b.pos, s+4)
+        self.assertEqual(b.phase, 1)
+        # At DSS: branch to INTRON and ensure new id and exon closed
+        child = b.branch_to_new_state('dss', d)
+        self.assertEqual(child.state, Beam.INTRON)
+        self.assertNotEqual(child.id, b.id)
+        self.assertIn((s, d), child.exons)
+        self.assertIn(d, child.events['dss'])
+        # Advance parent with skip recorded (hazard)
+        b.forward('dss', d)
+        self.assertIn(d, b.skips['dss'])
+        # For child in INTRON: branch via ASS back to EXON
+        child2 = child.branch_to_new_state('ass', a)
+        self.assertEqual(child2.state, Beam.EXON)
+        self.assertEqual(child2.exon_start, a+2)
+        self.assertIn(a, child2.events['ass'])
+        # Add STOP to child2 and score
+        child2.events['stop'].append(t)
+        boundary, total = child2.compute_scores(probs)
+        # Boundary must include all taken events
+        expected_boundary = (
+            _event_logp(probs, s, P.START) + _event_logp(probs, d, P.DSS) + _event_logp(probs, a, P.ASS) + _event_logp(probs, t, P.STOP)
+        )
+        self.assertAlmostEqual(boundary, expected_boundary, places=6)
+        # Total should be boundary here (no skips recorded on child2)
+        self.assertAlmostEqual(total, expected_boundary, places=6)
     def test_single_exon_decode(self):
         # Sequence: NNN ATG ... TAA ...
         # start at 3, stop at 15 -> exon [3, 18)
@@ -429,8 +481,8 @@ class TestDecoder(unittest.TestCase):
         self.assertEqual(len(res_h.global_topk), 1)
         b = res_b.global_topk[0]
         h = res_h.global_topk[0]
-        # Hazard penalizes skips -> total (==boundary here) is lower
-        self.assertLess(h.total, b.total)
+        # Hazard penalizes skips -> hazard total is lower than boundary score
+        self.assertLess(h.total, b.boundary_logp)
         self.assertEqual(b.events['dss'], [])
 
     def test_hazard_intron_ass_skip_penalizes(self):
@@ -468,7 +520,8 @@ class TestDecoder(unittest.TestCase):
         self.assertIn(a2, cb.events['ass'])
         self.assertNotIn(a1, ch.events['ass'])
         self.assertIn(a2, ch.events['ass'])
-        self.assertLess(ch.total, cb.total)
+        # Hazard penalizes skipping earlier ASS -> hazard total < boundary score
+        self.assertLess(ch.total, cb.boundary_logp)
 
     def test_beam_prefers_split_when_events_strong(self):
         # Make DSS/ASS + STOP much stronger than direct STOP; even with small beam, pick split
