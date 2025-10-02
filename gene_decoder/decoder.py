@@ -156,17 +156,27 @@ class Beam:
     def compute_exons(self) -> List[Tuple[int, int]]:
         return list(self.exons)
 
-    def compute_scores(self, probs: np.ndarray) -> Tuple[float, float]:
+    def compute_scores(self, probs: np.ndarray, verbose: Optional[bool] = False) -> Tuple[float, float]:
+        ordered_log = []
+
         # boundary = sum of taken events
         boundary = 0.0
         for pos in self.events.get("start", []):
-            boundary += _event_logp(probs, pos, P.START)
+            event_score = _event_logp(probs, pos, P.START)
+            boundary += event_score
+            ordered_log.append((pos, "start", event_score))
         for pos in self.events.get("dss", []):
-            boundary += _event_logp(probs, pos, P.DSS)
+            event_score = _event_logp(probs, pos, P.DSS)
+            boundary += event_score
+            ordered_log.append((pos, "dss", event_score))
         for pos in self.events.get("ass", []):
-            boundary += _event_logp(probs, pos, P.ASS)
+            event_score = _event_logp(probs, pos, P.ASS)
+            boundary += event_score
+            ordered_log.append((pos, "ass", event_score))
         for pos in self.events.get("stop", []):
-            boundary += _event_logp(probs, pos, P.STOP)
+            event_score = _event_logp(probs, pos, P.STOP)
+            boundary += event_score
+            ordered_log.append((pos, "stop", event_score))
 
         # hazard penalties from skipped eligible transitions recorded during forward moves
         hazard = 0.0
@@ -175,19 +185,29 @@ class Beam:
             p = 1.0
             for i in range(idx, min(probs.shape[0], idx + span)):
                 p *= max(1e-12, float(probs[i, P.DSS]))
-            hazard += math.log(max(1e-12, 1.0 - p))
+            event_score = math.log(max(1e-12, 1.0 - p))
+            hazard += event_score
+            ordered_log.append((idx, "dss*", event_score))
         for idx in self.skips.get("ass", []):
             span = _event_span_len(P.ASS)
             p = 1.0
             for i in range(idx, min(probs.shape[0], idx + span)):
                 p *= max(1e-12, float(probs[i, P.ASS]))
-            hazard += math.log(max(1e-12, 1.0 - p))
+            event_score = math.log(max(1e-12, 1.0 - p))
+            hazard += event_score
+            ordered_log.append((idx, "ass*", event_score))
 
         total = boundary + hazard
+
+        if verbose:
+            for pos, event, score in sorted(ordered_log, key=lambda t: t[0]):
+                print(self.id, event, "@", pos, "+=", score)
+            print(self.id, "total", total)
+
         return boundary, total
 
     def create_candidate_gene(self, probs: np.ndarray) -> CandidateGene:
-        boundary, total = self.compute_scores(probs)
+        boundary, total = self.compute_scores(probs, verbose=True)
         return CandidateGene(
             exons=self.compute_exons(),
             events=self.events_copy(),
@@ -222,7 +242,6 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
     beams: List[Beam] = []
     beams.append(Beam.start(start_pos))
-    print("START @", start_pos)
 
     completed: List[CandidateGene] = []
 
@@ -233,7 +252,6 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
         for b in beams:
             if b.pos > i:
                 # carry forward untouched
-                print(b.id, "carry forward @", i)
                 next_beam.append(b)
                 continue
             if b.state == Beam.EXON:
@@ -244,36 +262,24 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     candidate = b_final.create_candidate_gene(probs)
                     completed.append(candidate)
                     # Do not allow staying or splicing past an in-frame STOP at the same position
-                    print(b.id, "EXON+STOP @", i, "total score", candidate.total)
                     continue
                 else:
                     # DSS -> INTRON
                     if (max_introns is None or b.intron_count < max_introns) and has_dss[i]:
                         child = b.branch_to_new_state("dss", i)
                         next_beam.append(child)
-                        print(b.id, "EXON+DSS @", i, "new INTRON beam at", i+2, "id", child.id)
                     # stay in EXON
                     if i + 1 < L:
-                        # Always record skips; choose how to use scores at ranking time
-                        if has_dss[i]:
-                            print(b.id, "EXON+DSS @", i, "skipped")
-                            b.forward("dss", i)
-                        else:
-                            b.forward(None, i)
+                        b.forward("dss" if has_dss[i] else None, i)
                         next_beam.append(b)
             else:  # INTRON
                 # ASS -> EXON
                 if has_ass[i]:
                     child = b.branch_to_new_state("ass", i)
                     next_beam.append(child)
-                    print(b.id, "INTRON+ASS @", i, "new EXON beam at", i+2, "id", child.id)
                 # stay in INTRON
                 if i + 1 < L:
-                    if has_ass[i]:
-                        print(b.id, "INTRON+ASS @", i, "skipped")
-                        b.forward("ass", i)
-                    else:
-                        b.forward(None, i)
+                    b.forward("ass" if has_ass[i] else None, i)
                     next_beam.append(b)
 
         if not next_beam:
