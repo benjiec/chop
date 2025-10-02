@@ -107,6 +107,31 @@ class TestDecoder(unittest.TestCase):
         # A non-event class remains unchanged at the same position
         non_event_cls = int(P.INTERGENIC)
         self.assertAlmostEqual(adj[5, non_event_cls], probs[5, non_event_cls])
+
+    def test__event_logp_spans_and_clamping(self):
+        # Verify span behavior: START/STOP use 3bp; DSS/ASS use 2bp and clamping avoids -inf
+        L = 20
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C, default_p=0.5)
+        # Set exact spans with known probabilities
+        s, d, a, t = 3, 8, 12, 15
+        _set_event(probs, s, P.START, 3, 0.9)
+        _set_event(probs, d, P.DSS, 2, 0.8)
+        _set_event(probs, a, P.ASS, 2, 0.7)
+        _set_event(probs, t, P.STOP, 3, 0.6)
+        # Expected using average-over-span then log
+        exp_start = math.log(0.9)
+        exp_stop = math.log(0.6)
+        exp_dss = math.log(0.8)
+        exp_ass = math.log(0.7)
+        self.assertAlmostEqual(_event_logp(probs, s, P.START), exp_start, places=6)
+        self.assertAlmostEqual(_event_logp(probs, t, P.STOP), exp_stop, places=6)
+        self.assertAlmostEqual(_event_logp(probs, d, P.DSS), exp_dss, places=6)
+        self.assertAlmostEqual(_event_logp(probs, a, P.ASS), exp_ass, places=6)
+        # Clamping: if any prob is 0, result should be finite (not -inf)
+        probs[s, int(P.START)] = 0.0
+        v = _event_logp(probs, s, P.START)
+        self.assertTrue(math.isfinite(v))
     def test_single_exon_decode(self):
         # Sequence: NNN ATG ... TAA ...
         # start at 3, stop at 15 -> exon [3, 18)
@@ -328,9 +353,9 @@ class TestDecoder(unittest.TestCase):
             expected_boundary += _event_logp(probs, pos, P.ASS)
         for pos in cand.events['stop']:
             expected_boundary += _event_logp(probs, pos, P.STOP)
-        # hazard penalties for skipping each DSS event: log(1 - prod(span probs))
-        p1 = float(np.prod(probs[d1:d1+2, int(P.DSS)]))
-        p2 = float(np.prod(probs[d2:d2+2, int(P.DSS)]))
+        # hazard penalties for skipping each DSS event: use event span probs for DSS via _event_logp
+        p1 = float(np.exp(_event_logp(probs, d1, P.DSS)))
+        p2 = float(np.exp(_event_logp(probs, d2, P.DSS)))
         pen = math.log(max(1e-12, 1.0 - p1)) + math.log(max(1e-12, 1.0 - p2))
         expected_total = expected_boundary + pen
         self.assertAlmostEqual(cand.boundary_logp, expected_boundary, places=6)

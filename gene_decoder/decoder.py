@@ -24,15 +24,13 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bo
     span = _event_span_len(cls_idx)
     s = pos
     e = min(L, pos + span)
-    v = 0.0
-    total_p = 1
-    for i in range(s, e):
-        p = float(probs[i, cls_idx])
-        total_p *= p
-        print("  @", i, "cls", cls_idx, "p=", p)
+    if e <= s:
+        return _log(1e-12)
+    vals = probs[s:e, cls_idx].astype(float)
+    mean_p = float(np.clip(np.mean(vals), 1e-12, 1.0))
     if negative:
-        total_p = 1 - total_p
-    return _log(total_p)
+        mean_p = 1.0 - mean_p
+    return _log(mean_p)
 
 
 def _scan_events(seq: str) -> Dict[str, List[int]]:
