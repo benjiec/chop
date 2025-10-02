@@ -265,14 +265,11 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     b_final = b.stop(i)
                     candidate = b_final.create_candidate_gene(probs)
                     completed.append(candidate)
+                    completed.sort(key=_cand_key, reverse=True)
                     # Maintain only top-k completed and update worst_keep threshold
-                    if len(completed) > k:
-                        completed.sort(key=_cand_key, reverse=True)
-                        del completed[k:]
                     if len(completed) >= k:
-                        # completed assumed sorted if we just trimmed; ensure sorted for threshold
-                        if not (len(completed) > 1 and _cand_key(completed[0]) >= _cand_key(completed[-1])):
-                            completed.sort(key=_cand_key, reverse=True)
+                        if len(completed) > k:
+                            del completed[k:]
                         worst_keep = _cand_key(completed[-1])
                     # Do not allow staying or splicing past an in-frame STOP at the same position
                     continue
