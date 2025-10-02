@@ -238,12 +238,22 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     beams.append(Beam.start(start_pos))
 
     completed: List[CandidateGene] = []
+    worst_keep: Optional[float] = None
+    def _cand_key(c: CandidateGene) -> float:
+        return c.total if scoring == 'hazard' else c.boundary_logp
+    score_index = 1 if scoring == 'hazard' else 0
 
     for i in range(start_pos + 3, L):
         if not beams:
             break
         next_beam: List[Beam] = []
         for b in beams:
+            # Upper-bound pruning: if current beam's score already worse than worst of kept completed, skip expanding
+            if worst_keep is not None:
+                ub_boundary, ub_total = b.compute_scores(probs)
+                ub_score = ub_total if scoring == 'hazard' else ub_boundary
+                if ub_score <= worst_keep:
+                    continue
             if b.pos > i:
                 # carry forward untouched
                 next_beam.append(b)
@@ -255,6 +265,15 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     b_final = b.stop(i)
                     candidate = b_final.create_candidate_gene(probs)
                     completed.append(candidate)
+                    # Maintain only top-k completed and update worst_keep threshold
+                    if len(completed) > k:
+                        completed.sort(key=_cand_key, reverse=True)
+                        del completed[k:]
+                    if len(completed) >= k:
+                        # completed assumed sorted if we just trimmed; ensure sorted for threshold
+                        if not (len(completed) > 1 and _cand_key(completed[0]) >= _cand_key(completed[-1])):
+                            completed.sort(key=_cand_key, reverse=True)
+                        worst_keep = _cand_key(completed[-1])
                     # Do not allow staying or splicing past an in-frame STOP at the same position
                     continue
                 else:
@@ -280,16 +299,13 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
             break
         # Sort by mode-appropriate score (compute on the fly) and cap to beam_size
         if scoring == 'hazard':
-            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[1], reverse=True)
+            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[score_index], reverse=True)
         else:
-            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[0], reverse=True)
+            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[score_index], reverse=True)
         beams = next_beam[:beam_size]
 
     # Sort completed candidates by appropriate score
-    if scoring == 'hazard':
-        completed.sort(key=lambda c: c.total, reverse=True)
-    else:
-        completed.sort(key=lambda c: c.boundary_logp, reverse=True)
+    completed.sort(key=_cand_key, reverse=True)
     return completed[:k]
 
 

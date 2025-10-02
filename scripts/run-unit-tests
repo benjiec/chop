@@ -1,1 +1,1 @@
-source chop_env/bin/activate && python -m unittest -v
+source chop_env/bin/activate && python -m unittest -v > /dev/null
