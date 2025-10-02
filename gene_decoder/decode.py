@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
 from gene_decoder.decoder import decode_sequence
+from gene_decoder.scoring import batch_global_logit_standardize
 from gene_decoder.codon_usage import CodonUsageModel
 from utils.constants import GenePredictionClass as P
 import math
@@ -61,6 +62,12 @@ def main():
     codon_model = None
     if args.codon_usage_json:
         codon_model = CodonUsageModel.from_json(args.codon_usage_json)
+
+    # Apply batch global logit standardization on event classes
+    batch = [ps.probabilities for ps in items]
+    batch_adj = batch_global_logit_standardize(batch, beta=1.0)
+    for ps, adj in zip(items, batch_adj):
+        ps.probabilities = adj
 
     decoded: List[DecodedResult] = []
     ps_map = {ps.sequence_index: ps for ps in items}

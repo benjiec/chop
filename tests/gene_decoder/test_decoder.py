@@ -4,6 +4,7 @@ import numpy as np
 
 from gene_decoder import PredictedSequence
 from gene_decoder.decoder import decode_sequence, _event_logp, Beam
+from gene_decoder.scoring import batch_global_logit_standardize
 from gene_decoder.codon_usage import CodonUsageModel, build_codon_usage_from_cds
 from utils.constants import GenePredictionClass as P
 
@@ -73,6 +74,39 @@ class TestDecoder(unittest.TestCase):
         self.assertAlmostEqual(boundary, expected_boundary, places=6)
         # Total should be boundary here (no skips recorded on child2)
         self.assertAlmostEqual(total, expected_boundary, places=6)
+
+    def test_batch_global_logit_standardize_shapes_and_monotonicity(self):
+        # Construct two sequences with different raw scales; ensure transform preserves shape and boosts rare highs
+        L = 50
+        C = len(P.idx_to_cls)
+        probs1 = _make_probs(L, C, default_p=0.9)
+        probs2 = _make_probs(L, C, default_p=0.9)
+        # Add a high START peak in seq2 only
+        s = 10
+        _set_event(probs2, s, P.START, 3, 0.99)
+        batch_adj = batch_global_logit_standardize([probs1, probs2], beta=1.0)
+        self.assertEqual(len(batch_adj), 2)
+        self.assertEqual(batch_adj[0].shape, probs1.shape)
+        self.assertEqual(batch_adj[1].shape, probs2.shape)
+        # After standardization, the START peak in seq2 should remain higher than surrounding positions
+        peak = float(batch_adj[1][s, int(P.START)])
+        flank = float(batch_adj[1][s-1, int(P.START)])
+        self.assertGreater(peak, flank)
+
+    def test_batch_global_logit_standardize_clamps_and_event_only(self):
+        L = 30
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C, default_p=0.95)
+        # Artificial values near 0 and 1 to test clamping
+        probs[5, int(P.DSS)] = 1.0
+        probs[6, int(P.ASS)] = 0.0
+        adj = batch_global_logit_standardize([probs], beta=1.0)[0]
+        # Event classes are clamped into (0,1)
+        self.assertLess(adj[5, int(P.DSS)], 1.0)
+        self.assertGreater(adj[6, int(P.ASS)], 0.0)
+        # A non-event class remains unchanged at the same position
+        non_event_cls = int(P.INTERGENIC)
+        self.assertAlmostEqual(adj[5, non_event_cls], probs[5, non_event_cls])
     def test_single_exon_decode(self):
         # Sequence: NNN ATG ... TAA ...
         # start at 3, stop at 15 -> exon [3, 18)
