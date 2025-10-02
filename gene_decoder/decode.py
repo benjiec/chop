@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
 from gene_decoder.decoder import decode_sequence
-from gene_decoder.scoring import batch_global_logit_standardize
+from gene_decoder.scoring import global_z_normalize_prob
 from gene_decoder.codon_usage import CodonUsageModel
 from utils.constants import GenePredictionClass as P
 import math
@@ -45,8 +45,9 @@ def main():
     p.add_argument('--topk-global', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
     p.add_argument('--no-overlap', action='store_true')
-    p.add_argument('--min-normalized-prob', type=float, default=0.1)
-    p.add_argument('--scoring', type=str, default='boundary', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
+    p.add_argument('--z-transform-probs', action='store_true')
+    p.add_argument('--min-prob', type=float, default=0.05)
+    p.add_argument('--scoring', type=str, default='hazard', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
     p.add_argument('--codon-usage-json', default=None)
     p.add_argument('--lambda', dest='lambda_', type=float, default=0.0)
     p.add_argument('--output-json', required=True)
@@ -64,10 +65,11 @@ def main():
         codon_model = CodonUsageModel.from_json(args.codon_usage_json)
 
     # Apply batch global logit standardization on event classes
-    batch = [ps.probabilities for ps in items]
-    batch_adj = batch_global_logit_standardize(batch, beta=1.0)
-    for ps, adj in zip(items, batch_adj):
-        ps.probabilities = adj
+    if args.z_transform_probs:
+        batch = [ps.probabilities for ps in items]
+        batch_adj = global_z_normalize_prob(batch, beta=0.5)
+        for ps, adj in zip(items, batch_adj):
+            ps.probabilities = adj
 
     decoded: List[DecodedResult] = []
     ps_map = {ps.sequence_index: ps for ps in items}
@@ -80,7 +82,7 @@ def main():
             beam_size=args.beam_size,
             allow_overlap=not args.no_overlap,
             scoring=str(args.scoring),
-            min_logp=math.log(args.min_normalized_prob)
+            min_logp=math.log(args.min_prob)
         )
 
         # Rerank with codon usage if requested

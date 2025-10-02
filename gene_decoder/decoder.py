@@ -44,12 +44,14 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
         if tri == 'ATG':
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.START) > min_logp:
+                    print("START", i, probs[i,P.START].astype(float))
                     starts.append(i)
             else:
                 starts.append(i)
         if tri in ConventionalStopCodons:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.STOP) > min_logp:
+                    print(" STOP", i, probs[i,P.STOP].astype(float))
                     stops.append(i)
             else:
                 stops.append(i)
@@ -58,12 +60,14 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
         if di in ConventionalDonorDinucleotides:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.DSS) > min_logp:
+                    print("  DSS", i, probs[i,P.DSS].astype(float))
                     dss.append(i)
             else:
                 dss.append(i)
         if di in ConventionalAcceptorDinucleotides:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.ASS) > min_logp:
+                    print("  ASS", i, probs[i,P.ASS].astype(float))
                     ass.append(i)
             else:
                 ass.append(i)
@@ -148,7 +152,7 @@ class Beam:
 
 def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, List[int]],
                       k: int = 3, beam_size: int = 16,
-                      scoring: str = 'boundary') -> List[CandidateGene]:
+                      scoring: str = 'hazard') -> List[CandidateGene]:
     seq = ps.sequence
     probs = ps.probabilities
     beam_id = uuid.uuid4().hex[:8]
@@ -335,7 +339,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
 
 def decode_sequence(ps: PredictedSequence, k_per_start: int = 3, k_global: int = 10, beam_size: int = 16,
-                    allow_overlap: bool = True, scoring: str = 'boundary', min_logp: Optional[float] = None) -> DecodedResult:
+                    allow_overlap: bool = True, scoring: str = 'hazard', min_logp: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
     if min_logp is None:
         min_logp = math.log(0.1)
