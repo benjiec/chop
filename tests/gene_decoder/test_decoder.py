@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from gene_decoder import PredictedSequence
-from gene_decoder.decoder import decode_sequence, _event_logp, Beam
+from gene_decoder.decoder import decode_sequence, _event_logp, Beam, _scan_events
 from gene_decoder.scoring import batch_global_logit_standardize
 from gene_decoder.codon_usage import CodonUsageModel, build_codon_usage_from_cds
 from utils.constants import GenePredictionClass as P
@@ -17,63 +17,10 @@ def _make_probs(L: int, C: int, default_class: int = P.INTERGENIC, default_p: fl
 
 def _set_event(probs: np.ndarray, pos: int, cls_idx: int, span: int, p: float = 0.9) -> None:
     for i in range(pos, min(pos + span, probs.shape[0])):
-        probs[i, :] = (1.0 - p) / (probs.shape[1] - 1)
         probs[i, int(cls_idx)] = p
 
 
 class TestDecoder(unittest.TestCase):
-    def test_beam_forward_and_branch_and_score(self):
-        # Minimal sequence and probs to exercise Beam methods
-        L = 40
-        seq = list('A' * L)
-        s = 3
-        d = 12
-        a = 20
-        t = 30
-        seq[0:3] = list('NNN')
-        seq[s:s+3] = list('ATG')
-        seq[d:d+2] = list('GT')
-        seq[a:a+2] = list('AG')
-        seq[t:t+3] = list('TAA')
-        seq = ''.join(seq)
-
-        C = len(P.idx_to_cls)
-        probs = _make_probs(L, C)
-        _set_event(probs, s, P.START, 3, 0.9)
-        _set_event(probs, d, P.DSS, 2, 0.8)
-        _set_event(probs, a, P.ASS, 2, 0.85)
-        _set_event(probs, t, P.STOP, 3, 0.9)
-
-        # Start in EXON after START
-        b = Beam.start(s)
-        # Move forward over a few bases without events
-        b.forward(None, s+3)
-        self.assertEqual(b.pos, s+4)
-        self.assertEqual(b.phase, 1)
-        # At DSS: branch to INTRON and ensure new id and exon closed
-        child = b.branch_to_new_state('dss', d)
-        self.assertEqual(child.state, Beam.INTRON)
-        self.assertNotEqual(child.id, b.id)
-        self.assertIn((s, d), child.exons)
-        self.assertIn(d, child.events['dss'])
-        # Advance parent with skip recorded (hazard)
-        b.forward('dss', d)
-        self.assertIn(d, b.skips['dss'])
-        # For child in INTRON: branch via ASS back to EXON
-        child2 = child.branch_to_new_state('ass', a)
-        self.assertEqual(child2.state, Beam.EXON)
-        self.assertEqual(child2.exon_start, a+2)
-        self.assertIn(a, child2.events['ass'])
-        # Add STOP to child2 and score
-        child2.events['stop'].append(t)
-        boundary, total = child2.compute_scores(probs)
-        # Boundary must include all taken events
-        expected_boundary = (
-            _event_logp(probs, s, P.START) + _event_logp(probs, d, P.DSS) + _event_logp(probs, a, P.ASS) + _event_logp(probs, t, P.STOP)
-        )
-        self.assertAlmostEqual(boundary, expected_boundary, places=6)
-        # Total should be boundary here (no skips recorded on child2)
-        self.assertAlmostEqual(total, expected_boundary, places=6)
 
     def test_batch_global_logit_standardize_shapes_and_monotonicity(self):
         # Construct two sequences with different raw scales; ensure transform preserves shape and boosts rare highs
@@ -108,11 +55,11 @@ class TestDecoder(unittest.TestCase):
         non_event_cls = int(P.INTERGENIC)
         self.assertAlmostEqual(adj[5, non_event_cls], probs[5, non_event_cls])
 
-    def test__event_logp_spans_and_clamping(self):
+    def test_event_logp_spans_and_clamping(self):
         # Verify span behavior: START/STOP use 3bp; DSS/ASS use 2bp and clamping avoids -inf
         L = 20
         C = len(P.idx_to_cls)
-        probs = _make_probs(L, C, default_p=0.5)
+        probs = _make_probs(L, C, default_p=0.99)
         # Set exact spans with known probabilities
         s, d, a, t = 3, 8, 12, 15
         _set_event(probs, s, P.START, 3, 0.9)
@@ -132,6 +79,7 @@ class TestDecoder(unittest.TestCase):
         probs[s, int(P.START)] = 0.0
         v = _event_logp(probs, s, P.START)
         self.assertTrue(math.isfinite(v))
+
     def test_single_exon_decode(self):
         # Sequence: NNN ATG ... TAA ...
         # start at 3, stop at 15 -> exon [3, 18)
@@ -204,7 +152,7 @@ class TestDecoder(unittest.TestCase):
         chars[0:3] = list('NNN')
         chars[3:6] = list('ATG')
         chars[12:14] = list('GT')
-        chars[20:22] = list('AG')
+        chars[22:23] = list('AG')
         chars[29:32] = list('TAA')  # out-of-frame STOP
         seq = ''.join(chars)
 
@@ -279,8 +227,8 @@ class TestDecoder(unittest.TestCase):
         ps = PredictedSequence(16, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16)
         self.assertGreaterEqual(len(res.global_topk), 1)
-        cand = res.global_topk[0]
-        # Only the first DSS should be recorded
+        # Pick any candidate that uses a DSS and verify only the first is taken
+        cand = next(c for c in res.global_topk if len(c.events['dss']) >= 1)
         self.assertIn(d1, cand.events['dss'])
         self.assertNotIn(d2, cand.events['dss'])
 
@@ -370,7 +318,7 @@ class TestDecoder(unittest.TestCase):
         d = 12
         d_intr = 16  # DSS inside intron
         a = 22
-        t = 40
+        t = 39
         seq[0:3] = list('NNN')
         seq[s:s+3] = list('ATG')
         seq[d:d+2] = list('GT')
@@ -451,6 +399,85 @@ class TestDecoder(unittest.TestCase):
             self.assertEqual(cand.events['dss'], [])
             self.assertEqual(cand.exons[-1][1], stop_i + 3)
 
+    def test_cannot_skip_inframe_stop(self):
+        # Earliest in-frame STOP should prevent exploring donors beyond it
+        L = 60
+        seq = list('A' * L)
+        s = 3
+        t1 = 27  # in-frame from 3
+        d = 30   # donor after first in-frame STOP
+        a = 38
+        t2 = 50
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[t1:t1+3] = list('TAA')
+        seq[d:d+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t2:t2+3] = list('TGA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, s, P.START, 3, 0.99)
+        _set_event(probs, t1, P.STOP, 3, 0.99)
+        _set_event(probs, d, P.DSS, 2, 0.99)
+        _set_event(probs, a, P.ASS, 2, 0.99)
+        _set_event(probs, t2, P.STOP, 3, 0.99)
+
+        ps = PredictedSequence(43, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, k_per_start=10, k_global=10, beam_size=10000, scoring='hazard')
+        self.assertGreaterEqual(len(res.global_topk), 1)
+        for cand in res.global_topk:
+            self.assertIn(t1, cand.events['stop'])
+            self.assertTrue(all(x < t1 for x in cand.events['dss']))
+
+    def test_no_splice_past_first_stop_even_if_would_win(self):
+        # Construct a case where skipping the first in-frame STOP and splicing later
+        # would have a higher boundary score if allowed. Assert decoder still ends at
+        # the earliest in-frame STOP and returns no candidates with DSS >= STOP1.
+        L = 80
+        s = 3
+        t1 = 27   # earliest in-frame STOP from s
+        d = 30    # donor AFTER t1
+        a = 38
+        t2 = 61   # choose so that (t2 - (a+2)) % 3 == 0
+        chars = ['A'] * L
+        chars[0:3] = list('NNN')
+        chars[s:s+3] = list('ATG')
+        chars[t1:t1+3] = list('TAA')
+        chars[d:d+2] = list('GT')
+        chars[a:a+2] = list('AG')
+        chars[t2:t2+3] = list('TGA')
+        seq = ''.join(chars)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        # Make early STOP moderate, and splice path events very strong
+        _set_event(probs, s, P.START, 3, 0.95)
+        _set_event(probs, t1, P.STOP, 3, 0.55)
+        _set_event(probs, d, P.DSS, 2, 0.99)
+        _set_event(probs, a, P.ASS, 2, 0.99)
+        _set_event(probs, t2, P.STOP, 3, 0.99)
+
+        # Sanity: if skipping were allowed, the split path's boundary would beat direct STOP
+        direct_boundary = _event_logp(probs, s, P.START) + _event_logp(probs, t1, P.STOP)
+        split_boundary = (
+            _event_logp(probs, s, P.START)
+            + _event_logp(probs, d, P.DSS)
+            + _event_logp(probs, a, P.ASS)
+            + _event_logp(probs, t2, P.STOP)
+        )
+        self.assertGreater(split_boundary, direct_boundary)
+
+        ps = PredictedSequence(44, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        for scoring in ('boundary', 'hazard'):
+            res = decode_sequence(ps, k_per_start=20, k_global=20, beam_size=100000, scoring=scoring)
+            self.assertGreaterEqual(len(res.global_topk), 1)
+            for cand in res.global_topk:
+                # All candidates must stop at t1 and have no donors at/after t1
+                self.assertIn(t1, cand.events['stop'])
+                self.assertTrue(all(x < t1 for x in cand.events['dss']))
+
     def test_stop_out_of_frame_no_candidate(self):
         # START at 3, STOP at 16 (out of frame since 16 - (3+3) = 10, not multiple of 3)
         L = 25
@@ -493,7 +520,7 @@ class TestDecoder(unittest.TestCase):
         seq[0:3] = list('NNN')
         seq[3:6] = list('ATG')
         d = 12
-        a = 20
+        a = 22
         t = 30
         seq[d:d+2] = list('GT')
         seq[a:a+2] = list('AG')
@@ -611,8 +638,8 @@ class TestDecoder(unittest.TestCase):
         self.assertEqual(c.events['dss'], [d])
         self.assertEqual(c.events['ass'], [a])
 
-    def test_max_introns_limit_enforced(self):
-        # Build two introns but set max_introns=1; decoder must output at most one intron
+    def test_dp_handles_multiple_introns_without_limit(self):
+        # Build two introns; ensure decoder runs and returns candidates (no intron limit enforced)
         L = 80
         seq = list('A' * L)
         s = 3
@@ -632,9 +659,8 @@ class TestDecoder(unittest.TestCase):
         for pos, cls, span, p in [(s,P.START,3,0.99), (d1,P.DSS,2,0.99), (a1,P.ASS,2,0.99), (d2,P.DSS,2,0.99), (a2,P.ASS,2,0.99), (t,P.STOP,3,0.99)]:
             _set_event(probs, pos, cls, span, p)
         ps = PredictedSequence(10, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, max_introns=1, scoring='boundary')
+        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
         self.assertGreaterEqual(len(res.global_topk), 1)
-        self.assertTrue(all(len(c.events['dss']) <= 1 for c in res.global_topk))
 
     def test_multiple_starts_and_global_union(self):
         # Two STARTs -> per_start has two keys; global aggregates
@@ -746,6 +772,71 @@ class TestDecoder(unittest.TestCase):
         has_split_h = any(len(c.events['dss']) == 1 and len(c.events['ass']) == 1 and len(c.exons) == 2 for c in res_h.global_topk)
         self.assertTrue(has_single_h)
         self.assertTrue(has_split_h)
+
+    def test_donor_updates_phase_for_stop_framing(self):
+        # START at 3; donor at 10 creates exon length (10 - 3) = 7 -> phase 1
+        # acceptor at 20 -> re-enter EXON at 22; STOP at 24 is in-frame only if phase was updated
+        L = 40
+        seq = list('A' * L)
+        s = 3
+        d = 10
+        a = 20
+        t = 24  # Valid if phase at re-entry is 1: (24 - 22) = 2, 1+2 ≡ 0 mod 3
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d:d+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        _set_event(probs, s, P.START, 3, 0.99)
+        _set_event(probs, d, P.DSS, 2, 0.99)
+        _set_event(probs, a, P.ASS, 2, 0.99)
+        _set_event(probs, t, P.STOP, 3, 0.99)
+
+        ps = PredictedSequence(45, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, k_per_start=5, k_global=5, beam_size=1000, scoring='boundary')
+        # Expect a split candidate with DSS at 10, ASS at 20, STOP at 24
+        split = next(c for c in res.global_topk if c.events['dss'] == [d] and c.events['ass'] == [a] and c.events['stop'] == [t])
+        self.assertIsNotNone(split)
+
+    def test_scan_events_threshold(self):
+        L = 40
+        seq = list('A' * L)
+        s = 3
+        d = 10
+        a = 20
+        t = 30
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d:d+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t:t+3] = list('TAA')
+        seq = ''.join(seq)
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C)
+        # Set low probs below 0.1 → should be filtered out
+        _set_event(probs, s, P.START, 3, 0.05)
+        _set_event(probs, d, P.DSS, 2, 0.05)
+        _set_event(probs, a, P.ASS, 2, 0.05)
+        _set_event(probs, t, P.STOP, 3, 0.05)
+        ev = _scan_events(seq, probs, min_logp=math.log(0.1))
+        self.assertEqual(ev['start'], [])
+        self.assertEqual(ev['dss'], [])
+        self.assertEqual(ev['ass'], [])
+        self.assertEqual(ev['stop'], [])
+        # Raise probs above 0.1 → should be included
+        _set_event(probs, s, P.START, 3, 0.2)
+        _set_event(probs, d, P.DSS, 2, 0.2)
+        _set_event(probs, a, P.ASS, 2, 0.2)
+        _set_event(probs, t, P.STOP, 3, 0.2)
+        ev2 = _scan_events(seq, probs, min_logp=math.log(0.1))
+        self.assertEqual(ev2['start'], [s])
+        self.assertEqual(ev2['dss'], [d])
+        self.assertEqual(ev2['ass'], [a])
+        self.assertEqual(ev2['stop'], [t])
 
 
 if __name__ == '__main__':

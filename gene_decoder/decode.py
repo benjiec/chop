@@ -44,8 +44,8 @@ def main():
     p.add_argument('--topk-per-start', type=int, default=3)
     p.add_argument('--topk-global', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
-    p.add_argument('--max-introns', type=int, default=None)
     p.add_argument('--no-overlap', action='store_true')
+    p.add_argument('--min-normalized-prob', type=float, default=0.1)
     p.add_argument('--scoring', type=str, default='boundary', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
     p.add_argument('--codon-usage-json', default=None)
     p.add_argument('--lambda', dest='lambda_', type=float, default=0.0)
@@ -78,9 +78,9 @@ def main():
             k_per_start=args.topk_per_start,
             k_global=args.topk_global,
             beam_size=args.beam_size,
-            max_introns=args.max_introns,
             allow_overlap=not args.no_overlap,
             scoring=str(args.scoring),
+            min_logp=math.log(args.min_normalized_prob)
         )
 
         # Rerank with codon usage if requested

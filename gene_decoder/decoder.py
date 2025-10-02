@@ -33,7 +33,7 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bo
     return _log(mean_p)
 
 
-def _scan_events(seq: str) -> Dict[str, List[int]]:
+def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optional[float] = None) -> Dict[str, List[int]]:
     starts: List[int] = []
     stops: List[int] = []
     dss: List[int] = []
@@ -42,22 +42,38 @@ def _scan_events(seq: str) -> Dict[str, List[int]]:
     for i in range(L - 2):
         tri = seq[i:i+3]
         if tri == 'ATG':
-            starts.append(i)
+            if probs is not None and min_logp is not None:
+                if _event_logp(probs, i, P.START) > min_logp:
+                    starts.append(i)
+            else:
+                starts.append(i)
         if tri in ConventionalStopCodons:
-            stops.append(i)
+            if probs is not None and min_logp is not None:
+                if _event_logp(probs, i, P.STOP) > min_logp:
+                    stops.append(i)
+            else:
+                stops.append(i)
     for i in range(L - 1):
         di = seq[i:i+2]
         if di in ConventionalDonorDinucleotides:
-            dss.append(i)
+            if probs is not None and min_logp is not None:
+                if _event_logp(probs, i, P.DSS) > min_logp:
+                    dss.append(i)
+            else:
+                dss.append(i)
         if di in ConventionalAcceptorDinucleotides:
-            ass.append(i)
+            if probs is not None and min_logp is not None:
+                if _event_logp(probs, i, P.ASS) > min_logp:
+                    ass.append(i)
+            else:
+                ass.append(i)
     return {"start": starts, "stop": stops, "dss": dss, "ass": ass}
 
 
 @dataclass
 class Beam:
     # Beam states (class attributes) - define after fields to avoid dataclass init ordering issues
-    id: Optional[str]
+    id: str
     pos: int
     state: int
     phase: int
@@ -71,90 +87,8 @@ class Beam:
     EXON: int = 0
     INTRON: int = 1
 
-    def __post_init__(self) -> None:
-        if self.id is None:
-            self.id = uuid.uuid4().hex[:8]
-
-    def forward(self, not_taken: Optional[str], idx: int, hazard_penalty: float = 0.0) -> None:
-        # Advance position by one and update phase if in EXON
-        self.pos = self.pos + 1
-        if self.state == Beam.EXON:
-            self.phase = (self.phase + 1) % 3
-        # Record a skip when applicable (for hazard scoring)
-        if not_taken in ("dss", "ass"):
-            self.skips[not_taken].append(idx)
-
-    def branch_to_new_state(self, event: str, idx: int) -> "Beam":
-        # Clone current beam to new branch with new id and flip state according to event
-        if event == "dss" and self.state == Beam.EXON:
-            # Close exon at idx and enter INTRON at idx+2
-            new_exons = list(self.exons)
-            new_exons.append((self.exon_start, idx))
-            new_events = {k: list(v) for k, v in self.events.items()}
-            new_events["dss"].append(idx)
-            return Beam(
-                id=None,
-                pos=idx + 2,
-                state=Beam.INTRON,
-                phase=self.phase,
-                exons=new_exons,
-                events=new_events,
-                skips={k: list(v) for k, v in self.skips.items()},
-                intron_count=self.intron_count + 1,
-                exon_start=-1,
-            )
-        elif event == "ass" and self.state == Beam.INTRON:
-            # Enter EXON at idx+2 and set new exon_start
-            new_events = {k: list(v) for k, v in self.events.items()}
-            new_events["ass"].append(idx)
-            return Beam(
-                id=None,
-                pos=idx + 2,
-                state=Beam.EXON,
-                phase=self.phase,
-                exons=list(self.exons),
-                events=new_events,
-                skips={k: list(v) for k, v in self.skips.items()},
-                intron_count=self.intron_count,
-                exon_start=idx + 2,
-            )
-        raise ValueError(f"Invalid branch_to_new_state from state={self.state} via event={event}")
-
-    @staticmethod
-    def start(start_pos: int) -> "Beam":
-        return Beam(
-            id=None,
-            pos=start_pos + 3,
-            state=Beam.EXON,
-            phase=0,
-            exons=[],
-            events={"start": [start_pos], "dss": [], "ass": [], "stop": []},
-            skips={"dss": [], "ass": []},
-            intron_count=0,
-            exon_start=start_pos,
-        )
-
     def events_copy(self) -> Dict[str, List[int]]:
         return {k: list(v) for k, v in self.events.items()}
-
-    def stop(self, idx: int) -> "Beam":
-        # Append stop event and close the current exon if in EXON
-        new_events = self.events_copy()
-        new_events["stop"].append(idx)
-        new_exons = list(self.exons)
-        if self.state == Beam.EXON:
-            new_exons.append((self.exon_start, idx + 3))
-        return Beam(
-            id=self.id,
-            pos=self.pos,
-            state=self.state,
-            phase=self.phase,
-            exons=new_exons,
-            events=new_events,
-            skips={k: list(v) for k, v in self.skips.items()},
-            intron_count=self.intron_count,
-            exon_start=self.exon_start,
-        )
 
     def compute_exons(self) -> List[Tuple[int, int]]:
         return list(self.exons)
@@ -213,108 +147,204 @@ class Beam:
 
 
 def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, List[int]],
-                      k: int = 3, beam_size: int = 16, max_introns: Optional[int] = None,
+                      k: int = 3, beam_size: int = 16,
                       scoring: str = 'boundary') -> List[CandidateGene]:
     seq = ps.sequence
     probs = ps.probabilities
+    beam_id = uuid.uuid4().hex[:8]
 
-    # Precompute event presence and scores from start onward
+    # Precompute event presence from start onward
     L = len(seq)
     has_dss = np.zeros(L, dtype=bool)
     has_ass = np.zeros(L, dtype=bool)
     has_stop = np.zeros(L, dtype=bool)
-
-    for d in events["dss"]:
+    for d in sorted(events["dss"]):
         if d >= start_pos + 3:
             has_dss[d] = True
-    for a in events["ass"]:
+    for a in sorted(events["ass"]):
         if a >= start_pos + 3:
             has_ass[a] = True
-    for t in events["stop"]:
+    for t in sorted(events["stop"]):
         if t >= start_pos + 3:
             has_stop[t] = True
 
-    beams: List[Beam] = []
-    beams.append(Beam.start(start_pos))
+    # DP: memoize top-k suffix beams from (i,state,phase,exon_start)
+    from functools import lru_cache
 
-    completed: List[CandidateGene] = []
-    worst_keep: Optional[float] = None
-    def _cand_key(c: CandidateGene) -> float:
-        return c.total if scoring == 'hazard' else c.boundary_logp
-    score_index = 1 if scoring == 'hazard' else 0
+    def score_key(b: Beam) -> float:
+        boundary, total = b.compute_scores(probs)
+        return total if scoring == 'hazard' else boundary
 
-    for i in range(start_pos + 3, L):
-        if not beams:
-            break
-        next_beam: List[Beam] = []
-        for b in beams:
-            # Upper-bound pruning: if current beam's score already worse than worst of kept completed, skip expanding
-            if worst_keep is not None:
-                ub_boundary, ub_total = b.compute_scores(probs)
-                ub_score = ub_total if scoring == 'hazard' else ub_boundary
-                if ub_score <= worst_keep:
-                    continue
-            if b.pos > i:
-                # carry forward untouched
-                next_beam.append(b)
-                continue
-            if b.state == Beam.EXON:
-                # STOP (only if in-frame)
-                if has_stop[i] and b.phase == 0:
-                    # Build final candidate with both boundary and hazard totals
-                    b_final = b.stop(i)
-                    candidate = b_final.create_candidate_gene(probs)
-                    completed.append(candidate)
-                    completed.sort(key=_cand_key, reverse=True)
-                    # Maintain only top-k completed and update worst_keep threshold
-                    if len(completed) >= k:
-                        if len(completed) > k:
-                            del completed[k:]
-                        worst_keep = _cand_key(completed[-1])
-                    # Do not allow staying or splicing past an in-frame STOP at the same position
-                    continue
-                else:
-                    # DSS -> INTRON
-                    if (max_introns is None or b.intron_count < max_introns) and has_dss[i]:
-                        child = b.branch_to_new_state("dss", i)
-                        next_beam.append(child)
-                    # stay in EXON
-                    if i + 1 < L:
-                        b.forward("dss" if has_dss[i] else None, i)
-                        next_beam.append(b)
-            else:  # INTRON
-                # ASS -> EXON
-                if has_ass[i]:
-                    child = b.branch_to_new_state("ass", i)
-                    next_beam.append(child)
-                # stay in INTRON
-                if i + 1 < L:
-                    b.forward("ass" if has_ass[i] else None, i)
-                    next_beam.append(b)
+    def merge_prefix_suffix(prefix: Beam, tail: Beam) -> Beam:
+        # Combine events, skips, and exons; take tail's position/state/phase trackers
+        ev = {
+            "start": list(prefix.events.get("start", [])) + list(tail.events.get("start", [])),
+            "dss": list(prefix.events.get("dss", [])) + list(tail.events.get("dss", [])),
+            "ass": list(prefix.events.get("ass", [])) + list(tail.events.get("ass", [])),
+            "stop": list(prefix.events.get("stop", [])) + list(tail.events.get("stop", [])),
+        }
+        sk = {
+            "dss": list(prefix.skips.get("dss", [])) + list(tail.skips.get("dss", [])),
+            "ass": list(prefix.skips.get("ass", [])) + list(tail.skips.get("ass", [])),
+        }
+        ex = list(prefix.exons) + list(tail.exons)
+        return Beam(
+            id=beam_id,
+            pos=tail.pos,
+            state=tail.state,
+            phase=tail.phase,
+            exons=ex,
+            events=ev,
+            skips=sk,
+            intron_count=tail.intron_count,
+            exon_start=tail.exon_start,
+        )
 
-        if not next_beam:
-            break
-        # Sort by mode-appropriate score (compute on the fly) and cap to beam_size
-        if scoring == 'hazard':
-            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[score_index], reverse=True)
+    @lru_cache(maxsize=None)
+    def dp(i: int, state: int, phase: int, exon_start: int) -> Tuple[Beam, ...]:
+        if i >= L:
+            return tuple()
+        results: List[Beam] = []
+
+        if state == Beam.EXON:
+            # Scan forward until next event; recurse only at event points
+            j = i
+            while j < L:
+                # If STOP begins at j and in-frame, terminate here (earliest STOP)
+                if has_stop[j] and ((phase + (j - i)) % 3 == 0):
+                    stop_ev = {"start": [], "dss": [], "ass": [], "stop": [j]}
+                    exons_list: List[Tuple[int, int]] = []
+                    if exon_start >= 0:
+                        exons_list.append((exon_start, j + 3))
+                    stop_beam = Beam(
+                        id=beam_id,
+                        pos=j + 3,
+                        state=Beam.EXON,
+                        phase=(phase + (j - i)) % 3,
+                        exons=exons_list,
+                        events=stop_ev,
+                        skips={"dss": [], "ass": []},
+                        intron_count=0,
+                        exon_start=exon_start,
+                    )
+                    results.append(stop_beam)
+                    break
+                # If DSS at j: branch by taking it; or skip and continue scanning
+                if has_dss[j]:
+                    # take branch: enter INTRON at j+2
+                    take_prefix = Beam(
+                        id=beam_id,
+                        pos=j + 2,
+                        state=Beam.INTRON,
+                        phase=(phase + (j - i)) % 3,
+                        exons=[(exon_start, j)],
+                        events={"start": [], "dss": [j], "ass": [], "stop": []},
+                        skips={"dss": [], "ass": []},
+                        intron_count=0,
+                        exon_start=-1,
+                    )
+                    for tail in dp(j + 2, Beam.INTRON, (phase + (j - i)) % 3, -1):
+                        results.append(merge_prefix_suffix(take_prefix, tail))
+                    # skip-one branch: remain in EXON at j+1, record single skip at j
+                    skip_prefix = Beam(
+                        id=beam_id,
+                        pos=j + 1,
+                        state=Beam.EXON,
+                        phase=(phase + (j + 1 - i)) % 3,
+                        exons=[],
+                        events={"start": [], "dss": [], "ass": [], "stop": []},
+                        skips={"dss": [j], "ass": []},
+                        intron_count=0,
+                        exon_start=exon_start,
+                    )
+                    for tail in dp(j + 1, Beam.EXON, (phase + (j + 1 - i)) % 3, exon_start):
+                        results.append(merge_prefix_suffix(skip_prefix, tail))
+                    break
+                j += 1
         else:
-            next_beam.sort(key=lambda bb: bb.compute_scores(probs)[score_index], reverse=True)
-        beams = next_beam[:beam_size]
+            # INTRON: scan to next ASS; recurse only at ASS points
+            j = i
+            while j < L:
+                if has_ass[j]:
+                    # take branch: enter EXON at j+2
+                    take_prefix = Beam(
+                        id=beam_id,
+                        pos=j + 2,
+                        state=Beam.EXON,
+                        phase=phase,
+                        exons=[],
+                        events={"start": [], "dss": [], "ass": [j], "stop": []},
+                        skips={"dss": [], "ass": []},
+                        intron_count=0,
+                        exon_start=j + 2,
+                    )
+                    for tail in dp(j + 2, Beam.EXON, phase, j + 2):
+                        results.append(merge_prefix_suffix(take_prefix, tail))
+                    # skip-one branch: stay in INTRON at j+1, record single skip at j
+                    skip_prefix = Beam(
+                        id=beam_id,
+                        pos=j + 1,
+                        state=Beam.INTRON,
+                        phase=phase,
+                        exons=[],
+                        events={"start": [], "dss": [], "ass": [], "stop": []},
+                        skips={"dss": [], "ass": [j]},
+                        intron_count=0,
+                        exon_start=-1,
+                    )
+                    for tail in dp(j + 1, Beam.INTRON, phase, -1):
+                        results.append(merge_prefix_suffix(skip_prefix, tail))
+                    break
+                j += 1
 
-    # Sort completed candidates by appropriate score
-    completed.sort(key=_cand_key, reverse=True)
-    return completed[:k]
+        # Rank and keep top-k at this state
+        results.sort(key=score_key, reverse=True)
+        if len(results) > k:
+            results = results[:k]
+        return tuple(results)
+
+    # Get suffix completions from start state, then add START event and build candidates
+    suffixes = dp(start_pos + 3, Beam.EXON, 0, start_pos)
+    candidates: List[CandidateGene] = []
+    for tail in suffixes:
+        # add START event
+        with_start = Beam(
+            id=beam_id,
+            pos=tail.pos,
+            state=tail.state,
+            phase=tail.phase,
+            exons=list(tail.exons),
+            events={
+                "start": [start_pos] + list(tail.events.get("start", [])),
+                "dss": list(tail.events.get("dss", [])),
+                "ass": list(tail.events.get("ass", [])),
+                "stop": list(tail.events.get("stop", [])),
+            },
+            skips={"dss": list(tail.skips.get("dss", [])), "ass": list(tail.skips.get("ass", []))},
+            intron_count=tail.intron_count,
+            exon_start=tail.exon_start,
+        )
+        candidates.append(with_start.create_candidate_gene(probs))
+
+    # Sort and return top-k
+    if scoring == 'hazard':
+        candidates.sort(key=lambda c: c.total, reverse=True)
+    else:
+        candidates.sort(key=lambda c: c.boundary_logp, reverse=True)
+    return candidates[:k]
 
 
 def decode_sequence(ps: PredictedSequence, k_per_start: int = 3, k_global: int = 10, beam_size: int = 16,
-                    max_introns: Optional[int] = None, allow_overlap: bool = True, scoring: str = 'boundary') -> DecodedResult:
+                    allow_overlap: bool = True, scoring: str = 'boundary', min_logp: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
-    events = _scan_events(seq)
+    if min_logp is None:
+        min_logp = math.log(0.1)
+    events = _scan_events(seq, ps.probabilities, min_logp=min_logp)
 
     per_start: Dict[int, List[CandidateGene]] = {}
     all_candidates: List[CandidateGene] = []
     for s in events["start"]:
-        cands = _decode_from_start(ps, s, events, k=k_per_start, beam_size=beam_size, max_introns=max_introns, scoring=scoring)
+        cands = _decode_from_start(ps, s, events, k=k_per_start, beam_size=beam_size, scoring=scoring)
         per_start[s] = cands
         all_candidates.extend(cands)
 
