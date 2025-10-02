@@ -235,7 +235,6 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     for t in events["stop"]:
         if t >= start_pos + 3:
             has_stop[t] = True
-    
 
     beams: List[Beam] = []
     beams.append(Beam.start(start_pos))
