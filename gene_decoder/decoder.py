@@ -7,6 +7,18 @@ from utils.constants import GenePredictionClass as P, ConventionalStopCodons, Co
 from gene_decoder import PredictedSequence, CandidateGene, DecodedResult
 
 
+def _debug_log_scan(j):
+    return True
+
+
+def _debug_log_dp(j):
+    idxs = []
+    for idx in idxs:
+        if abs(j-idx) < 5:
+            return True
+    return False
+
+
 def _log(x: float) -> float:
     return math.log(max(x, 1e-12))
 
@@ -19,7 +31,7 @@ def _event_span_len(cls_idx: int) -> int:
     return 1
 
 
-def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bool] = False) -> float:
+def _event_prob(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bool] = False) -> float:
     L = probs.shape[0]
     span = _event_span_len(cls_idx)
     s = pos
@@ -30,6 +42,11 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bo
     mean_p = float(np.clip(np.mean(vals), 1e-12, 1.0))
     if negative:
         mean_p = 1.0 - mean_p
+    return mean_p
+
+
+def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bool] = False) -> float:
+    mean_p = _event_prob(probs, pos, cls_idx, negative=negative)
     return _log(mean_p)
 
 
@@ -44,14 +61,16 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
         if tri == 'ATG':
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.START) > min_logp:
-                    print("START", i, probs[i,P.START].astype(float))
+                    if _debug_log_scan(i):
+                        print("START", i, _event_prob(probs, i, P.START))
                     starts.append(i)
             else:
                 starts.append(i)
         if tri in ConventionalStopCodons:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.STOP) > min_logp:
-                    print(" STOP", i, probs[i,P.STOP].astype(float))
+                    if _debug_log_scan(i):
+                        print(" STOP", i, _event_prob(probs, i, P.STOP))
                     stops.append(i)
             else:
                 stops.append(i)
@@ -60,17 +79,20 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
         if di in ConventionalDonorDinucleotides:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.DSS) > min_logp:
-                    print("  DSS", i, probs[i,P.DSS].astype(float))
+                    if _debug_log_scan(i):
+                        print("  DSS", i, _event_prob(probs, i, P.DSS))
                     dss.append(i)
             else:
                 dss.append(i)
         if di in ConventionalAcceptorDinucleotides:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.ASS) > min_logp:
-                    print("  ASS", i, probs[i,P.ASS].astype(float))
+                    if _debug_log_scan(i):
+                        print("  ASS", i, _event_prob(probs, i, P.ASS))
                     ass.append(i)
             else:
                 ass.append(i)
+
     return {"start": starts, "stop": stops, "dss": dss, "ass": ass}
 
 
@@ -214,6 +236,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
             # Scan forward until next event; recurse only at event points
             j = i
             while j < L:
+
                 # If STOP begins at j and in-frame, terminate here (earliest STOP)
                 if has_stop[j] and ((phase + (j - i)) % 3 == 0):
                     stop_ev = {"start": [], "dss": [], "ass": [], "stop": [j]}
@@ -233,6 +256,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     )
                     results.append(stop_beam)
                     break
+
                 # If DSS at j: branch by taking it; or skip and continue scanning
                 if has_dss[j]:
                     # take branch: enter INTRON at j+2
@@ -249,6 +273,10 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     )
                     for tail in dp(j + 2, Beam.INTRON, (phase + (j - i)) % 3, -1):
                         results.append(merge_prefix_suffix(take_prefix, tail))
+                        if _debug_log_dp(j):
+                            print("dss take", j, "phase", (phase + (j - i)) % 3)
+                            results[-1].compute_scores(probs, verbose=True)
+
                     # skip-one branch: remain in EXON at j+1, record single skip at j
                     skip_prefix = Beam(
                         id=beam_id,
@@ -263,13 +291,19 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     )
                     for tail in dp(j + 1, Beam.EXON, (phase + (j + 1 - i)) % 3, exon_start):
                         results.append(merge_prefix_suffix(skip_prefix, tail))
+                        if _debug_log_dp(j):
+                            print("dss skip", j, "phase", (phase + (j - i)) % 3)
+                            results[-1].compute_scores(probs, verbose=True)
+
                     break
                 j += 1
+
         else:
             # INTRON: scan to next ASS; recurse only at ASS points
             j = i
             while j < L:
                 if has_ass[j]:
+
                     # take branch: enter EXON at j+2
                     take_prefix = Beam(
                         id=beam_id,
@@ -284,6 +318,10 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     )
                     for tail in dp(j + 2, Beam.EXON, phase, j + 2):
                         results.append(merge_prefix_suffix(take_prefix, tail))
+                        if _debug_log_dp(j):
+                            print("ass take", j, "phase", phase)
+                            results[-1].compute_scores(probs, verbose=True)
+
                     # skip-one branch: stay in INTRON at j+1, record single skip at j
                     skip_prefix = Beam(
                         id=beam_id,
@@ -298,6 +336,10 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                     )
                     for tail in dp(j + 1, Beam.INTRON, phase, -1):
                         results.append(merge_prefix_suffix(skip_prefix, tail))
+                        if _debug_log_dp(j):
+                            print("ass skip", j, "phase", phase)
+                            results[-1].compute_scores(probs, verbose=True)
+
                     break
                 j += 1
 
@@ -310,6 +352,8 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     # Get suffix completions from start state, then add START event and build candidates
     suffixes = dp(start_pos + 3, Beam.EXON, 0, start_pos)
     candidates: List[CandidateGene] = []
+    print("final candidates", len(suffixes))
+
     for tail in suffixes:
         # add START event
         with_start = Beam(
