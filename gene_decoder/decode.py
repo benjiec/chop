@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List
 from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
 from gene_decoder.decoder import decode_sequence
-from gene_decoder.scoring import global_z_normalize_prob
+from gene_decoder.scoring import global_z_normalize_prob, temperature_rescale_probs
 from gene_decoder.codon_usage import CodonUsageModel
 from utils.constants import GenePredictionClass as P
 import math
@@ -46,6 +46,7 @@ def main():
     p.add_argument('--topk-global', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
     p.add_argument('--no-overlap', action='store_true')
+    p.add_argument('--temperature-scale', type=float, default=1.0)
     p.add_argument('--z-transform-probs', action='store_true')
     p.add_argument('--min-prob', type=float, default=0.05)
     p.add_argument('--scoring', type=str, default='hazard', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
@@ -71,6 +72,11 @@ def main():
         batch_adj = global_z_normalize_prob(batch, beta=0.5)
         for ps, adj in zip(items, batch_adj):
             ps.probabilities = adj
+
+    # Apply temp scale adjustment
+    if args.temperature_scale and args.temperature_scale != 1.0:
+        for ps in items:
+            ps.probabilities = temperature_rescale_probs(ps.probabilities, args.temperature_scale)
 
     decoded: List[DecodedResult] = []
     ps_map = {ps.sequence_index: ps for ps in items}

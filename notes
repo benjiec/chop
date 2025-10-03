@@ -15,4 +15,4 @@ PYTHONPATH=. python gene_predictor/window_validation.py --fna-fn data/GCF_002042
 
 PYTHONPATH=. python gene_decoder/build_codon_usage.py --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv --output data/GCF_002042975.1.codon_usage.json
 
-PYTHONPATH=. python gene_decoder/decode.py --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251001_134903_53e097c9f4_decoder.pickle --output-json x.json --output-tsv x.tsv --output-fna x.fna
+PYTHONPATH=. python gene_decoder/decode.py --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251001_134903_53e097c9f4_decoder.pickle --output-json x.json --output-tsv x.tsv --output-fna x.fna --min-prob 0.5 --num-sequences 1 --temperature-scale 3

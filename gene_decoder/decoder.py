@@ -11,6 +11,10 @@ def _debug_log_scan(j):
     return True
 
 
+def _debug_log_predicted():
+    return False
+
+
 def _debug_log_dp(j):
     idxs = []
     for idx in idxs:
@@ -62,7 +66,7 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.START) > min_logp:
                     if _debug_log_scan(i):
-                        print("START", i, _event_prob(probs, i, P.START))
+                        print("START", i, _event_prob(probs, i, P.START), _event_logp(probs, i, P.START))
                     starts.append(i)
             else:
                 starts.append(i)
@@ -70,7 +74,7 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.STOP) > min_logp:
                     if _debug_log_scan(i):
-                        print(" STOP", i, _event_prob(probs, i, P.STOP))
+                        print(" STOP", i, _event_prob(probs, i, P.STOP), _event_logp(probs, i, P.STOP))
                     stops.append(i)
             else:
                 stops.append(i)
@@ -80,7 +84,7 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.DSS) > min_logp:
                     if _debug_log_scan(i):
-                        print("  DSS", i, _event_prob(probs, i, P.DSS))
+                        print("  DSS", i, _event_prob(probs, i, P.DSS), _event_logp(probs, i, P.DSS))
                     dss.append(i)
             else:
                 dss.append(i)
@@ -88,7 +92,7 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.ASS) > min_logp:
                     if _debug_log_scan(i):
-                        print("  ASS", i, _event_prob(probs, i, P.ASS))
+                        print("  ASS", i, _event_prob(probs, i, P.ASS), _event_logp(probs, i, P.ASS))
                     ass.append(i)
             else:
                 ass.append(i)
@@ -162,7 +166,7 @@ class Beam:
         return boundary, total
 
     def create_candidate_gene(self, probs: np.ndarray) -> CandidateGene:
-        boundary, total = self.compute_scores(probs, verbose=True)
+        boundary, total = self.compute_scores(probs, verbose=_debug_log_predicted())
         return CandidateGene(
             exons=self.compute_exons(),
             events=self.events_copy(),

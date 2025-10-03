@@ -30,7 +30,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                              stride: Optional[int] = None,
                              device: str = 'cpu',
                              return_attention: bool = False,
-                             temperature: Optional[float] = None,
                              blending_window_margin_bp: int = 200,
                              aggregator: str = 'blend',  # 'blend' | 'max_weight' | 'max_prob'
                              random_prefix_ns: bool = True,
@@ -64,8 +63,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         else:
             logits_b = out
         logits_raw_np = logits_b[0].detach().cpu().numpy()
-        if temperature is not None and float(temperature) > 0:
-            logits_b = logits_b / float(temperature)
         preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
         probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
         # Strip prefix if applied
@@ -121,8 +118,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             logits_raw_np = blended_raw
 
         blended = logits_raw_np
-        if temperature is not None and float(temperature) > 0:
-            blended = blended / float(temperature)
         probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
         preds_b = np.argmax(probs_b, axis=-1)
 
@@ -135,7 +130,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         return preds_b, probs_b, logits_raw_np, None
 
 
-def load_trained_model(model_path: Path, device='cpu', temperature: Optional[float] = None):
+def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
     print(f"Loading model from: {model_path}")
 
@@ -159,7 +154,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
     return data_loader, dataset
 
 
-def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, temperature: Optional[float] = None, log_every: Optional[int] = 10,
+def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, log_every: Optional[int] = 10,
                     blending_window_margin_bp: int = 200, aggregator: str = 'blend', random_prefix_ns: bool = True,
                     random_prefix_min: int = 100, random_prefix_max: int = 400):
     """Run predictions on test data. Optionally return encoder attention per layer."""
@@ -187,7 +182,6 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     model, max_len, seq_tokens_b,
                     device=device,
                     return_attention=False,
-                    temperature=temperature,
                     blending_window_margin_bp=blending_window_margin_bp,
                     aggregator=aggregator,
                     random_prefix_ns=random_prefix_ns,
@@ -576,8 +570,6 @@ def main():
                        help='Output directory for analysis results. If omitted, defaults to the run directory.')
     parser.add_argument('--device', type=str, default='cpu',
                        help='Device to run on (cpu/cuda)')
-    parser.add_argument('--temperature', type=float, default=3.0, help='Temperature scaling for logits at inference (softmax(logits/T)).')
-    parser.add_argument('--t-sweep', type=str, default=None, help='Optional sweep "start:stop:step" over T; reports best Brier.')
     parser.add_argument('--dump-attention-k', type=int, default=1, help='Top-k attention positions per layer/head')
     parser.add_argument('--dump-attention-window', type=int, default=20, help='Sequence half-window around attended position')
     parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
@@ -590,7 +582,7 @@ def main():
     parser.add_argument('--no-random-prefix-ns', dest='random_prefix_ns', action='store_false', help='Disable random N-prefix before windowing')
     parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
-    parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence (no temperature) and report means')
+    parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence and report means')
     parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
     
     args = parser.parse_args()
@@ -636,41 +628,12 @@ def main():
 
     data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
     
-     # Temperature sweep (if requested)
-    sweep_best = None
-    if args.t_sweep:
-        try:
-            s, e, st = [float(x) for x in args.t_sweep.split(':')]
-            Ts = np.arange(s, e + 1e-9, st)
-        except Exception as ex:
-            print(f"Invalid --t-sweep '{args.t_sweep}': {ex}")
-            Ts = []
-        for T in Ts:
-            results_T = run_predictions(model, data_loader, args.device, return_attention=False, temperature=T, log_every=100)
-            brier_T = compute_brier_scores(results_T, class_weights=cw, min_weight=1.0, event_only=True)
-            print(f"T={T:.3f}  Brier={brier_T.get('brier', 0.0):.4f}")
-            by_cls_T = brier_T.get('brier_by_class', {})
-            if by_cls_T:
-                parts = []
-                for cls_idx in sorted(by_cls_T.keys()):
-                    name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-                    parts.append(f"{name}={float(by_cls_T[cls_idx]):.4f}")
-                print("  " + " ".join(parts))
-            if (sweep_best is None) or (brier_T.get('brier', 0.0) < sweep_best[0]):
-                sweep_best = (float(brier_T.get('brier', 0.0)), float(T))
-        if sweep_best is not None:
-            print(f"Best T by Brier: {sweep_best[1]:.3f} (Brier={sweep_best[0]:.4f})")
-        # Fall through to run with requested --temperature (or best-T, if not given)
-        if args.temperature is None and sweep_best is not None:
-            args.temperature = sweep_best[1]
-
-    # Run predictions (with attention if requested) using final temperature
+    # Run predictions (with attention if requested)
     results = run_predictions(
         model,
         data_loader,
         args.device,
         return_attention=True,
-        temperature=args.temperature,
         blending_window_margin_bp=int(args.blending_window_margin_bp),
         aggregator=str(args.aggregator),
         random_prefix_ns=bool(args.random_prefix_ns),

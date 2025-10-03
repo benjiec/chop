@@ -28,7 +28,7 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         model = DummyModel(max_len=64, num_classes=3)
         seq_len = 20
         seq = torch.full((1, seq_len), 4, dtype=torch.long)
-        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=True, temperature=None)
+        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=True)
         self.assertEqual(preds.shape[0], seq_len)
         self.assertEqual(probs.shape, (seq_len, 3))
         self.assertEqual(logits_raw.shape, (seq_len, 3))
@@ -61,7 +61,7 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         model = SmallMaxLenModel(max_len=32, num_classes=2)
         seq_len = 101
         seq = torch.full((1, seq_len), 4, dtype=torch.long)
-        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False, temperature=None,
+        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False,
                                                                  blending_window_margin_bp=0)
         self.assertEqual(preds.shape[0], seq_len)
         self.assertEqual(probs.shape, (seq_len, 2))
@@ -101,7 +101,6 @@ class TestPredictSequenceOutputs(unittest.TestCase):
             seq,
             device='cpu',
             return_attention=False,
-            temperature=None,
             blending_window_margin_bp=8,
             aggregator='max_weight',
             random_prefix_ns=True,
