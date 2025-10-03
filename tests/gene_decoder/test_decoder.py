@@ -93,7 +93,7 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=0, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8, scoring='boundary')
+        res = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=8)
 
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
@@ -132,9 +132,7 @@ class TestDecoder(unittest.TestCase):
         ps = PredictedSequence(sequence_index=1, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Also test hazard scoring path runs
-        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=32, scoring='boundary')
-        res_h = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=32, scoring='hazard')
-        self.assertEqual(len(res_h.global_topk), 1)
+        res = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=32)
 
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
@@ -165,7 +163,7 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=14, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=16)
         self.assertEqual(len(res.global_topk), 0)
 
     def test_start_then_two_ass_ignored(self):
@@ -191,7 +189,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(15, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=16)
+        res = decode_sequence(ps, top_k_splicing=2, top_k_starts=2, beam_size=16)
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
         # Single exon; ASS inside exon ignored
@@ -225,7 +223,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(16, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16)
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=16)
         self.assertGreaterEqual(len(res.global_topk), 1)
         # Pick any candidate that uses a DSS and verify only the first is taken
         cand = next(c for c in res.global_topk if len(c.events['dss']) >= 1)
@@ -250,17 +248,15 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(20, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_b = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8, scoring='boundary')
-        res_h = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8, scoring='hazard')
-        self.assertEqual(len(res_b.global_topk), 1)
-        self.assertEqual(len(res_h.global_topk), 1)
-        cb = res_b.global_topk[0]
-        ch = res_h.global_topk[0]
+        res = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=8)
+        self.assertEqual(len(res.global_topk), 1)
+        cb = res.global_topk[0]
+        ch = cb
         expected = _event_logp(probs, s, P.START) + _event_logp(probs, t, P.STOP)
-        self.assertAlmostEqual(cb.boundary_logp, expected, places=6)
-        self.assertAlmostEqual(cb.total, expected, places=6)
-        self.assertAlmostEqual(ch.boundary_logp, expected, places=6)
-        self.assertAlmostEqual(ch.total, expected, places=6)
+        self.assertAlmostEqual(cb.boundary_score, expected, places=6)
+        self.assertAlmostEqual(cb.transition_score, 0.0, places=6)
+        self.assertAlmostEqual(ch.boundary_score, expected, places=6)
+        self.assertAlmostEqual(ch.transition_score, 0.0, places=6)
 
     def test_hazard_exact_exon_skips_dss_math(self):
         # Two DSS along exon are skipped; hazard adds log(1 - p_dss_span) at each DSS index
@@ -286,7 +282,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(21, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_h = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=16, scoring='hazard')
+        res_h = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=16)
         self.assertEqual(len(res_h.global_topk), 1)
         cand = res_h.global_topk[0]
         # choose the single-exon candidate (no dss taken)
@@ -306,12 +302,12 @@ class TestDecoder(unittest.TestCase):
         p2 = float(np.exp(_event_logp(probs, d2, P.DSS)))
         pen = math.log(max(1e-12, 1.0 - p1)) + math.log(max(1e-12, 1.0 - p2))
         expected_total = expected_boundary + pen
-        self.assertAlmostEqual(cand.boundary_logp, expected_boundary, places=6)
-        self.assertAlmostEqual(cand.total, expected_total, places=6)
+        self.assertAlmostEqual(cand.boundary_score, expected_boundary, places=6)
+        self.assertAlmostEqual(cand.transition_score, pen, places=6)
 
     def test_hazard_no_penalty_for_dss_in_intron_math(self):
         # Path: START -> DSS -> INTRON (has extra DSS, which should NOT penalize) -> ASS -> STOP
-        # Expect: hazard == boundary (no penalties from DSS while in INTRON)
+        # Expect: boundary = START+STOP; transition = DSS+ASS (no penalties while in INTRON)
         L = 60
         seq = list('A' * L)
         s = 3
@@ -337,22 +333,20 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(22, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_h = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=16, scoring='hazard')
+        res_h = decode_sequence(ps, top_k_splicing=2, top_k_starts=2, beam_size=16)
         self.assertGreaterEqual(len(res_h.global_topk), 1)
         # pick the split candidate (one dss and one ass recorded)
         cand = next(c for c in res_h.global_topk if len(c.events['dss']) == 1 and len(c.events['ass']) == 1)
+        # Expected boundary: START + STOP only
         expected_boundary = 0.0
         for pos in cand.events['start']:
             expected_boundary += _event_logp(probs, pos, P.START)
-        for pos in cand.events['dss']:
-            expected_boundary += _event_logp(probs, pos, P.DSS)
-        for pos in cand.events['ass']:
-            expected_boundary += _event_logp(probs, pos, P.ASS)
         for pos in cand.events['stop']:
             expected_boundary += _event_logp(probs, pos, P.STOP)
-        # No DSS-skip penalties should be applied during INTRON
-        self.assertAlmostEqual(cand.boundary_logp, expected_boundary, places=6)
-        self.assertAlmostEqual(cand.total, expected_boundary, places=6)
+        # Expected transition: DSS and ASS positives; no penalties while in INTRON
+        expected_transition = _event_logp(probs, d, P.DSS) + _event_logp(probs, a, P.ASS)
+        self.assertAlmostEqual(cand.boundary_score, expected_boundary, places=6)
+        self.assertAlmostEqual(cand.transition_score, expected_transition, places=6)
 
     def test_codon_usage_scoring(self):
         # Build a small codon model that favors AAA heavily
@@ -388,10 +382,8 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=2, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_b = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
-        res_h = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='hazard')
-
-        for res in (res_b, res_h):
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=16)
+        for res in (res,):
             self.assertGreaterEqual(len(res.global_topk), 1)
             cand = res.global_topk[0]
             # must end at STOP and not contain any DSS
@@ -425,7 +417,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t2, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(43, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=10, k_global=10, beam_size=10000, scoring='hazard')
+        res = decode_sequence(ps, top_k_splicing=10, top_k_starts=10, beam_size=10000)
         self.assertGreaterEqual(len(res.global_topk), 1)
         for cand in res.global_topk:
             self.assertIn(t1, cand.events['stop'])
@@ -470,13 +462,11 @@ class TestDecoder(unittest.TestCase):
         self.assertGreater(split_boundary, direct_boundary)
 
         ps = PredictedSequence(44, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        for scoring in ('boundary', 'hazard'):
-            res = decode_sequence(ps, k_per_start=20, k_global=20, beam_size=100000, scoring=scoring)
-            self.assertGreaterEqual(len(res.global_topk), 1)
-            for cand in res.global_topk:
-                # All candidates must stop at t1 and have no donors at/after t1
-                self.assertIn(t1, cand.events['stop'])
-                self.assertTrue(all(x < t1 for x in cand.events['dss']))
+        res = decode_sequence(ps, top_k_splicing=20, top_k_starts=20, beam_size=100000)
+        self.assertGreaterEqual(len(res.global_topk), 1)
+        for cand in res.global_topk:
+            self.assertIn(t1, cand.events['stop'])
+            self.assertTrue(all(x < t1 for x in cand.events['dss']))
 
     def test_stop_out_of_frame_no_candidate(self):
         # START at 3, STOP at 16 (out of frame since 16 - (3+3) = 10, not multiple of 3)
@@ -491,7 +481,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, 3, P.START, 3, 0.95)
         _set_event(probs, 16, P.STOP, 3, 0.95)
         ps = PredictedSequence(4, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=8, scoring='boundary')
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=8)
         self.assertEqual(len(res.global_topk), 0)
 
     def test_exon_ass_ignored(self):
@@ -509,7 +499,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, 10, P.ASS, 2, 0.99)
         _set_event(probs, 21, P.STOP, 3, 0.9)
         ps = PredictedSequence(5, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=8)
+        res = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=8)
         self.assertEqual(len(res.global_topk), 1)
         self.assertEqual(res.global_topk[0].events['ass'], [])
 
@@ -535,14 +525,14 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, a+5, P.DSS, 2, 0.99)
         _set_event(probs, t, P.STOP, 3, 0.95)
         ps = PredictedSequence(6, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=32)
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=32)
         # Pick any split candidate and validate intronic DSS is ignored
         split = next(c for c in res.global_topk if len(c.events['dss']) == 1)
         self.assertIn(d, split.events['dss'])
         self.assertNotIn(a+5, split.events['dss'])
 
     def test_hazard_exon_dss_skip_penalizes(self):
-        # Single exon with many DSS along exon; hazard lower score than boundary
+        # Single exon with many DSS along exon; transition_score adds skip penalties
         L = 60
         seq = list('A' * L)
         seq[0:3] = list('NNN')
@@ -561,20 +551,22 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
         ps = PredictedSequence(7, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Use very large beam and k to avoid pruning effects in this test
-        res_b = decode_sequence(ps, k_per_start=100, k_global=100, beam_size=100000, scoring='boundary')
-        res_h = decode_sequence(ps, k_per_start=100, k_global=100, beam_size=100000, scoring='hazard')
-        self.assertGreaterEqual(len(res_b.global_topk), 1)
-        self.assertGreaterEqual(len(res_h.global_topk), 1)
-        # Choose the single-exon (no DSS taken) candidate in each set
-        b = next(c for c in res_b.global_topk if len(c.events['dss']) == 0)
-        h = next(c for c in res_h.global_topk if len(c.events['dss']) == 0)
-        # Hazard penalizes skips -> hazard total is lower than boundary score
-        self.assertLess(h.total, b.boundary_logp)
+        res = decode_sequence(ps, top_k_splicing=100, top_k_starts=100, beam_size=100000)
+        self.assertGreaterEqual(len(res.global_topk), 1)
+        # Choose the single-exon (no DSS taken) candidate
+        b = next(c for c in res.global_topk if len(c.events['dss']) == 0)
         self.assertEqual(b.events['dss'], [])
+        # Expected skip penalties at each DSS along the exon
+        expected_pen = 0.0
+        for x in range(10, t, 5):
+            px = float(np.exp(_event_logp(probs, x, P.DSS)))
+            expected_pen += math.log(max(1e-12, 1.0 - px))
+        self.assertAlmostEqual(b.transition_score, expected_pen, places=6)
+        self.assertLess(b.transition_score, 0.0)
 
     def test_hazard_intron_ass_skip_penalizes(self):
         # Put two ASS inside intron; earlier high-prob ASS leads to out-of-frame STOP,
-        # so decoder should skip it and use later ASS; hazard penalizes the skip
+        # so decoder should skip it and use later ASS; transition_score penalizes the skip
         L = 60
         seq = list('A' * L)
         seq[0:3] = list('NNN')
@@ -597,18 +589,17 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, a2, P.ASS, 2, 0.95)
         _set_event(probs, t, P.STOP, 3, 0.99)
         ps = PredictedSequence(8, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_b = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=32, scoring='boundary')
-        res_h = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=32, scoring='hazard')
-        # pick the best split candidate from each
-        cb = next(c for c in res_b.global_topk if len(c.events['dss']) == 1)
-        ch = next(c for c in res_h.global_topk if len(c.events['dss']) == 1)
-        # Both should use a2, skipping a1
-        self.assertNotIn(a1, cb.events['ass'])
-        self.assertIn(a2, cb.events['ass'])
-        self.assertNotIn(a1, ch.events['ass'])
-        self.assertIn(a2, ch.events['ass'])
-        # Hazard penalizes skipping earlier ASS -> hazard total < boundary score
-        self.assertLess(ch.total, cb.boundary_logp)
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=32)
+        # pick the best split candidate
+        c = next(c for c in res.global_topk if len(c.events['dss']) == 1)
+        # Should use a2, skipping a1
+        self.assertNotIn(a1, c.events['ass'])
+        self.assertIn(a2, c.events['ass'])
+        # Transition equals DSS+ASS positives plus skip penalty at a1
+        expected_transition = _event_logp(probs, d, P.DSS) + _event_logp(probs, a2, P.ASS)
+        p_a1 = float(np.exp(_event_logp(probs, a1, P.ASS)))
+        expected_transition += math.log(max(1e-12, 1.0 - p_a1))
+        self.assertAlmostEqual(c.transition_score, expected_transition, places=6)
 
     def test_beam_prefers_split_when_events_strong(self):
         # Make DSS/ASS + STOP much stronger than direct STOP; even with small beam, pick split
@@ -632,7 +623,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.6)
         ps = PredictedSequence(9, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Use hazard scoring so repeated DSS skips penalize single-exon path
-        res = decode_sequence(ps, k_per_start=1, k_global=1, beam_size=2, scoring='hazard')
+        res = decode_sequence(ps, top_k_splicing=1, top_k_starts=1, beam_size=2)
         self.assertEqual(len(res.global_topk), 1)
         c = res.global_topk[0]
         self.assertEqual(c.events['dss'], [d])
@@ -659,7 +650,7 @@ class TestDecoder(unittest.TestCase):
         for pos, cls, span, p in [(s,P.START,3,0.99), (d1,P.DSS,2,0.99), (a1,P.ASS,2,0.99), (d2,P.DSS,2,0.99), (a2,P.ASS,2,0.99), (t,P.STOP,3,0.99)]:
             _set_event(probs, pos, cls, span, p)
         ps = PredictedSequence(10, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=16, scoring='boundary')
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=16)
         self.assertGreaterEqual(len(res.global_topk), 1)
 
     def test_multiple_starts_and_global_union(self):
@@ -683,7 +674,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t1, P.STOP, 3, 0.95)
         _set_event(probs, t2, P.STOP, 3, 0.95)
         ps = PredictedSequence(11, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=8)
+        res = decode_sequence(ps, top_k_splicing=2, top_k_starts=2, beam_size=8)
         self.assertGreaterEqual(len(res.per_start.keys()), 2)
         self.assertEqual(len(res.global_topk), 2)
 
@@ -704,7 +695,7 @@ class TestDecoder(unittest.TestCase):
         for pos in [(s1,P.START,3),(s2,P.START,3),(t1,P.STOP,3),(t2,P.STOP,3)]:
             _set_event(probs, pos[0], pos[1], pos[2], 0.9)
         ps = PredictedSequence(12, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=3, k_global=1, beam_size=8, allow_overlap=False)
+        res = decode_sequence(ps, top_k_splicing=3, top_k_starts=1, beam_size=8, allow_overlap=False)
         self.assertEqual(len(res.global_topk), 1)
 
     def test_event_near_end_no_oob(self):
@@ -725,7 +716,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, d, P.DSS, 2, 0.9)
         _set_event(probs, t, P.STOP, 3, 0.9)
         ps = PredictedSequence(13, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=2, k_global=2, beam_size=8)
+        res = decode_sequence(ps, top_k_splicing=2, top_k_starts=2, beam_size=8)
         # Ensure no exception; candidate existence depends on frame
         self.assertGreaterEqual(len(res.global_topk), 0)
 
@@ -756,8 +747,7 @@ class TestDecoder(unittest.TestCase):
         ps = PredictedSequence(sequence_index=3, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
 
-        # Boundary scoring: should propose both candidates
-        res_b = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=32, scoring='boundary')
+        res_b = decode_sequence(ps, top_k_splicing=3, top_k_starts=3, beam_size=32)
         self.assertGreaterEqual(len(res_b.global_topk), 2)
         # Identify single-exon vs split-exon by presence of junctions
         has_single = any(len(c.events['dss']) == 0 and len(c.exons) == 1 for c in res_b.global_topk)
@@ -765,13 +755,8 @@ class TestDecoder(unittest.TestCase):
         self.assertTrue(has_single)
         self.assertTrue(has_split)
 
-        # Hazard scoring: should also propose both
-        res_h = decode_sequence(ps, k_per_start=3, k_global=3, beam_size=32, scoring='hazard')
-        self.assertGreaterEqual(len(res_h.global_topk), 2)
-        has_single_h = any(len(c.events['dss']) == 0 and len(c.exons) == 1 for c in res_h.global_topk)
-        has_split_h = any(len(c.events['dss']) == 1 and len(c.events['ass']) == 1 and len(c.exons) == 2 for c in res_h.global_topk)
-        self.assertTrue(has_single_h)
-        self.assertTrue(has_split_h)
+        # Transition also proposes both; ordering may differ
+        res_h = res_b
 
     def test_donor_updates_phase_for_stop_framing(self):
         # START at 3; donor at 10 creates exon length (10 - 3) = 7 -> phase 1
@@ -797,7 +782,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(45, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, k_per_start=5, k_global=5, beam_size=1000, scoring='boundary')
+        res = decode_sequence(ps, top_k_splicing=5, top_k_starts=5, beam_size=1000)
         # Expect a split candidate with DSS at 10, ASS at 20, STOP at 24
         split = next(c for c in res.global_topk if c.events['dss'] == [d] and c.events['ass'] == [a] and c.events['stop'] == [t])
         self.assertIsNotNone(split)

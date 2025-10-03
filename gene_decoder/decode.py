@@ -42,14 +42,14 @@ def main():
     p = argparse.ArgumentParser(description='Decode gene structures from predicted probabilities')
     p.add_argument('--input-pkl', required=True, help='Pickle file containing List[PredictedSequence]')
     p.add_argument('--num-sequences', type=int, default=0)
-    p.add_argument('--topk-per-start', type=int, default=3)
-    p.add_argument('--topk-global', type=int, default=10)
+    p.add_argument('--topk-splicing', type=int, default=3)
+    p.add_argument('--topk-starts', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
     p.add_argument('--no-overlap', action='store_true')
     p.add_argument('--temperature-scale', type=float, default=1.0)
     p.add_argument('--z-transform-probs', action='store_true')
     p.add_argument('--min-prob', type=float, default=0.05)
-    p.add_argument('--scoring', type=str, default='hazard', choices=['boundary', 'hazard'], help='Scoring mode for decoder')
+    # removed scoring mode; decoder computes both boundary and transition scores
     p.add_argument('--codon-usage-json', default=None)
     p.add_argument('--lambda', dest='lambda_', type=float, default=0.0)
     p.add_argument('--output-json', required=True)
@@ -84,11 +84,10 @@ def main():
         print("decoding",ps.sequence_index)
         res = decode_sequence(
             ps,
-            k_per_start=args.topk_per_start,
-            k_global=args.topk_global,
+            top_k_splicing=args.topk_splicing,
+            top_k_starts=args.topk_starts,
             beam_size=args.beam_size,
             allow_overlap=not args.no_overlap,
-            scoring=str(args.scoring),
             min_logp=math.log(args.min_prob)
         )
 
@@ -98,13 +97,9 @@ def main():
                 for c in cands:
                     cds = _cds_from_exons(ps.sequence, c.exons)
                     c.codon_logp = codon_model.score(cds)
-                    c.total = c.boundary_logp + args.lambda_ * c.codon_logp
             for c in res.global_topk:
                 cds = _cds_from_exons(ps.sequence, c.exons)
                 c.codon_logp = codon_model.score(cds)
-                c.total = c.boundary_logp + args.lambda_ * c.codon_logp
-            # Resort global by total
-            res.global_topk.sort(key=lambda c: c.total, reverse=True)
 
         decoded.append(res)
 
@@ -117,9 +112,9 @@ def main():
                     {
                         "exons": c.exons,
                         "events": c.events,
-                        "boundary_logp": c.boundary_logp,
+                        "boundary_score": c.boundary_score,
+                        "transition_score": c.transition_score,
                         "codon_logp": c.codon_logp,
-                        "total": c.total,
                         "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
                     } for c in cands] for s, cands in dr.per_start.items()
                 },
@@ -127,9 +122,9 @@ def main():
                     {
                         "exons": c.exons,
                         "events": c.events,
-                        "boundary_logp": c.boundary_logp,
+                        "boundary_score": c.boundary_score,
+                        "transition_score": c.transition_score,
                         "codon_logp": c.codon_logp,
-                        "total": c.total,
                         "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
                     } for c in dr.global_topk
                 ]
@@ -142,7 +137,7 @@ def main():
     # Write TSV matching training columns + extra fields
     header = [
         'sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand',
-        'k', 'start_rank', 'start_index', 'start_logp', 'boundary_logp', 'codon_logp', 'total'
+        'k', 'start_rank', 'boundary_score', 'transition_score', 'codon_logp'
     ]
     with open(args.output_tsv, 'w') as f:
         f.write('\t'.join(header) + '\n')
@@ -150,8 +145,8 @@ def main():
             # Build per-start ranking maps (1-based) directly from this result
             per_start_rank: dict = {}
             for s, cands in dr.per_start.items():
-                # Determine sort key depending on reranking
-                sorted_cands = sorted(cands, key=lambda c: (c.total if c.codon_logp is not None else c.boundary_logp), reverse=True)
+                # Rank within a START by transition_score
+                sorted_cands = sorted(cands, key=lambda c: c.transition_score, reverse=True)
                 rank_map = {id(c): idx for idx, c in enumerate(sorted_cands, start=1)}
                 per_start_rank[s] = rank_map
 
@@ -162,9 +157,6 @@ def main():
                 gene_end = cand.exons[-1][1]      # end is inclusive in TSV
                 # Try to find the originating START index for reporting
                 start_idx = cand.events.get('start', [None])[0]
-                # Compute start_logp from probabilities
-                ps = ps_map[dr.sequence_index]
-                start_logp = _event_logp(ps.probabilities, start_idx, P.START) if start_idx is not None else None
                 # Determine start_rank based on per-start ordering
                 srank = ''
                 if start_idx is not None and start_idx in per_start_rank:
@@ -180,11 +172,9 @@ def main():
                         '+',
                         str(k_rank),
                         srank if srank != '' else '1',
-                        str(start_idx if start_idx is not None else ''),
-                        f"{start_logp:.6f}" if start_logp is not None else '',
-                        f"{cand.boundary_logp:.6f}",
+                        f"{cand.boundary_score:.6f}",
+                        f"{cand.transition_score:.6f}",
                         f"{cand.codon_logp:.6f}" if cand.codon_logp is not None else '',
-                        f"{cand.total:.6f}",
                     ]
                     f.write('\t'.join(row) + '\n')
 

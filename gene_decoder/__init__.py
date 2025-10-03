@@ -22,9 +22,9 @@ class PredictedSequence:
 class CandidateGene:
     exons: List[Tuple[int, int]]
     events: Dict[str, List[int]]
-    boundary_logp: float
+    boundary_score: float
+    transition_score: float
     codon_logp: Optional[float]
-    total: float
 
 
 @dataclass

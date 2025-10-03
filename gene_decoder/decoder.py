@@ -126,59 +126,56 @@ class Beam:
     def compute_scores(self, probs: np.ndarray, verbose: Optional[bool] = False) -> Tuple[float, float]:
         ordered_log = []
 
-        # boundary = sum of taken events
-        boundary = 0.0
+        # boundary_score: ONLY START and STOP contributions
+        boundary_score = 0.0
         for pos in self.events.get("start", []):
             event_score = _event_logp(probs, pos, P.START, False)
-            boundary += event_score
+            boundary_score += event_score
             ordered_log.append((pos, "start", event_score))
+        for pos in self.events.get("stop", []):
+            event_score = _event_logp(probs, pos, P.STOP, False)
+            boundary_score += event_score
+            ordered_log.append((pos, "stop", event_score))
+
+        # transition_score: DSS/ASS positives + penalties for skipped DSS/ASS
+        transition_score = 0.0
         for pos in self.events.get("dss", []):
             event_score = _event_logp(probs, pos, P.DSS, False)
-            boundary += event_score
+            transition_score += event_score
             ordered_log.append((pos, "dss+", event_score))
         for pos in self.events.get("ass", []):
             event_score = _event_logp(probs, pos, P.ASS, False)
-            boundary += event_score
+            transition_score += event_score
             ordered_log.append((pos, "ass+", event_score))
-        for pos in self.events.get("stop", []):
-            event_score = _event_logp(probs, pos, P.STOP, False)
-            boundary += event_score
-            ordered_log.append((pos, "stop", event_score))
-
-        # hazard penalties from skipped eligible transitions recorded during forward moves
-        hazard = 0.0
         for idx in self.skips.get("dss", []):
             event_score = _event_logp(probs, idx, P.DSS, True)
-            hazard += event_score
+            transition_score += event_score
             ordered_log.append((idx, "dss-", event_score))
         for idx in self.skips.get("ass", []):
             event_score = _event_logp(probs, idx, P.ASS, True)
-            hazard += event_score
+            transition_score += event_score
             ordered_log.append((idx, "ass-", event_score))
-
-        total = boundary + hazard
 
         if verbose:
             for pos, event, score in sorted(ordered_log, key=lambda t: t[0]):
                 print(self.id, event, "@", pos, "+=", score)
-            print(self.id, "total", total)
+            print(self.id, "boundary", boundary_score, "transition", transition_score)
 
-        return boundary, total
+        return boundary_score, transition_score
 
     def create_candidate_gene(self, probs: np.ndarray) -> CandidateGene:
-        boundary, total = self.compute_scores(probs, verbose=_debug_log_predicted())
+        boundary, transition = self.compute_scores(probs, verbose=_debug_log_predicted())
         return CandidateGene(
             exons=self.compute_exons(),
             events=self.events_copy(),
-            boundary_logp=boundary,
+            boundary_score=boundary,
+            transition_score=transition,
             codon_logp=None,
-            total=total,
         )
 
 
 def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, List[int]],
-                      k: int = 3, beam_size: int = 16,
-                      scoring: str = 'hazard') -> List[CandidateGene]:
+                      top_k_splicing: int = 3, beam_size: int = 16) -> List[CandidateGene]:
     seq = ps.sequence
     probs = ps.probabilities
     beam_id = uuid.uuid4().hex[:8]
@@ -202,8 +199,8 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     from functools import lru_cache
 
     def score_key(b: Beam) -> float:
-        boundary, total = b.compute_scores(probs)
-        return total if scoring == 'hazard' else boundary
+        _, transition = b.compute_scores(probs)
+        return transition
 
     def merge_prefix_suffix(prefix: Beam, tail: Beam) -> Beam:
         # Combine events, skips, and exons; take tail's position/state/phase trackers
@@ -349,8 +346,8 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
         # Rank and keep top-k at this state
         results.sort(key=score_key, reverse=True)
-        if len(results) > k:
-            results = results[:k]
+        if len(results) > top_k_splicing:
+            results = results[:top_k_splicing]
         return tuple(results)
 
     # Get suffix completions from start state, then add START event and build candidates
@@ -378,45 +375,57 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
         )
         candidates.append(with_start.create_candidate_gene(probs))
 
-    # Sort and return top-k
-    if scoring == 'hazard':
-        candidates.sort(key=lambda c: c.total, reverse=True)
-    else:
-        candidates.sort(key=lambda c: c.boundary_logp, reverse=True)
-    return candidates[:k]
+    # Sort by transition_score and return top_k_splicing
+    candidates.sort(key=lambda c: c.transition_score, reverse=True)
+    return candidates[:top_k_splicing]
 
 
-def decode_sequence(ps: PredictedSequence, k_per_start: int = 3, k_global: int = 10, beam_size: int = 16,
-                    allow_overlap: bool = True, scoring: str = 'hazard', min_logp: Optional[float] = None) -> DecodedResult:
+def decode_sequence(ps: PredictedSequence, top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
+                    allow_overlap: bool = True, min_logp: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
     if min_logp is None:
         min_logp = math.log(0.1)
     events = _scan_events(seq, ps.probabilities, min_logp=min_logp)
 
     per_start: Dict[int, List[CandidateGene]] = {}
-    all_candidates: List[CandidateGene] = []
+    start_boundary: Dict[int, float] = {}
     for s in events["start"]:
-        cands = _decode_from_start(ps, s, events, k=k_per_start, beam_size=beam_size, scoring=scoring)
+        cands = _decode_from_start(ps, s, events, top_k_splicing=top_k_splicing, beam_size=beam_size)
         per_start[s] = cands
-        all_candidates.extend(cands)
+        if cands:
+            start_boundary[s] = cands[0].boundary_score  # identical across variants of same START
 
-    # Global top-k with optional non-overlap policy (simple score sort; no packing)
-    key_fn = (lambda c: c.total) if scoring == 'hazard' else (lambda c: c.boundary_logp)
-    all_candidates.sort(key=key_fn, reverse=True)
-    global_top = []
+    # Select top_k_starts by boundary_score; include ties at cutoff (no tie-break)
+    sorted_starts = sorted(start_boundary.items(), key=lambda kv: kv[1], reverse=True)
+    chosen_starts: List[int] = []
+    if sorted_starts:
+        # Determine threshold boundary at the kth start (if available)
+        cutoff_index = min(top_k_starts, len(sorted_starts)) - 1
+        threshold = sorted_starts[cutoff_index][1]
+        for s, b in sorted_starts:
+            if b >= threshold:
+                chosen_starts.append(s)
+
+    # Build global list from chosen starts
+    global_candidates: List[CandidateGene] = []
+    for s in chosen_starts:
+        global_candidates.extend(per_start.get(s, []))
+
+    # Order global candidates primarily by boundary_score (desc), then transition_score (desc)
+    global_candidates.sort(key=lambda c: (c.boundary_score, c.transition_score), reverse=True)
+
     if allow_overlap:
-        global_top = all_candidates[:k_global]
+        global_top = global_candidates
     else:
-        # Greedy non-overlapping selection by score
+        # Greedy non-overlapping selection by boundary_score first
+        global_top = []
         used: List[Tuple[int, int]] = []
-        for c in all_candidates:
+        for c in global_candidates:
             span = (c.exons[0][0], c.exons[-1][1]) if c.exons else (0, 0)
             if any(not (span[1] <= u[0] or span[0] >= u[1]) for u in used):
                 continue
             global_top.append(c)
             used.append(span)
-            if len(global_top) >= k_global:
-                break
 
     return DecodedResult(sequence_index=ps.sequence_index, per_start=per_start, global_topk=global_top)
 
