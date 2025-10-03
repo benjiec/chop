@@ -350,14 +350,14 @@ class TestDecoder(unittest.TestCase):
 
     def test_codon_usage_scoring(self):
         # Build a small codon model that favors AAA heavily
-        model = CodonUsageModel(logp={c: np.log(1.0/64.0) for c in [a+b+c for a in 'ATGC' for b in 'ATGC' for c in 'ATGC']})
-        model.logp['AAA'] = 0.0  # highest logp
-        model.logp['GGG'] = -10.0
+        model = CodonUsageModel(probabilities={c: 1.0/64.0 for c in [a+b+c for a in 'ATGC' for b in 'ATGC' for c in 'ATGC']})
+        model.probabilities['AAA'] = 0.99
+        model.probabilities['GGG'] = 0.01
 
         cds1 = 'AAA' * 4
         cds2 = 'GGG' * 4
-        s1 = model.score(cds1)
-        s2 = model.score(cds2)
+        s1 = model.rare_codon_penalty(cds1)
+        s2 = model.rare_codon_penalty(cds2)
         self.assertGreater(s1, s2)
 
     def test_stop_terminates_immediately(self):

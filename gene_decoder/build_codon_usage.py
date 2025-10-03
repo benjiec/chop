@@ -22,7 +22,7 @@ def main():
     p.add_argument('--fna', required=True, help='FASTA of genomic sequences (can be .gz)')
     p.add_argument('--tsv', required=True, help='Training annotations TSV (row-per-exon)')
     p.add_argument('--alpha', type=float, default=1.0, help='Additive smoothing')
-    p.add_argument('--output', required=True, help='Output JSON path for codon->logp')
+    p.add_argument('--output', required=True, help='Output JSON path for codon->prob')
     args = p.parse_args()
 
     records = _load_fasta(args.fna)

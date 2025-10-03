@@ -51,7 +51,6 @@ def main():
     p.add_argument('--min-prob', type=float, default=0.05)
     # removed scoring mode; decoder computes both boundary and transition scores
     p.add_argument('--codon-usage-json', default=None)
-    p.add_argument('--lambda', dest='lambda_', type=float, default=0.0)
     p.add_argument('--output-json', required=True)
     p.add_argument('--output-tsv', required=True)
     p.add_argument('--output-fna', required=True)
@@ -92,14 +91,14 @@ def main():
         )
 
         # Rerank with codon usage if requested
-        if codon_model is not None and args.lambda_ != 0.0:
+        if codon_model is not None:
             for start_pos, cands in res.per_start.items():
                 for c in cands:
                     cds = _cds_from_exons(ps.sequence, c.exons)
-                    c.codon_logp = codon_model.score(cds)
+                    c.codon_penalty = codon_model.rare_codon_penalty(cds)
             for c in res.global_topk:
                 cds = _cds_from_exons(ps.sequence, c.exons)
-                c.codon_logp = codon_model.score(cds)
+                c.codon_penalty = codon_model.rare_codon_penalty(cds)
 
         decoded.append(res)
 
@@ -114,7 +113,7 @@ def main():
                         "events": c.events,
                         "boundary_score": c.boundary_score,
                         "transition_score": c.transition_score,
-                        "codon_logp": c.codon_logp,
+                        "codon_penalty": c.codon_penalty,
                         "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
                     } for c in cands] for s, cands in dr.per_start.items()
                 },
@@ -124,7 +123,7 @@ def main():
                         "events": c.events,
                         "boundary_score": c.boundary_score,
                         "transition_score": c.transition_score,
-                        "codon_logp": c.codon_logp,
+                        "codon_penalty": c.codon_penalty,
                         "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
                     } for c in dr.global_topk
                 ]
@@ -137,7 +136,7 @@ def main():
     # Write TSV matching training columns + extra fields
     header = [
         'sequence_id', 'gene_id', 'gene_start', 'gene_end', 'exon_start', 'exon_end', 'strand',
-        'k', 'start_rank', 'boundary_score', 'transition_score', 'codon_logp'
+        'k', 'start_rank', 'boundary_score', 'transition_score', 'codon_penalty'
     ]
     with open(args.output_tsv, 'w') as f:
         f.write('\t'.join(header) + '\n')
@@ -174,7 +173,7 @@ def main():
                         srank if srank != '' else '1',
                         f"{cand.boundary_score:.6f}",
                         f"{cand.transition_score:.6f}",
-                        f"{cand.codon_logp:.6f}" if cand.codon_logp is not None else '',
+                        f"{cand.codon_penalty:.6f}" if cand.codon_penalty is not None else '',
                     ]
                     f.write('\t'.join(row) + '\n')
 
