@@ -41,6 +41,7 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int) -> float:
 def main():
     p = argparse.ArgumentParser(description='Decode gene structures from predicted probabilities')
     p.add_argument('--input-pkl', required=True, help='Pickle file containing List[PredictedSequence]')
+    p.add_argument('--num-sequences', type=int, default=0)
     p.add_argument('--topk-per-start', type=int, default=3)
     p.add_argument('--topk-global', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
@@ -57,8 +58,8 @@ def main():
 
     with open(args.input_pkl, 'rb') as f:
         items: List[PredictedSequence] = pickle.load(f)
-    print("there are", len(items), "sequences")
-    items = items[:1]
+    if args.num_sequences:
+        items = items[:args.num_sequences]
 
     codon_model = None
     if args.codon_usage_json:
