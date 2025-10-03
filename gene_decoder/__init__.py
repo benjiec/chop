@@ -16,6 +16,7 @@ class PredictedSequence:
     sequence: str
     probabilities: np.ndarray
     class_order: List[str]
+    sequence_id: Optional[str] = None
 
 
 @dataclass

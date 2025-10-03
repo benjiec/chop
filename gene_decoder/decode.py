@@ -51,7 +51,7 @@ def main():
     p.add_argument('--min-prob', type=float, default=0.05)
     # removed scoring mode; decoder computes both boundary and transition scores
     p.add_argument('--codon-usage-json', default=None)
-    p.add_argument('--output-json', required=True)
+    # Removed JSON output
     p.add_argument('--output-tsv', required=True)
     p.add_argument('--output-fna', required=True)
     args = p.parse_args()
@@ -91,47 +91,23 @@ def main():
         )
 
         # Rerank with codon usage if requested
-        if codon_model is not None:
-            for start_pos, cands in res.per_start.items():
-                for c in cands:
+        for start_pos, cands in res.per_start.items():
+            for c in cands:
+                if codon_model is not None:
                     cds = _cds_from_exons(ps.sequence, c.exons)
                     c.codon_penalty = codon_model.rare_codon_penalty(cds)
-            for c in res.global_topk:
+                else:
+                    c.codon_penalty = None
+        for c in res.global_topk:
+            if codon_model is not None:
                 cds = _cds_from_exons(ps.sequence, c.exons)
                 c.codon_penalty = codon_model.rare_codon_penalty(cds)
+            else:
+                c.codon_penalty = None
 
         decoded.append(res)
 
-    # Write JSON
-    out_json = {
-        "sequences": [
-            {
-                "sequence_index": dr.sequence_index,
-                "per_start": {str(s): [
-                    {
-                        "exons": c.exons,
-                        "events": c.events,
-                        "boundary_score": c.boundary_score,
-                        "transition_score": c.transition_score,
-                        "codon_penalty": c.codon_penalty,
-                        "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
-                    } for c in cands] for s, cands in dr.per_start.items()
-                },
-                "global": [
-                    {
-                        "exons": c.exons,
-                        "events": c.events,
-                        "boundary_score": c.boundary_score,
-                        "transition_score": c.transition_score,
-                        "codon_penalty": c.codon_penalty,
-                        "start_logp": _event_logp(ps_map[dr.sequence_index].probabilities, c.events.get('start', [None])[0], P.START) if c.events.get('start') else None,
-                    } for c in dr.global_topk
-                ]
-            } for dr in decoded
-        ]
-    }
-    with open(args.output_json, 'w') as f:
-        json.dump(out_json, f)
+    # JSON output removed per request
 
     # Write TSV matching training columns + extra fields
     header = [
@@ -160,9 +136,12 @@ def main():
                 srank = ''
                 if start_idx is not None and start_idx in per_start_rank:
                     srank = str(per_start_rank[start_idx].get(id(cand), 1))
+                # Resolve sequence identifier: prefer PredictedSequence.sequence_id if available
+                ps = ps_map.get(dr.sequence_index)
+                seq_identifier = ps.sequence_id if (ps is not None and getattr(ps, 'sequence_id', None)) else str(dr.sequence_index)
                 for ex_idx, (xs, xe) in enumerate(cand.exons):
                     row = [
-                        str(dr.sequence_index),
+                        str(seq_identifier),
                         gene_id,
                         str(gene_start),
                         str(gene_end),
@@ -180,10 +159,12 @@ def main():
     # Write FNA (input sequences)
     with open(args.output_fna, 'w') as f:
         for ps in items:
-            f.write(f">sequence_{ps.sequence_index}\n")
+            # Prefer sequence_id as FASTA header when available
+            header = ps.sequence_id if getattr(ps, 'sequence_id', None) else f"sequence_{ps.sequence_index}"
+            f.write(f">{header}\n")
             f.write(ps.sequence + "\n")
 
-    print(f"✓ Wrote {args.output_json}, {args.output_tsv}, {args.output_fna}")
+    print(f"✓ Wrote {args.output_tsv}, {args.output_fna}")
 
 
 if __name__ == '__main__':

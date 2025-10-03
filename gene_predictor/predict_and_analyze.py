@@ -167,11 +167,15 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
     max_len = int(model.model.embedding.max_seq_length)
 
     with torch.no_grad():
+        # Maintain a global sequence counter to map to dataset order
+        seq_counter = 0
         for batch_idx, (sequences, targets) in enumerate(data_loader):
             sequences = sequences.to(device)
             targets = targets.to(device)
 
             B = sequences.size(0)
+            # Enforce batch_size == 1 for deterministic mapping to dataset contigs
+            assert B == 1, "run_predictions expects DataLoader with batch_size == 1"
             for b in range(B):
                 seq_tokens_b = sequences[b:b+1]  # (1, L)
                 targets_b = targets[b].cpu().numpy()
@@ -198,6 +202,12 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     attn_export = {name: tensor[0].cpu().numpy() for name, tensor in layer_attn_b.items() if tensor is not None}
 
                 seq_np = seq_tokens_b[0].cpu().numpy()
+                # Fetch the sequence_id (accession) from the dataset's contig_ids using global counter, if available
+                ds = data_loader.dataset
+                sequence_id: Optional[str] = None
+                if hasattr(ds, 'contig_ids'):
+                    assert seq_counter < len(ds.contig_ids), "Sequence counter out of range for contig_ids"
+                    sequence_id = ds.contig_ids[seq_counter]
                 result_entry = {
                     'sequence_index': batch_idx if B == 1 else f"{batch_idx}:{b}",
                     'sequence_tokens': seq_np,
@@ -205,11 +215,13 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     'predictions': preds_b,
                     'probabilities': probs_b,
                     'logits_raw': logits_raw_np,
+                    'sequence_id': sequence_id,
                 }
                 if return_attention and attn_export is not None:
                     result_entry['attentions'] = attn_export
 
                 all_results.append(result_entry)
+                seq_counter += 1
             
     print(f"✓ Completed predictions for {len(all_results)} sequences")
     return all_results
@@ -222,9 +234,13 @@ def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
         for result in results_data:
             seq_idx = result['sequence_index']
             sequence = convert_tokens_to_sequence(result['sequence_tokens'])
+            sequence_id = result.get('sequence_id')
             
             # Write FASTA header and sequence
-            f.write(f">sequence_{seq_idx}\n")
+            if sequence_id:
+                f.write(f">{sequence_id} sequence_{seq_idx}\n")
+            else:
+                f.write(f">sequence_{seq_idx}\n")
             f.write(f"{sequence}\n")
     
     print(f"✓ Input sequences saved to: {output_path}")
@@ -423,8 +439,12 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
             # Prepare per-position mapping for uppercase and color priority
             uppercase, site_at = _merge_site_priority_map(L, sites)
 
-            # Header per sequence
-            f.write(f">sequence_{seq_idx}\n")
+            # Header per sequence (include sequence_id if available)
+            seq_id = result.get('sequence_id')
+            if seq_id:
+                f.write(f">{seq_id} sequence_{seq_idx}\n")
+            else:
+                f.write(f">sequence_{seq_idx}\n")
 
             # Render sequence in chunks
             base_seq = sequence.lower()
@@ -726,6 +746,7 @@ def main():
                 sequence=seq,
                 probabilities=r['probabilities'],
                 class_order=class_order,
+                sequence_id=r.get('sequence_id'),
             ))
         pkl_path = Path(f"{base_name}_decoder.pickle")
         if not pkl_path.is_absolute():
