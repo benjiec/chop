@@ -98,6 +98,110 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res['gene']['fp'], 1)
             self.assertEqual(res['gene']['fn'], 1)
 
+    def test_topk_starts_selection_affects_metrics(self):
+        with tempfile.TemporaryDirectory() as td:
+            # expected: only one correct gene at start 101
+            expected = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+                "contig4\ttrue\t101\t120\t101\t120\t+\n"
+            )
+            # decoded: two starts
+            # - start 101 (boundary 10.0): correct
+            # - start 201 (boundary 9.0): incorrect gene -> FP when included
+            decoded = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\tk\tstart_rank\tboundary_score\ttransition_score\tcodon_penalty\n"
+                "contig4\tgene_1\t101\t120\t101\t120\t+\t1\t1\t10.0\t0.0\t\n"
+                "contig4\tgene_1\t201\t240\t201\t240\t+\t2\t1\t9.0\t0.0\t\n"
+            )
+            exp_path = os.path.join(td, 'exp.tsv')
+            dec_path = os.path.join(td, 'dec.tsv')
+            _write(exp_path, expected)
+            _write(dec_path, decoded)
+
+            # topk_starts=1 selects only start 101 -> perfect match
+            res1 = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            self.assertEqual(res1['exon']['tp'], 1)
+            self.assertEqual(res1['exon']['fp'], 0)
+            self.assertEqual(res1['exon']['fn'], 0)
+            self.assertEqual(res1['gene']['tp'], 1)
+            self.assertEqual(res1['gene']['fp'], 0)
+            self.assertEqual(res1['gene']['fn'], 0)
+
+            # topk_starts=2 includes both starts -> adds one FP exon and FP gene
+            res2 = evaluate_decoding(dec_path, exp_path, topk_starts=2, top_start_rank_only=True)
+            self.assertEqual(res2['exon']['tp'], 1)
+            self.assertEqual(res2['exon']['fp'], 1)
+            self.assertEqual(res2['exon']['fn'], 0)
+            self.assertEqual(res2['gene']['tp'], 1)
+            self.assertEqual(res2['gene']['fp'], 1)
+            self.assertEqual(res2['gene']['fn'], 0)
+
+    def test_gene_tp_requires_exact_splice_boundaries(self):
+        with tempfile.TemporaryDirectory() as td:
+            # expected two-exon plus strand gene
+            expected = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+                "contig5\tgeneD\t6\t30\t6\t12\t+\n"
+                "contig5\tgeneD\t6\t30\t21\t30\t+\n"
+            )
+            # decoded: same start, but second exon end off by +1 (31) -> gene should NOT match
+            decoded = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\tk\tstart_rank\tboundary_score\ttransition_score\tcodon_penalty\n"
+                "contig5\tgene_1\t6\t31\t6\t12\t+\t1\t1\t5.0\t0.0\t\n"
+                "contig5\tgene_1\t6\t31\t21\t31\t+\t1\t1\t5.0\t0.0\t\n"
+            )
+            exp_path = os.path.join(td, 'exp.tsv')
+            dec_path = os.path.join(td, 'dec.tsv')
+            _write(exp_path, expected)
+            _write(dec_path, decoded)
+
+            res = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            # exon-level: one TP (first exon), one FP (mismatched second), one FN (missing expected second)
+            self.assertEqual(res['exon']['tp'], 1)
+            self.assertEqual(res['exon']['fp'], 1)
+            self.assertEqual(res['exon']['fn'], 1)
+            # gene-level: no TP; predicted gene doesn't exactly match expected exon set
+            self.assertEqual(res['gene']['tp'], 0)
+            self.assertEqual(res['gene']['fp'], 1)
+            self.assertEqual(res['gene']['fn'], 1)
+
+    def test_emulated_topk_splicing_multiple_candidates_under_start(self):
+        with tempfile.TemporaryDirectory() as td:
+            # expected single-exon gene at a start
+            expected = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+                "contig6\tgeneE\t51\t80\t51\t80\t+\n"
+            )
+            # decoded under the same start has two candidates (emulates top_k_splicing=2):
+            # rank 1 is incorrect, rank 2 is the correct gene
+            decoded = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\tk\tstart_rank\tboundary_score\ttransition_score\tcodon_penalty\n"
+                "contig6\tgene_1\t51\t79\t51\t79\t+\t1\t1\t6.0\t0.0\t\n"
+                "contig6\tgene_2\t51\t80\t51\t80\t+\t2\t2\t5.5\t0.0\t\n"
+            )
+            exp_path = os.path.join(td, 'exp.tsv')
+            dec_path = os.path.join(td, 'dec.tsv')
+            _write(exp_path, expected)
+            _write(dec_path, decoded)
+
+            # top_start_rank_only: include only rank 1 -> wrong gene only
+            res_top = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            self.assertEqual(res_top['exon']['tp'], 0)
+            self.assertEqual(res_top['exon']['fp'], 1)
+            self.assertEqual(res_top['exon']['fn'], 1)
+            self.assertEqual(res_top['gene']['tp'], 0)
+            self.assertEqual(res_top['gene']['fp'], 1)
+            self.assertEqual(res_top['gene']['fn'], 1)
+
+            # include all candidates under the start -> both genes considered
+            res_all = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=False)
+            self.assertEqual(res_all['exon']['tp'], 1)
+            self.assertEqual(res_all['exon']['fp'], 1)
+            self.assertEqual(res_all['exon']['fn'], 0)
+            self.assertEqual(res_all['gene']['tp'], 1)
+            self.assertEqual(res_all['gene']['fp'], 1)
+            self.assertEqual(res_all['gene']['fn'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
