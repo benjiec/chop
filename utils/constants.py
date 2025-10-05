@@ -1,6 +1,7 @@
 
 ConventionalStopCodons = {'TAA', 'TAG', 'TGA'}
-ConventionalDonorDinucleotides = {'GT', 'GC', 'GA'}
+StandardDonorDinucleotides = {'GT'}
+DinoDonorDinucleotides = {'GT', 'GC', 'GA'}
 ConventionalAcceptorDinucleotides = {'AG'}
 
 

@@ -12,7 +12,8 @@ from utils.constants import (
     GenePredictionClass as P,
     DNAEmbed,
     ConventionalStopCodons,
-    ConventionalDonorDinucleotides,
+    StandardDonorDinucleotides,
+    DinoDonorDinucleotides,
     ConventionalAcceptorDinucleotides,
 )
 from utils.windowing import compute_window_slices
@@ -243,7 +244,7 @@ def build_targets_for_annotation(
             acceptor_pos = e2[0] - 2
             if 0 <= donor_pos+1 < L:
                 donor_di = seq[donor_pos:donor_pos+2]
-                donor_ok = (donor_di in ConventionalDonorDinucleotides)
+                donor_ok = (donor_di in StandardDonorDinucleotides.union(DinoDonorDinucleotides))
                 if not donor_ok:
                     if failure_counts is not None:
                         failure_counts['dss'] = failure_counts.get('dss', 0) + 1
@@ -264,7 +265,7 @@ def build_targets_for_annotation(
             acceptor_pos = e1[1]
             if 0 <= donor_pos and donor_pos+1 < L:
                 donor_di = _reverse_complement(seq[donor_pos:donor_pos+2])
-                donor_ok = (donor_di in ConventionalDonorDinucleotides)
+                donor_ok = (donor_di in StandardDonorDinucleotides.union(DinoDonorDinucleotides))
                 if not donor_ok:
                     if failure_counts is not None:
                         failure_counts['dss'] = failure_counts.get('dss', 0) + 1

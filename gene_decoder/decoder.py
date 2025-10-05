@@ -3,8 +3,12 @@ from dataclasses import dataclass, field
 import uuid
 import numpy as np
 import math
-from utils.constants import GenePredictionClass as P, ConventionalStopCodons, ConventionalDonorDinucleotides, ConventionalAcceptorDinucleotides
 from gene_decoder import PredictedSequence, CandidateGene, DecodedResult
+from utils.constants import (
+    GenePredictionClass as P,
+    ConventionalStopCodons,
+    ConventionalAcceptorDinucleotides
+)
 
 
 def _debug_log_scan(j):
@@ -54,7 +58,7 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bo
     return _log(mean_p)
 
 
-def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optional[float] = None) -> Dict[str, List[int]]:
+def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = None, min_logp: Optional[float] = None) -> Dict[str, List[int]]:
     starts: List[int] = []
     stops: List[int] = []
     dss: List[int] = []
@@ -80,7 +84,7 @@ def _scan_events(seq: str, probs: Optional[np.ndarray] = None, min_logp: Optiona
                 stops.append(i)
     for i in range(L - 1):
         di = seq[i:i+2]
-        if di in ConventionalDonorDinucleotides:
+        if di in dss_motifs:
             if probs is not None and min_logp is not None:
                 if _event_logp(probs, i, P.DSS) > min_logp:
                     if _debug_log_scan(i):
@@ -380,12 +384,12 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     return candidates[:top_k_splicing]
 
 
-def decode_sequence(ps: PredictedSequence, top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
+def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
                     allow_overlap: bool = True, min_logp: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
     if min_logp is None:
         min_logp = math.log(0.1)
-    events = _scan_events(seq, ps.probabilities, min_logp=min_logp)
+    events = _scan_events(seq, dss_motifs, probs=ps.probabilities, min_logp=min_logp)
 
     per_start: Dict[int, List[CandidateGene]] = {}
     start_boundary: Dict[int, float] = {}

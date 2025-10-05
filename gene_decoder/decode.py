@@ -10,9 +10,12 @@ from gene_decoder import PredictedSequence, DecodedResult, CandidateGene
 from gene_decoder.decoder import decode_sequence
 from gene_decoder.scoring import global_z_normalize_prob, temperature_rescale_probs
 from gene_decoder.codon_usage import CodonUsageModel
-from utils.constants import GenePredictionClass as P
 import math
-
+from utils.constants import (
+    GenePredictionClass as P,
+    StandardDonorDinucleotides,
+    DinoDonorDinucleotides,
+)
 
 def _cds_from_exons(seq: str, exons: List[tuple]) -> str:
     return ''.join(seq[s:e] for (s, e) in exons)
@@ -41,6 +44,7 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int) -> float:
 def main():
     p = argparse.ArgumentParser(description='Decode gene structures from predicted probabilities')
     p.add_argument('--input-pkl', required=True, help='Pickle file containing List[PredictedSequence]')
+    p.add_argument('--dss-motifs', required=True, help='Can either be standard or dino')
     p.add_argument('--num-sequences', type=int, default=0)
     p.add_argument('--topk-splicing', type=int, default=3)
     p.add_argument('--topk-starts', type=int, default=10)
@@ -60,6 +64,11 @@ def main():
         items: List[PredictedSequence] = pickle.load(f)
     if args.num_sequences:
         items = items[:args.num_sequences]
+
+    assert args.dss_motifs in ('standard', 'dino'), "DSS motif specification must be 'standard' or 'dino'"
+    dss_motifs = StandardDonorDinucleotides
+    if args.dss_motifs == "dino":
+        dss_motifs = dss_motifs.union(DinoDonorDinucleotides)
 
     codon_model = None
     if args.codon_usage_json:
@@ -83,6 +92,7 @@ def main():
         print("decoding",ps.sequence_index)
         res = decode_sequence(
             ps,
+            dss_motifs,
             top_k_splicing=args.topk_splicing,
             top_k_starts=args.topk_starts,
             beam_size=args.beam_size,
