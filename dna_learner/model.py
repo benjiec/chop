@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from transformers import AutoModel, AutoTokenizer
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Callable
 import math
 import sys
 from pathlib import Path
@@ -404,7 +404,7 @@ class GenePredictorModel(nn.Module):
 
 class GenePredictorModule(pl.LightningModule):
     
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], custom_loss_fn: Optional[Callable] = None):
         super().__init__()
         
         # Store config
@@ -457,6 +457,9 @@ class GenePredictorModule(pl.LightningModule):
 
         # False-positive penalty coefficient (beta). Applies one-vs-rest BCE for weighted classes
         self.fp_beta: float = float(loss_config.get('fp_beta', 0.1))
+
+        # Optional externally provided custom loss function
+        self.custom_loss_fn: Optional[Callable] = custom_loss_fn
 
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
@@ -567,9 +570,12 @@ class GenePredictorModule(pl.LightningModule):
         sequences, targets = batch
         logits = self.model(sequences)
         
-        # Unified loss (edge + class filter + entropy)
+        # Use custom loss if provided; otherwise use default adjusted loss
         comp = {}
-        loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        if self.custom_loss_fn is not None:
+            loss = self.custom_loss_fn(sequences, targets, logits, comp)
+        else:
+            loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
         # Expose components for callback aggregation without extra forwards
         self._last_train_components = comp
 
@@ -590,9 +596,12 @@ class GenePredictorModule(pl.LightningModule):
         sequences, targets = batch
         logits = self.model(sequences)
         
-        # Unified loss (edge + class filter + entropy)
+        # Use custom loss if provided; otherwise use default adjusted loss
         comp = {}
-        loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        if self.custom_loss_fn is not None:
+            loss = self.custom_loss_fn(sequences, targets, logits, comp)
+        else:
+            loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
         # Expose components for callback aggregation
         self._last_val_components = comp
 

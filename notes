@@ -20,4 +20,7 @@ PYTHONPATH=. python gene_decoder/decode.py --min-prob 0.5 --num-sequences 253 --
   --output-tsv x.tsv --output-fna x.fna \
   --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle 
 
-PYTHONPATH=. python gene_decoder/assess_decoding.py --decoded-tsv x.tsv --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv --topk-starts 3
+PYTHONPATH=. python gene_decoder/assess_decoding.py \
+  --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
+  --topk-starts 3 \
+  --decoded-tsv x.tsv 

@@ -15,7 +15,8 @@ def train(
     output_dir: Path,
     additional_callback_generator: Optional[Callable[[DataLoader], List[pl.Callback]]] = None,
     monitor_metric: str = 'val_loss',
-    monitor_mode: str = 'min'
+    monitor_mode: str = 'min',
+    custom_loss_fn: Optional[Callable] = None,
 ):
 
     # Split dataset
@@ -49,7 +50,7 @@ def train(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    module = GenePredictorModule(config)
+    module = GenePredictorModule(config, custom_loss_fn=custom_loss_fn)
     
     total_params = sum(p.numel() for p in module.parameters())
     trainable_params = sum(p.numel() for p in module.parameters() if p.requires_grad)
