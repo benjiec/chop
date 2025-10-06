@@ -8,11 +8,13 @@ from dna_learner.trainer import train as run_trainer
 import argparse
 from datetime import datetime
 import numpy as np
-from typing import Optional, Dict
+from typing import Optional, Dict, Callable
 
 import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
+from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
+from utils.losses import event_based_ce_loss_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
 from gene_predictor.metrics_callback import F1Callback
@@ -110,7 +112,9 @@ def train(fna_fn: str, tsv_fn: str,
           entropy_lambda: float = 0.0,
           fp_beta: float = 5.0,
           accumulate_grad_batches: int = 1,
-          min_per_class_per_batch: int = 1):
+          min_per_class_per_batch: int = 1,
+          custom_loss_fn: Optional[Callable] = None,
+          dss_motifs: Optional[str] = None):
 
     # Create config
     config = create_config(
@@ -175,7 +179,8 @@ def train(fna_fn: str, tsv_fn: str,
         output_dir,
         mk_training_cb,
         monitor_metric='val_loss',
-        monitor_mode='min'
+        monitor_mode='min',
+        custom_loss_fn=custom_loss_fn,
     )
 
     print(f"results saved to: {output_dir}")
@@ -226,6 +231,8 @@ def main():
     parser.add_argument('--entropy-lambda', type=float, default=0.0, help='Entropy regularization strength')
     parser.add_argument('--fp-beta', type=float, default=5.0, help='False positive penalty coefficient')
     parser.add_argument('--min-per-class-per-batch', type=int, default=1, help='Minimum items per target class per batch (recycling allowed)')
+    # required DSS motifs choice
+    parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
 
     args = parser.parse_args()
     
@@ -258,7 +265,18 @@ def main():
         except Exception as e:
             raise ValueError(f"Invalid --focal-alpha '{args.focal_alpha}': must be comma-separated floats") from e
     
-    # Run test
+    # Resolve DSS motifs
+    if args.dss_motifs == 'standard':
+        dss_set = StandardDonorDinucleotides
+    elif args.dss_motifs == 'dino':
+        dss_set = DinoDonorDinucleotides
+    else:
+        raise ValueError('Invalid --dss-motifs')
+
+    # Build custom loss from selection
+    custom_loss = event_based_ce_loss_factory(dss_set)
+
+    # Run training
     output_dir = train(
         args.fna_fn, args.tsv_fn,
         d_model=args.d_model,
@@ -291,6 +309,8 @@ def main():
         fp_beta=args.fp_beta,
         accumulate_grad_batches=args.accumulate_grad_batches,
         min_per_class_per_batch=args.min_per_class_per_batch,
+        custom_loss_fn=custom_loss,
+        dss_motifs=args.dss_motifs,
     )
 
 if __name__ == "__main__":
