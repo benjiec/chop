@@ -57,7 +57,7 @@ def main():
     p.add_argument('--codon-usage-json', default=None)
     # Removed JSON output
     p.add_argument('--output-tsv', required=True)
-    p.add_argument('--output-fna', required=True)
+    p.add_argument('--output-fna')
     args = p.parse_args()
 
     with open(args.input_pkl, 'rb') as f:
@@ -165,16 +165,17 @@ def main():
                         f"{cand.codon_penalty:.6f}" if cand.codon_penalty is not None else '',
                     ]
                     f.write('\t'.join(row) + '\n')
+    print(f"✓ Wrote {args.output_tsv}")
 
     # Write FNA (input sequences)
-    with open(args.output_fna, 'w') as f:
-        for ps in items:
-            # Prefer sequence_id as FASTA header when available
-            header = ps.sequence_id if getattr(ps, 'sequence_id', None) else f"sequence_{ps.sequence_index}"
-            f.write(f">{header}\n")
-            f.write(ps.sequence + "\n")
-
-    print(f"✓ Wrote {args.output_tsv}, {args.output_fna}")
+    if args.output_fna:
+        with open(args.output_fna, 'w') as f:
+            for ps in items:
+                # Prefer sequence_id as FASTA header when available
+                header = ps.sequence_id if getattr(ps, 'sequence_id', None) else f"sequence_{ps.sequence_index}"
+                f.write(f">{header}\n")
+                f.write(ps.sequence + "\n")
+        print(f"✓ Wrote {args.output_fna}")
 
 
 if __name__ == '__main__':
