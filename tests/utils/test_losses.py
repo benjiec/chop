@@ -3,7 +3,8 @@
 import unittest
 import torch
 
-from utils.losses import event_based_ce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.constants import GenePredictionClass as P
 
 
 class TestEventBasedCELoss(unittest.TestCase):
@@ -196,6 +197,100 @@ class TestEventBasedCELoss(unittest.TestCase):
         self.assertEqual(comp2.get('event_count'), 4)  # GA span now included
         # Including the worse GA event should increase the mean loss
         self.assertGreater(float(v2.detach().cpu().item()), float(v1.detach().cpu().item()))
+
+
+class TestEventBasedWeightedLosses(unittest.TestCase):
+    def test_weighted_ce_increases_when_high_ce_class_weight_is_higher(self):
+        # Sequence with START at 0..2 and STOP at 5..7
+        A, T, G, C = 0, 1, 2, 3
+        seq = [A, T, G,  C, C,  T, A, A,  C]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START
+        targets[0, 5:8] = P.STOP
+
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        # Make START tokens relatively wrong (higher CE): p(true) ~ 0.4
+        logits[0, 0:3, P.START] = 0.0
+        logits[0, 0:3, 0] = 0.5  # distractor
+        # Make STOP tokens relatively correct (lower CE): p(true) ~ 0.9
+        logits[0, 5:8, P.STOP] = 5.0
+
+        # Unweighted CE
+        loss_unweighted = event_based_ce_loss_factory({'GT'})(sequences, targets, logits, {})
+        # Weighted CE: emphasize START class more
+        cw = {P.START: 2.0, P.STOP: 1.0}
+        loss_weighted = event_based_ce_loss_factory({'GT'}, class_weights=cw)(sequences, targets, logits, {})
+        self.assertGreater(float(loss_weighted.detach().cpu().item()), float(loss_unweighted.detach().cpu().item()))
+
+    def test_bce_neg_weight_increases_loss_for_false_positives(self):
+        # Two ATG spans: first is true START, second is not START
+        A, T, G, C = 0, 1, 2, 3
+        # Positions 0..2 -> ATG, 6..8 -> ATG
+        seq = [A, T, G,  C, C,  C,  A, T, G]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START   # positive START span
+        # second ATG remains INTERGENIC (negative for START)
+
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        # Positive span: make START likely (low loss)
+        logits[0, 0:3, P.START] = 4.0
+        # Negative span: make START somewhat likely (false positive-like)
+        logits[0, 6:9, P.START] = 1.5
+
+        # pos weights from class weights; set START pos=2, neg weight varies
+        pos_w = {P.START: 2.0}
+        bce_low_neg = event_based_bce_loss_factory({'GT'}, pos_weights=pos_w, neg_weights={P.START: 1.0})
+        bce_high_neg = event_based_bce_loss_factory({'GT'}, pos_weights=pos_w, neg_weights={P.START: 3.0})
+
+        v_low = bce_low_neg(sequences, targets, logits, {})
+        v_high = bce_high_neg(sequences, targets, logits, {})
+        self.assertGreater(float(v_high.detach().cpu().item()), float(v_low.detach().cpu().item()))
+
+    def test_str_vs_int_keyed_weights_equivalence_ce(self):
+        # Simple sequence with one START span to exercise weighting
+        A, T, G, C = 0, 1, 2, 3
+        seq = [A, T, G, C, C]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        logits[0, 0:3, P.START] = 2.0
+
+        ce_int = event_based_ce_loss_factory({'GT'}, class_weights={P.START: 2.0})
+        ce_str = event_based_ce_loss_factory({'GT'}, class_weights={'START': 2.0})
+        v_int = float(ce_int(sequences, targets, logits, {}).detach().cpu().item())
+        v_str = float(ce_str(sequences, targets, logits, {}).detach().cpu().item())
+        self.assertAlmostEqual(v_int, v_str, places=8)
+
+    def test_str_vs_int_keyed_weights_equivalence_bce(self):
+        # Two ATG spans: first positive, second negative
+        A, T, G, C = 0, 1, 2, 3
+        seq = [A, T, G,  C, C,  A, T, G]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        logits[0, 0:3, P.START] = 3.0
+        logits[0, 5:8, P.START] = 1.0
+
+        bce_int = event_based_bce_loss_factory({'GT'}, pos_weights={P.START: 2.0}, neg_weights={P.START: 1.5})
+        bce_str = event_based_bce_loss_factory({'GT'}, pos_weights={'START': 2.0}, neg_weights={'START': 1.5})
+        v_int = float(bce_int(sequences, targets, logits, {}).detach().cpu().item())
+        v_str = float(bce_str(sequences, targets, logits, {}).detach().cpu().item())
+        self.assertAlmostEqual(v_int, v_str, places=8)
+
 
 
 if __name__ == '__main__':

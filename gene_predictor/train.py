@@ -14,7 +14,7 @@ import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
-from utils.losses import event_based_ce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from utils.constants import GenePredictionClass as P
 from gene_predictor.metrics_callback import F1Callback
@@ -25,8 +25,10 @@ from utils.genome import AnnotatedGenomeDataset
 
 def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-                  use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 12.0, utr_weight: float = 3.0,
-                  dss_weight: float = 8.0, ass_weight: float = 5.0,
+                  use_class_weights: bool = True,
+                  start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.0, ass_weight: float = 1.0,
+                  start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
+                  utr_weight: float = 3.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                   max_seq_length: int = 1000,
                   use_focal: bool = False, focal_gamma: float = 1.5,
@@ -91,14 +93,41 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 
     # Trainer-level sampler option
     cfg['training']['min_per_class_per_batch'] = int(min_per_class_per_batch)
+
+    # Record loss weights in config for reference (not consumed by dna_learner yet)
+    cfg.setdefault('loss', {})
+    cfg['loss']['bce_pos_weights'] = {
+        int(P.START): float(start_weight),
+        int(P.STOP): float(stop_weight),
+        int(P.DSS): float(dss_weight),
+        int(P.ASS): float(ass_weight),
+    }
+    cfg['loss']['bce_neg_weights'] = {
+        int(P.START): float(start_neg_weight),
+        int(P.STOP): float(stop_neg_weight),
+        int(P.DSS): float(dss_neg_weight),
+        int(P.ASS): float(ass_neg_weight),
+    }
+    cfg['loss']['ce_class_weights'] = {
+        int(P.INTERGENIC): 1.0,
+        int(P.UTR5): float(utr_weight),
+        int(P.START): float(start_weight),
+        int(P.GENE): 1.0,
+        int(P.STOP): float(stop_weight),
+        int(P.UTR3): float(utr_weight),
+        int(P.DSS): float(dss_weight),
+        int(P.ASS): float(ass_weight),
+    }
     return cfg
 
 
 def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
-          use_class_weights: bool = True, start_weight: float = 10.0, stop_weight: float = 12.0, utr_weight: float = 3.0,
-          dss_weight: float = 8.0, ass_weight: float = 5.0,
+          use_class_weights: bool = True,
+          start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.0, ass_weight: float = 1.0,
+          start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
+          utr_weight: float = 3.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
           max_seq_length: int = 1000,
           stride: int = 500,
@@ -132,6 +161,10 @@ def train(fna_fn: str, tsv_fn: str,
         fp_beta=fp_beta,
         accumulate_grad_batches=accumulate_grad_batches,
         min_per_class_per_batch=min_per_class_per_batch,
+        start_neg_weight=start_neg_weight,
+        stop_neg_weight=stop_neg_weight,
+        dss_neg_weight=dss_neg_weight,
+        ass_neg_weight=ass_neg_weight,
     )
 
     # Pass class weights to dataset for sampling/accounting (format: list of floats indexed by class id)
@@ -206,11 +239,16 @@ def main():
 
     # class weights
     parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
-    parser.add_argument('--start-weight', type=float, default=10.0, help='Weight for START class')
-    parser.add_argument('--stop-weight', type=float, default=12.0, help='Weight for STOP class')
-    parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5 class')
-    parser.add_argument('--dss-weight', type=float, default=8.0, help='Weight for DSS class')
-    parser.add_argument('--ass-weight', type=float, default=5.0, help='Weight for ASS class')
+    parser.add_argument('--start-weight', type=float, default=2.5, help='Weight for START class')
+    parser.add_argument('--stop-weight', type=float, default=1.5, help='Weight for STOP class')
+    parser.add_argument('--dss-weight', type=float, default=1.0, help='Weight for DSS class')
+    parser.add_argument('--ass-weight', type=float, default=1.0, help='Weight for ASS class')
+    parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5/UTR3 class')
+    # Negative weights for BCE-style losses (reuse class weights for positive weights)
+    parser.add_argument('--start-neg-weight', type=float, default=1.0, help='Negative class weight for START (BCE)')
+    parser.add_argument('--stop-neg-weight', type=float, default=1.0, help='Negative class weight for STOP (BCE)')
+    parser.add_argument('--dss-neg-weight', type=float, default=1.5, help='Negative class weight for DSS (BCE)')
+    parser.add_argument('--ass-neg-weight', type=float, default=1.5, help='Negative class weight for ASS (BCE)')
 
     # focal loss
     parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
@@ -233,6 +271,8 @@ def main():
     parser.add_argument('--min-per-class-per-batch', type=int, default=1, help='Minimum items per target class per batch (recycling allowed)')
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
+    # loss selection
+    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce'], help='Loss type: event-ce (masked cross-entropy) or event-bce (masked BCE per event class)')
 
     args = parser.parse_args()
     
@@ -273,8 +313,35 @@ def main():
     else:
         raise ValueError('Invalid --dss-motifs')
 
-    # Build custom loss from selection
-    custom_loss = event_based_ce_loss_factory(dss_set)
+    # Build custom loss from selection, wiring CLI weights
+    if args.loss_type == 'event-ce':
+        ce_weights = None
+        if not args.disable_class_weights:
+            ce_weights = {
+                int(P.INTERGENIC): 1.0,
+                int(P.UTR5): float(args.utr_weight),
+                int(P.START): float(args.start_weight),
+                int(P.GENE): 1.0,
+                int(P.STOP): float(args.stop_weight),
+                int(P.UTR3): float(args.utr_weight),
+                int(P.DSS): float(args.dss_weight),
+                int(P.ASS): float(args.ass_weight),
+            }
+        custom_loss = event_based_ce_loss_factory(dss_set, class_weights=ce_weights)
+    else:
+        pos_weights = {
+            int(P.START): float(args.start_weight),
+            int(P.STOP): float(args.stop_weight),
+            int(P.DSS): float(args.dss_weight),
+            int(P.ASS): float(args.ass_weight),
+        }
+        neg_weights = {
+            int(P.START): float(args.start_neg_weight),
+            int(P.STOP): float(args.stop_neg_weight),
+            int(P.DSS): float(args.dss_neg_weight),
+            int(P.ASS): float(args.ass_neg_weight),
+        }
+        custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=pos_weights, neg_weights=neg_weights)
 
     # Run training
     output_dir = train(
@@ -311,6 +378,10 @@ def main():
         min_per_class_per_batch=args.min_per_class_per_batch,
         custom_loss_fn=custom_loss,
         dss_motifs=args.dss_motifs,
+        start_neg_weight=args.start_neg_weight,
+        stop_neg_weight=args.stop_neg_weight,
+        dss_neg_weight=args.dss_neg_weight,
+        ass_neg_weight=args.ass_neg_weight,
     )
 
 if __name__ == "__main__":

@@ -1,3 +1,16 @@
+# prep data
+
+source chop_env/bin/activate && python scripts/merge-and-split-data.py \
+  --tsv data/GCF_002042975.1_filtered_tcov0.99_evalue1e-20_annotations.tsv \
+       data/GCF_000222465.1_filtered_tcov0.99_evalue1e-20_annotations.tsv \
+  --fna data/GCF_002042975.1_filtered_tcov0.99_evalue1e-20_gene_context.fna.gz \
+       data/GCF_000222465.1_filtered_tcov0.99_evalue1e-20_gene_context.fna.gz \
+  --num-train 1000 --num-test 200 \
+  --output-train-tsv data/train.tsv \
+  --output-train-fna data/train.fna \
+  --output-test-tsv data/test.tsv \
+  --output-test-fna data/test.fna
+
 # algae
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60,3:300:40:0" --num-windows 20000 --stride 100 --stop-weight 8 --dss-motifs dino
