@@ -98,6 +98,52 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res['gene']['fp'], 1)
             self.assertEqual(res['gene']['fn'], 1)
 
+    def test_multiple_sequences_with_identical_coordinates_counted_per_sequence(self):
+        with tempfile.TemporaryDirectory() as td:
+            # Two different sequence_ids share identical coordinates for the true gene
+            expected = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+                "contig7\ttrue\t11\t26\t11\t26\t+\n"
+                "contig8\ttrue\t11\t26\t11\t26\t+\n"
+            )
+            # Decoded: both contigs have the correct gene; contig8 also has an extra FP start
+            decoded = (
+                "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\tk\tstart_rank\tboundary_score\ttransition_score\tcodon_penalty\n"
+                # contig7 correct gene at start 11, boundary 10.0
+                "contig7\tgene_1\t11\t26\t11\t26\t+\t1\t1\t10.0\t0.0\t\n"
+                # contig8 correct gene at start 11, boundary 10.0
+                "contig8\tgene_1\t11\t26\t11\t26\t+\t1\t1\t10.0\t0.0\t\n"
+                # contig8 extra FP gene at a different start 201, boundary 9.0
+                "contig8\tgene_2\t201\t240\t201\t240\t+\t2\t1\t9.0\t0.0\t\n"
+            )
+            exp_path = os.path.join(td, 'exp.tsv')
+            dec_path = os.path.join(td, 'dec.tsv')
+            _write(exp_path, expected)
+            _write(dec_path, decoded)
+
+            # With topk_starts=1, only the highest-boundary start per sequence is included
+            res1 = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            # Each sequence contributes its own counts; duplicates across sequence_ids are not collapsed
+            self.assertEqual(res1['exon']['tp'], 2)
+            self.assertEqual(res1['exon']['fp'], 0)
+            self.assertEqual(res1['exon']['fn'], 0)
+            self.assertEqual(res1['gene']['tp'], 2)
+            self.assertEqual(res1['gene']['fp'], 0)
+            self.assertEqual(res1['gene']['fn'], 0)
+
+            # With topk_starts=2, contig8 includes its FP start as well
+            res2 = evaluate_decoding(dec_path, exp_path, topk_starts=2, top_start_rank_only=True)
+            self.assertEqual(res2['exon']['tp'], 2)
+            self.assertEqual(res2['exon']['fp'], 1)
+            self.assertEqual(res2['exon']['fn'], 0)
+            self.assertEqual(res2['gene']['tp'], 2)
+            self.assertEqual(res2['gene']['fp'], 1)
+            self.assertEqual(res2['gene']['fn'], 0)
+            # start-level: contig7 TP start; contig8 TP+FP starts
+            self.assertEqual(res2['start']['tp'], 2)
+            self.assertEqual(res2['start']['fp'], 1)
+            self.assertEqual(res2['start']['fn'], 0)
+
     def test_topk_starts_selection_affects_metrics(self):
         with tempfile.TemporaryDirectory() as td:
             # expected: only one correct gene at start 101
@@ -135,6 +181,10 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res2['gene']['tp'], 1)
             self.assertEqual(res2['gene']['fp'], 1)
             self.assertEqual(res2['gene']['fn'], 0)
+            # start-level: two predicted starts, one expected -> one TP, one FP
+            self.assertEqual(res2['start']['tp'], 1)
+            self.assertEqual(res2['start']['fp'], 1)
+            self.assertEqual(res2['start']['fn'], 0)
 
     def test_gene_tp_requires_exact_splice_boundaries(self):
         with tempfile.TemporaryDirectory() as td:
@@ -192,6 +242,10 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res_top['gene']['tp'], 0)
             self.assertEqual(res_top['gene']['fp'], 1)
             self.assertEqual(res_top['gene']['fn'], 1)
+            # start-level: predicted start exists and matches expected
+            self.assertEqual(res_top['start']['tp'], 1)
+            self.assertEqual(res_top['start']['fp'], 0)
+            self.assertEqual(res_top['start']['fn'], 0)
 
             # include all candidates under the start -> both genes considered
             res_all = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=False)
@@ -201,6 +255,10 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res_all['gene']['tp'], 1)
             self.assertEqual(res_all['gene']['fp'], 1)
             self.assertEqual(res_all['gene']['fn'], 0)
+            # start-level: still a single start -> TP only
+            self.assertEqual(res_all['start']['tp'], 1)
+            self.assertEqual(res_all['start']['fp'], 0)
+            self.assertEqual(res_all['start']['fn'], 0)
 
 
 if __name__ == '__main__':

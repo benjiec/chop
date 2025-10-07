@@ -95,6 +95,28 @@ def _parse_expected(expected_tsv: str):
     return by_seq
 
 
+def _parse_expected_starts(expected_tsv: str) -> Dict[str, Set[Tuple[str, int]]]:
+    """Parse expected TSV to collect strand-aware gene START positions (1-based) per sequence_id."""
+    starts_by_seq: Dict[str, Set[Tuple[str, int]]] = {}
+    with open(expected_tsv, 'r') as f:
+        header = f.readline().strip().split('\t')
+        sid_i = _idx(header, 'sequence_id')
+        gstart_i = _idx(header, 'gene_start')
+        strand_i = _idx(header, 'strand')
+        for line in f:
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) <= max(sid_i, gstart_i, strand_i):
+                continue
+            sid = parts[sid_i]
+            strand = parts[strand_i]
+            try:
+                start1 = int(parts[gstart_i])
+            except Exception:
+                continue
+            starts_by_seq.setdefault(sid, set()).add((strand, start1))
+    return starts_by_seq
+
+
 def _pick_top_k_starts(starts: Dict[int, List[_Candidate]], topk_starts: int) -> List[int]:
     """Rank starts by boundary_score of best start_rank==1 candidate (fallback to best boundary).
     Return the list of selected start positions (1-based). Exactly topk_starts, or fewer if not enough starts.
@@ -148,9 +170,11 @@ def evaluate_decoding(
     """
     decoded = _parse_decoded_tsv(decoded_tsv)
     expected = _parse_expected(expected_tsv)
+    expected_starts = _parse_expected_starts(expected_tsv)
 
     total_tp_ex = total_fp_ex = total_fn_ex = 0
     total_tp_g = total_fp_g = total_fn_g = 0
+    total_tp_st = total_fp_st = total_fn_st = 0
     per_seq_out: Dict[str, Dict[str, Dict[str, float]]] = {}
 
     for sid, starts in decoded.items():
@@ -165,6 +189,7 @@ def evaluate_decoding(
 
         pred_gene_set: Set[Tuple[str, Tuple[Tuple[int, int], ...]]] = set()
         pred_exon_set: Set[Tuple[str, int, int]] = set()
+        pred_start_set: Set[Tuple[str, int]] = set()
 
         for start1 in selected_starts:
             cands = starts.get(start1, [])
@@ -183,6 +208,8 @@ def evaluate_decoding(
                 pred_gene_set.add(gene_key)
                 for s0, e0 in c.exons:
                     pred_exon_set.add((c.strand, s0, e0))
+                # Record strand-aware start coordinate (1-based)
+                pred_start_set.add((c.strand, start1))
 
         # exon-level
         tp_ex = len(pred_exon_set & exp_exon_set)
@@ -194,22 +221,34 @@ def evaluate_decoding(
         fp_g = len(pred_gene_set - exp_gene_set)
         fn_g = len(exp_gene_set - pred_gene_set)
 
+        # start-level (strand-aware)
+        exp_start_set = set(expected_starts.get(sid, set()))
+        tp_st = len(pred_start_set & exp_start_set)
+        fp_st = len(pred_start_set - exp_start_set)
+        fn_st = len(exp_start_set - pred_start_set)
+
         total_tp_ex += tp_ex
         total_fp_ex += fp_ex
         total_fn_ex += fn_ex
         total_tp_g += tp_g
         total_fp_g += fp_g
         total_fn_g += fn_g
+        # accumulate starts
+        total_tp_st += tp_st
+        total_fp_st += fp_st
+        total_fn_st += fn_st
 
         if per_sequence:
             per_seq_out[sid] = {
                 'exon': _compute_counts(tp_ex, fp_ex, fn_ex),
                 'gene': _compute_counts(tp_g, fp_g, fn_g),
+                'start': _compute_counts(tp_st, fp_st, fn_st),
             }
 
     result = {
         'exon': _compute_counts(total_tp_ex, total_fp_ex, total_fn_ex),
         'gene': _compute_counts(total_tp_g, total_fp_g, total_fn_g),
+        'start': _compute_counts(total_tp_st, total_fp_st, total_fn_st),
     }
     if per_sequence:
         result['per_sequence'] = per_seq_out

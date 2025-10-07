@@ -16,7 +16,7 @@ scripts/predict-layout GCF_002042975.1 10 gene_predictor/gene_predictor_run_2025
 
 PYTHONPATH=. python gene_decoder/build_codon_usage.py --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv --output data/GCF_002042975.1.codon_usage.json
 
-PYTHONPATH=. python gene_decoder/decode.py --min-prob 0.5 --num-sequences 253 --temperature-scale 1 \
+PYTHONPATH=. python gene_decoder/decode.py --min-prob 0.5 --num-sequences 253 --temperature-scale 3 --dss-motifs standard \
   --output-tsv x.tsv --output-fna x.fna \
   --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle 
 

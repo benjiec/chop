@@ -24,9 +24,11 @@ def main():
 
     ex = metrics['exon']
     ge = metrics['gene']
+    st = metrics['start']
     # Print two lines with labeled counts and metrics; sensitivity/precision to 4 decimals
     print(f"exon TP={ex['tp']} FP={ex['fp']} FN={ex['fn']} Sensitivity={ex['sensitivity']:.4f} Precision={ex['precision']:.4f}")
     print(f"gene TP={ge['tp']} FP={ge['fp']} FN={ge['fn']} Sensitivity={ge['sensitivity']:.4f} Precision={ge['precision']:.4f}")
+    print(f"start TP={st['tp']} FP={st['fp']} FN={st['fn']} Sensitivity={st['sensitivity']:.4f} Precision={st['precision']:.4f}")
 
 
 if __name__ == '__main__':
