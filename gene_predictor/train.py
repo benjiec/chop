@@ -27,7 +27,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
                   use_class_weights: bool = True,
                   start_weight: float = 5.0, stop_weight: float = 3.0, dss_weight: float = 3.0, ass_weight: float = 2.0,
-                  start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
+                  start_neg_weight: float = 2.0, stop_neg_weight: float = 2.0, dss_neg_weight: float = 3.0, ass_neg_weight: float = 3.0,
                   utr_weight: float = 3.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                   max_seq_length: int = 1000,
@@ -126,7 +126,7 @@ def train(fna_fn: str, tsv_fn: str,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
           use_class_weights: bool = True,
           start_weight: float = 5.0, stop_weight: float = 3.0, dss_weight: float = 3.0, ass_weight: float = 2.0,
-          start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
+          start_neg_weight: float = 2.0, stop_neg_weight: float = 2.0, dss_neg_weight: float = 3.0, ass_neg_weight: float = 3.0,
           utr_weight: float = 3.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
           max_seq_length: int = 1000,
@@ -245,10 +245,10 @@ def main():
     parser.add_argument('--ass-weight', type=float, default=2.0, help='Weight for ASS class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5/UTR3 class')
     # Negative weights for BCE-style losses (reuse class weights for positive weights)
-    parser.add_argument('--start-neg-weight', type=float, default=1.0, help='Negative class weight for START (BCE)')
-    parser.add_argument('--stop-neg-weight', type=float, default=1.0, help='Negative class weight for STOP (BCE)')
-    parser.add_argument('--dss-neg-weight', type=float, default=1.5, help='Negative class weight for DSS (BCE)')
-    parser.add_argument('--ass-neg-weight', type=float, default=1.5, help='Negative class weight for ASS (BCE)')
+    parser.add_argument('--start-neg-weight', type=float, default=2.0, help='Negative class weight for START (BCE)')
+    parser.add_argument('--stop-neg-weight', type=float, default=2.0, help='Negative class weight for STOP (BCE)')
+    parser.add_argument('--dss-neg-weight', type=float, default=3.0, help='Negative class weight for DSS (BCE)')
+    parser.add_argument('--ass-neg-weight', type=float, default=3.0, help='Negative class weight for ASS (BCE)')
 
     # focal loss
     parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
