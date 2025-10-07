@@ -26,7 +26,7 @@ from utils.genome import AnnotatedGenomeDataset
 def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
                   use_class_weights: bool = True,
-                  start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.0, ass_weight: float = 1.0,
+                  start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.5, ass_weight: float = 1.0,
                   start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
                   utr_weight: float = 3.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
@@ -125,7 +125,7 @@ def train(fna_fn: str, tsv_fn: str,
           d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
           learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 8,
           use_class_weights: bool = True,
-          start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.0, ass_weight: float = 1.0,
+          start_weight: float = 2.5, stop_weight: float = 1.5, dss_weight: float = 1.5, ass_weight: float = 1.0,
           start_neg_weight: float = 1.0, stop_neg_weight: float = 1.0, dss_neg_weight: float = 1.5, ass_neg_weight: float = 1.5,
           utr_weight: float = 3.0,
           attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
@@ -241,7 +241,7 @@ def main():
     parser.add_argument('--disable-class-weights', action='store_true', help='Disable class weights')
     parser.add_argument('--start-weight', type=float, default=2.5, help='Weight for START class')
     parser.add_argument('--stop-weight', type=float, default=1.5, help='Weight for STOP class')
-    parser.add_argument('--dss-weight', type=float, default=1.0, help='Weight for DSS class')
+    parser.add_argument('--dss-weight', type=float, default=1.5, help='Weight for DSS class')
     parser.add_argument('--ass-weight', type=float, default=1.0, help='Weight for ASS class')
     parser.add_argument('--utr-weight', type=float, default=3.0, help='Weight for UTR5/UTR3 class')
     # Negative weights for BCE-style losses (reuse class weights for positive weights)
