@@ -52,7 +52,6 @@ class TestGenePredictorTrainer(unittest.TestCase):
             attention_masks={0: 2},
             kmer_size=0,
             max_seq_length=200,
-            use_focal=False,
         )
 
         cb = DummyCallback()

@@ -46,9 +46,7 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
                            learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                            use_class_weights: bool = False, start_weight: float = 10.0, utr_weight: float = 3.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
-                           max_seq_length: int = 1000,
-                           use_focal: bool = False, focal_gamma: float = 2.0,
-                           focal_alpha: Optional[list] = None) -> dict:
+                           max_seq_length: int = 1000) -> dict:
 
     # Class weights for UTR-START detection
     # START codons are rare and important, UTR5 regions provide context
@@ -70,9 +68,6 @@ def create_utr_start_config(d_model: int = 504, n_layers: int = 3, n_heads: int 
         class_weights=class_weights,
         attention_masks=attention_masks,
         kmer_size=kmer_size,
-        use_focal=use_focal,
-        focal_gamma=focal_gamma,
-        focal_alpha=focal_alpha,
     )
 
 
@@ -81,9 +76,7 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
                     learning_rate: float = 5e-5, max_epochs: int = 25, batch_size: int = 4,
                     use_class_weights: bool = False, start_weight: float = 10.0, utr_weight: float = 3.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
-                    max_seq_length: int = 1000,
-                    use_focal: bool = False, focal_gamma: float = 2.0,
-                    focal_alpha: Optional[list] = None):
+                    max_seq_length: int = 1000):
 
     # Create config
     config = create_utr_start_config(
@@ -91,7 +84,6 @@ def train_utr_start(d_model: int = 504, n_layers: int = 3, n_heads: int = 6,
         learning_rate=learning_rate, max_epochs=max_epochs, batch_size=batch_size,
         use_class_weights=use_class_weights, start_weight=start_weight, utr_weight=utr_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
-        use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
     )
     
     dataset = generate_dataset(num_contigs, max_seq_length, 3, layouts_per_contig)
@@ -150,10 +142,7 @@ def main():
     parser.add_argument('--attention-masks', type=str, help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
     parser.add_argument('--kmer', type=int, default=3, help='K-mer size for convolution (0=disabled, 3=default)')
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
-    # Focal loss options
-    parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
-    parser.add_argument('--focal-gamma', type=float, default=2.0, help='Focal loss gamma (focusing parameter)')
-    parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
+    # (focal loss removed)
     
     args = parser.parse_args()
     
@@ -179,13 +168,7 @@ def main():
             else:
                 raise ValueError(f"Invalid attention mask format: {mask_spec}. Use 'head:window', 'head:before:after', or 'head:before:gap:after'")
 
-    # Parse focal alpha list if provided
-    focal_alpha = None
-    if args.focal_alpha:
-        try:
-            focal_alpha = [float(x) for x in args.focal_alpha.split(',') if x.strip() != '']
-        except Exception as e:
-            raise ValueError(f"Invalid --focal-alpha '{args.focal_alpha}': must be comma-separated floats") from e
+    # (focal alpha removed)
     
     # Run test
     output_dir = train_utr_start(
@@ -203,9 +186,6 @@ def main():
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
-        use_focal=args.use_focal,
-        focal_gamma=args.focal_gamma,
-        focal_alpha=focal_alpha,
     )
 
 if __name__ == "__main__":

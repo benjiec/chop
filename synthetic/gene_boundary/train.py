@@ -24,8 +24,6 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
                            dss_weight: float = 10.0, ass_weight: float = 10.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
-                           use_focal: bool = False, focal_gamma: float = 1.5,
-                           focal_alpha: Optional[list] = None,
                            cc_enabled: bool = True,
                            start_before: int = 300, start_after: int = 0,
                            stop_before: int = 0, stop_after: int = 300,
@@ -63,9 +61,6 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
         class_weights=class_weights,
         attention_masks=attention_masks,
         kmer_size=kmer_size,
-        use_focal=use_focal,
-        focal_gamma=focal_gamma,
-        focal_alpha=focal_alpha,
     )
 
     if cc_enabled:
@@ -87,8 +82,6 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     dss_weight: float = 10.0, ass_weight: float = 10.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
-                    use_focal: bool = False, focal_gamma: float = 1.5,
-                    focal_alpha: Optional[list] = None,
                     cc_enabled: bool = True,
                     start_before: int = 300, start_after: int = 0,
                     stop_before: int = 0, stop_after: int = 300,
@@ -101,7 +94,6 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         use_class_weights=use_class_weights, start_weight=start_weight, stop_weight=stop_weight, utr_weight=utr_weight,
         dss_weight=dss_weight, ass_weight=ass_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
-        use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
         cc_enabled=cc_enabled,
         start_before=start_before, start_after=start_after,
         stop_before=stop_before, stop_after=stop_after,
@@ -150,10 +142,7 @@ def main():
     parser.add_argument('--attention-masks', type=str, help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
     parser.add_argument('--kmer', type=int, default=0, help='K-mer size for convolution (0=disabled, 3=codon sensitive)')
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
-    # Focal loss options
-    parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
-    parser.add_argument('--focal-gamma', type=float, default=1.5, help='Focal loss gamma (focusing parameter)')
-    parser.add_argument('--focal-alpha', type=str, default=None, help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
+    # (focal loss removed)
     # Class-conditional readouts
     parser.add_argument('--disable-cc', action='store_true', help='Disable class-conditional readouts for START/STOP (enabled by default)')
     parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
@@ -188,13 +177,7 @@ def main():
             else:
                 raise ValueError(f"Invalid attention mask format: {mask_spec}. Use 'head:window', 'head:before:after', or 'head:before:gap:after'")
 
-    # Parse focal alpha list if provided
-    focal_alpha = None
-    if args.focal_alpha:
-        try:
-            focal_alpha = [float(x) for x in args.focal_alpha.split(',') if x.strip() != '']
-        except Exception as e:
-            raise ValueError(f"Invalid --focal-alpha '{args.focal_alpha}': must be comma-separated floats") from e
+    # (focal alpha removed)
     
     # Run test
     output_dir = train_boundaries(
@@ -215,9 +198,6 @@ def main():
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
-        use_focal=args.use_focal,
-        focal_gamma=args.focal_gamma,
-        focal_alpha=focal_alpha,
         cc_enabled=not args.disable_cc,
         start_before=args.start_before,
         start_after=args.start_after,

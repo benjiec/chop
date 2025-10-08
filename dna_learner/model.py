@@ -404,7 +404,7 @@ class GenePredictorModel(nn.Module):
 
 class GenePredictorModule(pl.LightningModule):
     
-    def __init__(self, config: Dict[str, Any], custom_loss_fn: Optional[Callable] = None):
+    def __init__(self, config: Dict[str, Any], custom_loss_fn: Callable):
         super().__init__()
         
         # Store config
@@ -428,27 +428,13 @@ class GenePredictorModule(pl.LightningModule):
             class_conditional_readouts=model_config.get('class_conditional_readouts')
         )
 
-        # Loss function configuration
+        # Loss function configuration (class weights remain in config for datasets/metrics)
         loss_config = config.get('loss', {})
-        class_weights = loss_config.get('class_weights')
-        if class_weights is not None:
-            class_weights = torch.tensor(class_weights, dtype=torch.float32)
-        self.criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-        # Focal loss options (used by tests via _focal_loss)
-        self.use_focal: bool = bool(loss_config.get('use_focal', False))
-        self.focal_gamma: float = float(loss_config.get('focal_gamma', 2.0))
-        focal_alpha = loss_config.get('focal_alpha')
-        if focal_alpha is None and class_weights is not None:
-            focal_alpha = class_weights.tolist()
-        self.focal_alpha = torch.tensor(focal_alpha, dtype=torch.float32) if focal_alpha is not None else None
-        
         # Save hyperparameters for logging
         self.save_hyperparameters(config)
 
         # Require externally provided custom loss function
-        if custom_loss_fn is None:
-            raise ValueError("custom_loss_fn must be provided for GenePredictorModule")
         self.custom_loss_fn: Callable = custom_loss_fn
 
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
@@ -462,14 +448,6 @@ class GenePredictorModule(pl.LightningModule):
         loss = self.custom_loss_fn(sequences, targets, logits, comp)
         # Expose components for callback aggregation without extra forwards
         self._last_train_components = comp
-
-        # Also log component means with on_epoch=True so epoch aggregator matches trainer's averaging
-        if 'ce' in comp:
-            self.log('train_loss_ce', comp['ce'], prog_bar=False, on_step=False, on_epoch=True)
-        if 'entropy' in comp:
-            self.log('train_loss_entropy', comp['entropy'], prog_bar=False, on_step=False, on_epoch=True)
-        if 'fp_penalty' in comp:
-            self.log('train_loss_fp', comp['fp_penalty'], prog_bar=False, on_step=False, on_epoch=True)
         
         # Log metrics - average across epoch not just last batch
         self.log('train_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -484,14 +462,6 @@ class GenePredictorModule(pl.LightningModule):
         loss = self.custom_loss_fn(sequences, targets, logits, comp)
         # Expose components for callback aggregation
         self._last_val_components = comp
-
-        # Log component means for validation as well
-        if 'ce' in comp:
-            self.log('val_loss_ce', comp['ce'], prog_bar=False, on_step=False, on_epoch=True)
-        if 'entropy' in comp:
-            self.log('val_loss_entropy', comp['entropy'], prog_bar=False, on_step=False, on_epoch=True)
-        if 'fp_penalty' in comp:
-            self.log('val_loss_fp', comp['fp_penalty'], prog_bar=False, on_step=False, on_epoch=True)
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -519,38 +489,7 @@ class GenePredictorModule(pl.LightningModule):
             },
         }
 
-    @staticmethod
-    def _focal_loss(logits: torch.Tensor, targets: torch.Tensor, gamma: float, alpha: Optional[torch.Tensor], per_token_weights: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        Compute multi-class focal loss using logits.
-        - logits: (N, C)
-        - targets: (N,)
-        - gamma: focusing parameter
-        - alpha: Optional tensor of shape (C,) for per-class weighting
-        """
-        # Log-softmax for numerical stability
-        log_probs = F.log_softmax(logits, dim=-1)  # (N, C)
-        probs = torch.exp(log_probs)  # (N, C)
-
-        # Gather true-class probabilities
-        indices = torch.arange(logits.size(0), device=logits.device)
-        log_pt = log_probs[indices, targets]  # (N,)
-        pt = probs[indices, targets]          # (N,)
-
-        # Alpha weighting
-        if alpha is not None:
-            alpha = alpha.to(logits.device)
-            alpha_t = alpha[targets]
-        else:
-            alpha_t = 1.0
-
-        focal_factor = (1.0 - pt).clamp(min=0.0) ** gamma
-        loss = -alpha_t * focal_factor * log_pt
-        if per_token_weights is not None:
-            w = per_token_weights.to(loss.dtype)
-            denom = torch.clamp(w.sum(), min=1.0)
-            return (loss * w).sum() / denom
-        return loss.mean()
+    
 
 
 def create_base_config(
@@ -566,9 +505,6 @@ def create_base_config(
     loss_window_margin_bp: Optional[int] = 200,
     attention_masks: Optional[Dict[int, int]] = None,
     kmer_size: int = 0,
-    use_focal: Optional[bool] = None,
-    focal_gamma: Optional[float] = None,
-    focal_alpha: Optional[list] = None,
     entropy_lambda: Optional[float] = None,
     fp_beta: Optional[float] = None,
     accumulate_grad_batches: Optional[int] = None,
@@ -604,13 +540,6 @@ def create_base_config(
         'class_names': class_names
     }
 
-    # Optionally add focal loss settings
-    if use_focal is not None:
-        cfg['loss']['use_focal'] = use_focal
-    if focal_gamma is not None:
-        cfg['loss']['focal_gamma'] = focal_gamma
-    if focal_alpha is not None:
-        cfg['loss']['focal_alpha'] = focal_alpha
     if entropy_lambda is not None:
         cfg['loss']['entropy_lambda'] = float(entropy_lambda)
     if fp_beta is not None:
