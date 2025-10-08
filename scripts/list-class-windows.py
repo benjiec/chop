@@ -6,7 +6,6 @@ from typing import Optional, Dict, List, Iterable, Set
 
 from utils.constants import GenePredictionClass as P
 from utils.genome import AnnotatedGenomeDataset, build_class_windows
-from gene_predictor.train import create_config
 
 
 def build_class_weights(use_class_weights: bool,

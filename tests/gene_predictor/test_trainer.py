@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 
 from dna_learner.trainer import train as train_fn
-from gene_predictor.train import create_config
+from dna_learner.model import create_base_config
 from utils.losses import adjusted_ce_entropy_loss
 from utils.dataset import GenomicSyntheticTestingDataset, RandomBasesGenerator, RandomUTR5Generator, AddATGGenerator
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
@@ -38,20 +38,20 @@ class TestGenePredictorTrainer(unittest.TestCase):
             layouts=layouts,
         )
 
-        cfg = create_config(
+        # Build minimal cfg via create_base_config (class weights not needed here)
+        cfg = create_base_config(
+            max_seq_length=200,
+            num_classes=len(P.idx_to_cls),
+            class_names=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())],
             d_model=16,
             n_layers=1,
             n_heads=4,
             learning_rate=1e-3,
             max_epochs=1,
             batch_size=2,
-            use_class_weights=True,
-            start_weight=8.0,
-            stop_weight=8.0,
-            utr_weight=4.0,
+            class_weights=None,
             attention_masks={0: 2},
             kmer_size=0,
-            max_seq_length=200,
         )
 
         cb = DummyCallback()
