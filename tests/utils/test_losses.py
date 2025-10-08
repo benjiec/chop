@@ -3,14 +3,14 @@
 import unittest
 import torch
 
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, build_event_motifs
 from utils.constants import GenePredictionClass as P
 
 
 class TestEventBasedCELoss(unittest.TestCase):
     def test_loss_masks_to_events_only(self):
         # Build loss with DSS motifs: only 'GT'
-        loss_fn = event_based_ce_loss_factory({'GT'})
+        loss_fn = event_based_ce_loss_factory(build_event_motifs({'GT'}))
 
         # Construct a batch with one obvious START at pos 0: ATG, and avoid STOP at pos1
         # Map DNAEmbed: A=0,T=1,G=2,C=3,N=4
@@ -36,7 +36,7 @@ class TestEventBasedCELoss(unittest.TestCase):
 
     def test_counts_all_event_types_and_targets_used(self):
         # Loss with DSS motifs set to {'GT'}
-        loss_fn = event_based_ce_loss_factory({'GT'})
+        loss_fn = event_based_ce_loss_factory(build_event_motifs({'GT'}))
 
         # Build a sequence likely containing multiple events due to overlaps
         # Bases: A=0, T=1, G=2, C=3
@@ -94,7 +94,7 @@ class TestEventBasedCELoss(unittest.TestCase):
 
     def test_motif_span_inclusion_for_triplets_and_dimers(self):
         # Ensure CE is accumulated over full spans of motifs (3 for START/STOP, 2 for DSS/ASS)
-        loss_fn = event_based_ce_loss_factory({'GT'})
+        loss_fn = event_based_ce_loss_factory(build_event_motifs({'GT'}))
         A, T, G, C = 0, 1, 2, 3
         # ATG at 0..2, GT at 4..5, AG at 7..8
         seq = [A, T, G,  C,  G, T,  C,  A, G]
@@ -135,7 +135,7 @@ class TestEventBasedCELoss(unittest.TestCase):
 
             # DSS: pass 7bp motif via factory
             dss_motif = 'GTAAGGG'
-            loss_fn = event_based_ce_loss_factory({dss_motif})
+            loss_fn = event_based_ce_loss_factory(build_event_motifs({dss_motif}))
 
             # Build sequence embedding both motifs with clear separation
             # A=0,T=1,G=2,C=3
@@ -169,8 +169,8 @@ class TestEventBasedCELoss(unittest.TestCase):
 
     def test_dss_motifs_selection_changes_loss(self):
         # Two versions: GT-only vs GT+GA
-        loss_gt = event_based_ce_loss_factory({'GT'})
-        loss_dino = event_based_ce_loss_factory({'GT', 'GA'})
+        loss_gt = event_based_ce_loss_factory(build_event_motifs({'GT'}))
+        loss_dino = event_based_ce_loss_factory(build_event_motifs({'GT', 'GA'}))
 
         # Sequence with GA at pos0 and GT at pos4; no other events
         # G=2, A=0, C=3, T=1
@@ -220,10 +220,10 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         logits[0, 5:8, P.STOP] = 5.0
 
         # Unweighted CE
-        loss_unweighted = event_based_ce_loss_factory({'GT'})(sequences, targets, logits, {})
+        loss_unweighted = event_based_ce_loss_factory(build_event_motifs({'GT'}))(sequences, targets, logits, {})
         # Weighted CE: emphasize START class more
         cw = {P.START: 2.0, P.STOP: 1.0}
-        loss_weighted = event_based_ce_loss_factory({'GT'}, class_weights=cw)(sequences, targets, logits, {})
+        loss_weighted = event_based_ce_loss_factory(build_event_motifs({'GT'}), class_weights=cw)(sequences, targets, logits, {})
         self.assertGreater(float(loss_weighted.detach().cpu().item()), float(loss_unweighted.detach().cpu().item()))
 
     def test_edge_masking_excludes_events_near_edges_ce(self):
@@ -241,9 +241,9 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         logits[0, 13:15, P.DSS] = 0.0
 
         # With margin=3, both spans are entirely within margins and should be excluded
-        loss_margin = event_based_ce_loss_factory({'GT'}, loss_window_margin_bp=3)(sequences, targets, logits, {})
+        loss_margin = event_based_ce_loss_factory(build_event_motifs({'GT'}), loss_window_margin_bp=3)(sequences, targets, logits, {})
         # With margin=0, events included
-        loss_nomargin = event_based_ce_loss_factory({'GT'}, loss_window_margin_bp=0)(sequences, targets, logits, {})
+        loss_nomargin = event_based_ce_loss_factory(build_event_motifs({'GT'}), loss_window_margin_bp=0)(sequences, targets, logits, {})
         self.assertAlmostEqual(float(loss_margin.detach().cpu().item()), 0.0, places=8)
         self.assertGreater(float(loss_nomargin.detach().cpu().item()), 0.0)
 
@@ -258,8 +258,8 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         logits = torch.zeros((1, L, Cn), dtype=torch.float32)
         logits[0, 0:3, P.START] = 0.5  # uncertain -> non-zero BCE if included
 
-        bce_margin = event_based_bce_loss_factory({'GT'}, loss_window_margin_bp=3)
-        bce_nomargin = event_based_bce_loss_factory({'GT'}, loss_window_margin_bp=0)
+        bce_margin = event_based_bce_loss_factory(build_event_motifs({'GT'}), loss_window_margin_bp=3)
+        bce_nomargin = event_based_bce_loss_factory(build_event_motifs({'GT'}), loss_window_margin_bp=0)
         v_margin = float(bce_margin(sequences, targets, logits, {}).detach().cpu().item())
         v_nomargin = float(bce_nomargin(sequences, targets, logits, {}).detach().cpu().item())
         self.assertAlmostEqual(v_margin, 0.0, places=8)
@@ -286,11 +286,11 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
 
         # pos weights from class weights; set START pos=2, neg weight varies
         pos_w = {P.START: 2.0}
-        bce_low_neg = event_based_bce_loss_factory({'GT'}, pos_weights=pos_w, neg_weights={P.START: 1.0})
-        bce_high_neg = event_based_bce_loss_factory({'GT'}, pos_weights=pos_w, neg_weights={P.START: 3.0})
+        bce_low = event_based_bce_loss_factory(build_event_motifs({'GT'}), pos_weights=pos_w, neg_weights={P.START: 1.0})
+        bce_high = event_based_bce_loss_factory(build_event_motifs({'GT'}), pos_weights=pos_w, neg_weights={P.START: 3.0})
 
-        v_low = bce_low_neg(sequences, targets, logits, {})
-        v_high = bce_high_neg(sequences, targets, logits, {})
+        v_low = bce_low(sequences, targets, logits, {})
+        v_high = bce_high(sequences, targets, logits, {})
         self.assertGreater(float(v_high.detach().cpu().item()), float(v_low.detach().cpu().item()))
 
     def test_str_vs_int_keyed_weights_equivalence_ce(self):
@@ -305,8 +305,8 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         logits = torch.zeros((1, L, Cn), dtype=torch.float32)
         logits[0, 0:3, P.START] = 2.0
 
-        ce_int = event_based_ce_loss_factory({'GT'}, class_weights={P.START: 2.0})
-        ce_str = event_based_ce_loss_factory({'GT'}, class_weights={'START': 2.0})
+        ce_int = event_based_ce_loss_factory(build_event_motifs({'GT'}), class_weights={P.START: 2.0})
+        ce_str = event_based_ce_loss_factory(build_event_motifs({'GT'}), class_weights={'START': 2.0})
         v_int = float(ce_int(sequences, targets, logits, {}).detach().cpu().item())
         v_str = float(ce_str(sequences, targets, logits, {}).detach().cpu().item())
         self.assertAlmostEqual(v_int, v_str, places=8)
@@ -324,8 +324,8 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         logits[0, 0:3, P.START] = 3.0
         logits[0, 5:8, P.START] = 1.0
 
-        bce_int = event_based_bce_loss_factory({'GT'}, pos_weights={P.START: 2.0}, neg_weights={P.START: 1.5})
-        bce_str = event_based_bce_loss_factory({'GT'}, pos_weights={'START': 2.0}, neg_weights={'START': 1.5})
+        bce_int = event_based_bce_loss_factory(build_event_motifs({'GT'}), pos_weights={P.START: 2.0}, neg_weights={P.START: 1.5})
+        bce_str = event_based_bce_loss_factory(build_event_motifs({'GT'}), pos_weights={'START': 2.0}, neg_weights={'START': 1.5})
         v_int = float(bce_int(sequences, targets, logits, {}).detach().cpu().item())
         v_str = float(bce_str(sequences, targets, logits, {}).detach().cpu().item())
         self.assertAlmostEqual(v_int, v_str, places=8)

@@ -13,7 +13,7 @@ import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, build_event_motifs
 from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config
 from gene_predictor.metrics_callback import F1Callback
 from gene_predictor.metrics_callback import LossComponentsCallback
@@ -112,15 +112,16 @@ def main():
     ce_weight_map = None
     bce_pos_weight_map = None
     bce_neg_weight_map = None
+    event_motifs_by_class = build_event_motifs(dss_set)
 
-    # Build custom loss from selection, wiring CLI weights
+    # Build event motifs map and custom loss
     if args.loss_type == 'event-ce':
         if not args.disable_class_weights_for_loss:
             ce_weight_map = class_weights_map
         custom_loss = event_based_ce_loss_factory(
-            dss_set,
+            event_motifs_by_class,
             class_weights=ce_weight_map,
-            loss_window_margin_bp=margin_bp
+            loss_window_margin_bp=margin_bp,
         )
     else:
         if not args.disable_class_weights_for_loss:
@@ -136,7 +137,12 @@ def main():
                 int(P.DSS): float(args.dss_neg_weight),
                 int(P.ASS): float(args.ass_neg_weight),
             }
-        custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=bce_pos_weight_map, neg_weights=bce_neg_weight_map, loss_window_margin_bp=margin_bp)
+        custom_loss = event_based_bce_loss_factory(
+            event_motifs_by_class,
+            pos_weights=bce_pos_weight_map,
+            neg_weights=bce_neg_weight_map,
+            loss_window_margin_bp=margin_bp,
+        )
 
     config = create_base_config(
         max_seq_length=args.max_seq_length,

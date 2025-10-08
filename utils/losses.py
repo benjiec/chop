@@ -175,8 +175,42 @@ def adjusted_ce_entropy_loss(
     return total_loss
 
 
+def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
+    """
+    Build the default event-motifs mapping used by event-based losses.
+
+    Returns a dict keyed by class id (GenePredictionClass) with a set of uppercase motifs.
+    Includes defaults for START, STOP, ASS, and uses the provided DSS motifs.
+    """
+    return {
+        int(P.START): {'ATG'},
+        int(P.STOP): set(m.upper() for m in ConventionalStopCodons),
+        int(P.DSS): set(m.upper() for m in dss_motifs),
+        int(P.ASS): set(m.upper() for m in ConventionalAcceptorDinucleotides),
+    }
+
+
+def _normalize_event_motifs_map(event_motifs_by_class: Dict[Union[int, str], Iterable[str]]) -> Dict[int, Set[str]]:
+    normalized: Dict[int, Set[str]] = {}
+    for key, motifs in event_motifs_by_class.items():
+        if isinstance(key, int):
+            cls_id = int(key)
+        else:
+            found = None
+            for cid, cname in P.idx_to_cls.items():
+                if str(key).upper() == str(cname).upper():
+                    found = int(cid)
+                    break
+            if found is None:
+                continue
+            cls_id = found
+        normalized[cls_id] = set(m.upper() for m in motifs)
+    return normalized
+
+
 def event_based_ce_loss_factory(
-    dss_motifs: Iterable[str],
+    event_motifs_by_class: Dict[Union[int, str], Iterable[str]],
+    *,
     class_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     loss_window_margin_bp: Optional[int] = None,
 ):
@@ -195,7 +229,7 @@ def event_based_ce_loss_factory(
     Returns:
         A function (sequences, targets, logits, components_out) -> loss_tensor
     """
-    dss_set: Set[str] = set(m.upper() for m in dss_motifs)
+    normalized_motifs = _normalize_event_motifs_map(event_motifs_by_class)
 
     def event_based_ce_loss(sequences, targets, logits, components_out: Dict[str, Any]):
         # sequences: (B, L) int tokens
@@ -210,52 +244,28 @@ def event_based_ce_loss_factory(
         # Build event mask of shape (B, L)
         event_mask = torch.zeros((B, L), dtype=torch.bool, device=device)
 
-        # Precompute motif groups by length for dynamic scanning
+        # Precompute motif groups by length for all classes
         from collections import defaultdict
-        stop_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in ConventionalStopCodons:
-            stop_by_len[len(m)].add(m.upper())
-        acc_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in ConventionalAcceptorDinucleotides:
-            acc_by_len[len(m)].add(m.upper())
-        dss_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in dss_set:
-            dss_by_len[len(m)].add(m.upper())
+        by_len_by_class: Dict[int, Dict[int, Set[str]]] = {}
+        for cls_id, motif_set in normalized_motifs.items():
+            lens: Dict[int, Set[str]] = defaultdict(set)
+            for m in motif_set:
+                lens[len(m)].add(m.upper())
+            by_len_by_class[int(cls_id)] = lens
 
         for b in range(B):
             # Convert to list of chars and string for substring checks
             bases = [idx_to_bp[int(sequences[b, i].item())] for i in range(L)]
             seq_str = ''.join(bases)
 
-            # START 'ATG' fixed 3bp
-            k = 3
-            for i in range(0, L - k + 1):
-                if seq_str[i:i+k] == 'ATG':
-                    event_mask[b, i:i+k] = True
-
-            # Dynamic STOP motifs by length
-            for k, motifs in stop_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_mask[b, i:i+k] = True
-
-            # Dynamic DSS motifs by length
-            for k, motifs in dss_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_mask[b, i:i+k] = True
-
-            # Dynamic ASS motifs by length
-            for k, motifs in acc_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_mask[b, i:i+k] = True
+            # Generic scan across all configured classes/motifs
+            for cls_id, lens in by_len_by_class.items():
+                for k, motifs in lens.items():
+                    if k <= 0 or k > L:
+                        continue
+                    for i in range(0, L - k + 1):
+                        if seq_str[i:i+k] in motifs:
+                            event_mask[b, i:i+k] = True
 
         # Optional edge masking (exclude window edges)
         if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
@@ -300,7 +310,8 @@ def event_based_ce_loss_factory(
 
 
 def event_based_bce_loss_factory(
-    dss_motifs: Iterable[str],
+    event_motifs_by_class: Dict[Union[int, str], Iterable[str]],
+    *,
     pos_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     neg_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     loss_window_margin_bp: Optional[int] = None,
@@ -314,7 +325,7 @@ def event_based_bce_loss_factory(
       - per-token weight = y_c * pos_weight[c] + (1-y_c) * neg_weight[c]
     The final loss is the weighted mean over all included tokens across the four classes.
     """
-    dss_set: Set[str] = set(m.upper() for m in dss_motifs)
+    normalized_motifs = _normalize_event_motifs_map(event_motifs_by_class)
 
     # Prepare per-class positive/negative weight vectors
     pos_vec = _normalize_class_weight_mapping(pos_weights)
@@ -329,57 +340,28 @@ def event_based_bce_loss_factory(
         idx_to_bp = DNAEmbed.idx_to_bp
 
         # Build class-specific event masks of shape (B, L)
-        event_masks: Dict[int, torch.Tensor] = {
-            P.START: torch.zeros((B, L), dtype=torch.bool, device=device),
-            P.STOP: torch.zeros((B, L), dtype=torch.bool, device=device),
-            P.DSS: torch.zeros((B, L), dtype=torch.bool, device=device),
-            P.ASS: torch.zeros((B, L), dtype=torch.bool, device=device),
-        }
+        event_masks: Dict[int, torch.Tensor] = {int(k): torch.zeros((B, L), dtype=torch.bool, device=device) for k in normalized_motifs.keys()}
 
         from collections import defaultdict
-        stop_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in ConventionalStopCodons:
-            stop_by_len[len(m)].add(m.upper())
-        acc_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in ConventionalAcceptorDinucleotides:
-            acc_by_len[len(m)].add(m.upper())
-        dss_by_len: Dict[int, Set[str]] = defaultdict(set)
-        for m in dss_set:
-            dss_by_len[len(m)].add(m.upper())
+        by_len_by_class: Dict[int, Dict[int, Set[str]]] = {}
+        for cls_id, motif_set in normalized_motifs.items():
+            lens: Dict[int, Set[str]] = defaultdict(set)
+            for m in motif_set:
+                lens[len(m)].add(m.upper())
+            by_len_by_class[int(cls_id)] = lens
 
         for b in range(B):
             bases = [idx_to_bp[int(sequences[b, i].item())] for i in range(L)]
             seq_str = ''.join(bases)
 
-            # START spans (ATG triplets)
-            k = 3
-            for i in range(0, L - k + 1):
-                if seq_str[i:i+k] == 'ATG':
-                    event_masks[P.START][b, i:i+k] = True
-
-            # STOP spans
-            for k, motifs in stop_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_masks[P.STOP][b, i:i+k] = True
-
-            # DSS spans
-            for k, motifs in dss_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_masks[P.DSS][b, i:i+k] = True
-
-            # ASS spans
-            for k, motifs in acc_by_len.items():
-                if k <= 0 or k > L:
-                    continue
-                for i in range(0, L - k + 1):
-                    if seq_str[i:i+k] in motifs:
-                        event_masks[P.ASS][b, i:i+k] = True
+            # Generic spans for all configured classes
+            for cls_id, lens in by_len_by_class.items():
+                for k, motifs in lens.items():
+                    if k <= 0 or k > L:
+                        continue
+                    for i in range(0, L - k + 1):
+                        if seq_str[i:i+k] in motifs:
+                            event_masks[int(cls_id)][b, i:i+k] = True
 
         # Optional edge masking: build center mask once
         center_mask = None
@@ -412,7 +394,7 @@ def event_based_bce_loss_factory(
             default_neg[: len(neg_vec)] = neg_vec.to(device=probs.device, dtype=probs.dtype)
 
         # Compute BCE per event class over its event mask
-        for cls in (P.START, P.STOP, P.DSS, P.ASS):
+        for cls in event_masks.keys():
             mask = event_masks[cls]
             if center_mask is not None:
                 mask = mask & center_mask
