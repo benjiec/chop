@@ -96,28 +96,35 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
 
     # Record loss weights in config for reference (not consumed by dna_learner yet)
     cfg.setdefault('loss', {})
-    cfg['loss']['bce_pos_weights'] = {
-        int(P.START): float(start_weight),
-        int(P.STOP): float(stop_weight),
-        int(P.DSS): float(dss_weight),
-        int(P.ASS): float(ass_weight),
-    }
-    cfg['loss']['bce_neg_weights'] = {
-        int(P.START): float(start_neg_weight),
-        int(P.STOP): float(stop_neg_weight),
-        int(P.DSS): float(dss_neg_weight),
-        int(P.ASS): float(ass_neg_weight),
-    }
-    cfg['loss']['ce_class_weights'] = {
-        int(P.INTERGENIC): 1.0,
-        int(P.UTR5): float(utr_weight),
-        int(P.START): float(start_weight),
-        int(P.GENE): 1.0,
-        int(P.STOP): float(stop_weight),
-        int(P.UTR3): float(utr_weight),
-        int(P.DSS): float(dss_weight),
-        int(P.ASS): float(ass_weight),
-    }
+
+    # these weights are recorded in the config, but they are only used in the
+    # loss functions, e.g. our custom loss function. the default loss function
+    # in dna_learner does use cfg['loss']['class_weights'] which is set in the
+    # create_base_config call.
+
+    if use_class_weights:
+        cfg['loss']['bce_pos_weights'] = {
+            int(P.START): float(start_weight),
+            int(P.STOP): float(stop_weight),
+            int(P.DSS): float(dss_weight),
+            int(P.ASS): float(ass_weight),
+        }
+        cfg['loss']['bce_neg_weights'] = {
+            int(P.START): float(start_neg_weight),
+            int(P.STOP): float(stop_neg_weight),
+            int(P.DSS): float(dss_neg_weight),
+            int(P.ASS): float(ass_neg_weight),
+        }
+        cfg['loss']['ce_class_weights'] = {
+            int(P.INTERGENIC): 1.0,
+            int(P.UTR5): float(utr_weight),
+            int(P.START): float(start_weight),
+            int(P.GENE): 1.0,
+            int(P.STOP): float(stop_weight),
+            int(P.UTR3): float(utr_weight),
+            int(P.DSS): float(dss_weight),
+            int(P.ASS): float(ass_weight),
+        }
     return cfg
 
 
