@@ -20,10 +20,11 @@ class F1Callback(pl.Callback):
     print a compact per-class summary to stdout every N epochs.
     """
 
-    def __init__(self, val_loader, print_per_class_every: int = 1):
+    def __init__(self, val_loader, print_per_class_every: int = 1, margin_bp: int = 0):
         super().__init__()
         self.val_loader = val_loader
         self.print_per_class_every = int(print_per_class_every) if print_per_class_every is not None else 0
+        self.margin_bp = int(margin_bp) if margin_bp is not None else 0
 
     @torch.no_grad()
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module):
@@ -59,8 +60,7 @@ class F1Callback(pl.Callback):
         # Optional validity masks to exclude window edges using bp margin
         valid_masks = None
 
-        # If the module has config, read bp margin directly
-        margin_bp = int(pl_module.config.get('loss', {}).get('loss_window_margin_bp', 200) or 0)
+        margin_bp = self.margin_bp
         if margin_bp > 0:
             valid_masks = []
             for r in results_data:

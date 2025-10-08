@@ -501,12 +501,9 @@ def create_base_config(
     max_epochs: int = 25,
     batch_size: int = 8,
     class_weights: Optional[list] = None,
-    loss_window_margin_fraction: Optional[float] = None,
-    loss_window_margin_bp: Optional[int] = 200,
+    # (removed: loss_window_margin_fraction, loss_window_margin_bp)
     attention_masks: Optional[Dict[int, int]] = None,
     kmer_size: int = 0,
-    entropy_lambda: Optional[float] = None,
-    fp_beta: Optional[float] = None,
     accumulate_grad_batches: Optional[int] = None,
 ) -> dict:
 
@@ -535,15 +532,10 @@ def create_base_config(
         },
         'loss': {
             'class_weights': class_weights,
-            'loss_window_margin_bp': loss_window_margin_bp,
         },
         'class_names': class_names
     }
 
-    if entropy_lambda is not None:
-        cfg['loss']['entropy_lambda'] = float(entropy_lambda)
-    if fp_beta is not None:
-        cfg['loss']['fp_beta'] = float(fp_beta)
     if accumulate_grad_batches is not None:
         cfg['training']['accumulate_grad_batches'] = int(accumulate_grad_batches)
 

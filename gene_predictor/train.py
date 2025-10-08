@@ -74,8 +74,6 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         class_weights=class_weights,
         attention_masks=attention_masks,
         kmer_size=kmer_size,
-        entropy_lambda=entropy_lambda,
-        fp_beta=fp_beta,
         accumulate_grad_batches=accumulate_grad_batches,
     )
 
@@ -208,7 +206,8 @@ def train(fna_fn: str, tsv_fn: str,
             save_last=False,
             auto_insert_metric_name=False,
         )
-        return [ F1Callback(val_loader), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
+        # Pass margin_bp explicitly to F1Callback (set here to 0 by default)
+        return [ F1Callback(val_loader, margin_bp=0), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
     
     model, val_loader = run_trainer(
         dataset,
@@ -380,8 +379,6 @@ def main():
         stop_before=args.stop_before,
         stop_after=args.stop_after,
         cc_gap=args.cc_gap,
-        entropy_lambda=args.entropy_lambda,
-        fp_beta=args.fp_beta,
         accumulate_grad_batches=args.accumulate_grad_batches,
         min_per_class_per_batch=args.min_per_class_per_batch,
         custom_loss_fn=custom_loss,

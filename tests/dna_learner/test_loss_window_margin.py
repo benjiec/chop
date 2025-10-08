@@ -37,7 +37,6 @@ class TestLossWindowMargin(unittest.TestCase):
                 n_heads=1,
                 learning_rate=1e-3,
                 batch_size=1,
-                loss_window_margin_bp=margin_bp,
             )
             mod = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=margin_bp, class_weights=None, entropy_lambda=0.0, fp_beta=0.0, components_out=c))
             # Replace model with a dummy nn.Module returning fixed logits

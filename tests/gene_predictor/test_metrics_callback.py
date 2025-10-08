@@ -63,7 +63,7 @@ class TestMetricsCallback(unittest.TestCase):
         cw[START] = 10.0
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader, print_per_class_every=0)
+        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
@@ -93,7 +93,7 @@ class TestMetricsCallback(unittest.TestCase):
         cw = [1.0] * num_classes
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader, print_per_class_every=0)
+        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 

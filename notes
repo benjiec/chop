@@ -22,8 +22,6 @@ scripts/predict-layout GCA_001939145.1 99 gene_predictor/gene_predictor_run_2025
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60:12:60,3:140:40:140,4:220:120:0" --num-windows 20000 --stride 330 --enable-cc --dss-motifs standard
 
-PYTHONPATH=. python gene_predictor/window_validation.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv --run-dir gene_predictor/gene_predictor_run_20250930_071840 --model-path model_epoch=06_val_f1=0.427.ckpt --num-windows 2000 --window-stride 330
-
 # predict on 10, change to 1000 to do a full prediction
 scripts/predict-layout GCF_002042975.1 10 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt
 

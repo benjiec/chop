@@ -19,9 +19,6 @@ class TestLossComponents(unittest.TestCase):
             learning_rate=1e-3,
             max_epochs=1,
             batch_size=1,
-            loss_window_margin_bp=0,
-            entropy_lambda=0.0,
-            fp_beta=0.0,
         )
 
         module = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=None, entropy_lambda=0.0, fp_beta=0.0, components_out=c))
