@@ -21,9 +21,6 @@ from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
 
-    # (create_config inlined below in main())
-
-
 def main():
     parser = argparse.ArgumentParser(description="Train gene boundary and splicing site detection")
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
@@ -112,30 +109,34 @@ def main():
     }
     class_weights = [class_weights_map.get(i, 1.0) for i in sorted(P.idx_to_cls.keys())]
 
+    ce_weight_map = None
+    bce_pos_weight_map = None
+    bce_neg_weight_map = None
+
     # Build custom loss from selection, wiring CLI weights
     if args.loss_type == 'event-ce':
+        if not args.disable_class_weights_for_loss:
+            ce_weight_map = class_weights_map
         custom_loss = event_based_ce_loss_factory(
             dss_set,
-            class_weights=None if args.disable_class_weights_for_loss else class_weights_map,
+            class_weights=ce_weight_map,
             loss_window_margin_bp=margin_bp
         )
     else:
-        pos_weights = None
-        neg_weights = None
         if not args.disable_class_weights_for_loss:
-            pos_weights = {
+            bce_pos_weight_map = {
                 int(P.START): float(args.start_weight),
                 int(P.STOP): float(args.stop_weight),
                 int(P.DSS): float(args.dss_weight),
                 int(P.ASS): float(args.ass_weight),
             }
-            neg_weights = {
+            bce_neg_weight_map = {
                 int(P.START): float(args.start_neg_weight),
                 int(P.STOP): float(args.stop_neg_weight),
                 int(P.DSS): float(args.dss_neg_weight),
                 int(P.ASS): float(args.ass_neg_weight),
             }
-        custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=pos_weights, neg_weights=neg_weights, loss_window_margin_bp=margin_bp)
+        custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=bce_pos_weight_map, neg_weights=bce_neg_weight_map, loss_window_margin_bp=margin_bp)
 
     config = create_base_config(
         max_seq_length=args.max_seq_length,
@@ -157,30 +158,11 @@ def main():
         set_class_conditional_readout_config(config, int(P.START), int(args.start_before), int(args.start_after), int(args.cc_gap))
         set_class_conditional_readout_config(config, int(P.STOP), int(args.stop_before), int(args.stop_after), int(args.cc_gap))
 
-    config.setdefault('loss', {})
-    if not args.disable_class_weights:
-        config['loss']['bce_pos_weights'] = {
-            int(P.START): float(args.start_weight),
-            int(P.STOP): float(args.stop_weight),
-            int(P.DSS): float(args.dss_weight),
-            int(P.ASS): float(args.ass_weight),
-        }
-        config['loss']['bce_neg_weights'] = {
-            int(P.START): float(args.start_neg_weight),
-            int(P.STOP): float(args.stop_neg_weight),
-            int(P.DSS): float(args.dss_neg_weight),
-            int(P.ASS): float(args.ass_neg_weight),
-        }
-        config['loss']['ce_class_weights'] = {
-            int(P.INTERGENIC): 1.0,
-            int(P.UTR5): 3.0,
-            int(P.START): float(args.start_weight),
-            int(P.GENE): 1.0,
-            int(P.STOP): float(args.stop_weight),
-            int(P.UTR3): 3.0,
-            int(P.DSS): float(args.dss_weight),
-            int(P.ASS): float(args.ass_weight),
-        }
+    config.setdefault('custom', {})
+    config['custom'].setdefault('loss', {})
+    config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
+    config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
+    config['custom']['loss']['ce_class_weights'] = ce_weight_map
 
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
