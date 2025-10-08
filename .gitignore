@@ -9,3 +9,5 @@ synthetic/start_detection/*_run_*
 synthetic/gene_boundary/*_run_*
 gene_predictor/*_run_*
 .~*.twbr
+x.tsv
+x.fna

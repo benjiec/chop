@@ -136,6 +136,7 @@ def main():
                 per_start_rank[s] = rank_map
 
             # Global ranking k
+            wrote_any_rows = False
             for k_rank, cand in enumerate(dr.global_topk, start=1):
                 gene_id = f"gene_{k_rank}"
                 gene_start = cand.exons[0][0] + 1  # back to 1-based
@@ -165,6 +166,12 @@ def main():
                         f"{cand.codon_penalty:.6f}" if cand.codon_penalty is not None else '',
                     ]
                     f.write('\t'.join(row) + '\n')
+                    wrote_any_rows = True
+            # If no candidates were written for this sequence, emit a marker line with only sequence_id
+            if not wrote_any_rows:
+                ps = ps_map.get(dr.sequence_index)
+                seq_identifier = ps.sequence_id if (ps is not None and getattr(ps, 'sequence_id', None)) else str(dr.sequence_index)
+                f.write(str(seq_identifier) + '\n')
     print(f"✓ Wrote {args.output_tsv}")
 
     # Write FNA (input sequences)

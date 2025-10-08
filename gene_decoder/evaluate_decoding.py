@@ -45,6 +45,10 @@ def _parse_decoded_tsv(decoded_tsv: str) -> Dict[str, Dict[int, List[_Candidate]
         for line in f:
             parts = line.rstrip('\n').split('\t')
             if len(parts) <= max(sid_i, gid_i, gstart_i, xs_i, xe_i, strand_i, bnd_i, srank_i):
+                # Allow marker-only rows that only contain sequence_id to register the sequence
+                if len(parts) > sid_i:
+                    sid_marker = parts[sid_i]
+                    by_seq.setdefault(sid_marker, {})
                 continue
             sid = parts[sid_i]
             gid = parts[gid_i]
@@ -114,6 +118,8 @@ def _parse_expected_starts(expected_tsv: str) -> Dict[str, Set[Tuple[str, int]]]
             except Exception:
                 continue
             starts_by_seq.setdefault(sid, set()).add((strand, start1))
+
+    print(len(starts_by_seq), "expected starts")
     return starts_by_seq
 
 
@@ -177,6 +183,7 @@ def evaluate_decoding(
     total_tp_st = total_fp_st = total_fn_st = 0
     per_seq_out: Dict[str, Dict[str, Dict[str, float]]] = {}
 
+    # Iterate only over sequences present in the decoded TSV (including marker-only rows).
     for sid, starts in decoded.items():
         exp_genes_list = expected.get(sid, [])
         exp_gene_set: Set[Tuple[str, Tuple[Tuple[int, int], ...]]] = set(exp_genes_list)
