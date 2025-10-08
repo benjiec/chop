@@ -31,8 +31,6 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   utr_weight: float = 3.0,
                   attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                   max_seq_length: int = 1000,
-                  use_focal: bool = False, focal_gamma: float = 1.5,
-                  focal_alpha: Optional[list] = None,
                   cc_enabled: bool = False,
                   start_before: int = 300, start_after: int = 0,
                   stop_before: int = 0, stop_after: int = 300,
@@ -124,8 +122,6 @@ def train(fna_fn: str, tsv_fn: str,
           max_seq_length: int = 1000,
           stride: int = 500,
           num_windows: int = 5000,
-          use_focal: bool = False, focal_gamma: float = 1.5,
-          focal_alpha: Optional[list] = None,
           cc_enabled: bool = False,
           start_before: int = 300, start_after: int = 0,
           stop_before: int = 0, stop_after: int = 300,
@@ -143,7 +139,6 @@ def train(fna_fn: str, tsv_fn: str,
         use_class_weights=use_class_weights, start_weight=start_weight, stop_weight=stop_weight, utr_weight=utr_weight,
         dss_weight=dss_weight, ass_weight=ass_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
-        use_focal=use_focal, focal_gamma=focal_gamma, focal_alpha=focal_alpha,
         cc_enabled=cc_enabled,
         start_before=start_before, start_after=start_after,
         stop_before=stop_before, stop_after=stop_after,
@@ -194,8 +189,7 @@ def train(fna_fn: str, tsv_fn: str,
             save_last=False,
             auto_insert_metric_name=False,
         )
-        # Pass margin_bp explicitly to F1Callback (set here to 0 by default)
-        return [ F1Callback(val_loader, margin_bp=0), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
+        return [ F1Callback(val_loader, margin_bp=margin_bp), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
     
     model, val_loader = run_trainer(
         dataset,
@@ -241,12 +235,6 @@ def main():
     parser.add_argument('--dss-neg-weight', type=float, default=3.0, help='Negative class weight for DSS (BCE)')
     parser.add_argument('--ass-neg-weight', type=float, default=3.0, help='Negative class weight for ASS (BCE)')
 
-    # focal loss
-    parser.add_argument('--use-focal', action='store_true', help='Enable focal loss instead of cross-entropy')
-    parser.add_argument('--focal-gamma', type=float, default=1.5, help='Focal loss gamma (focusing parameter)')
-    parser.add_argument('--focal-alpha', type=str, default=None,
-                        help='Comma-separated per-class alpha weights for focal loss (e.g., "1.0,3.0,8.0"). Defaults to class-weights if omitted')
-
     # class conditional readout
     parser.add_argument('--enable-cc', action='store_true', help='Enable class-conditional readouts for START/STOP (disabled by default)')
     parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
@@ -262,7 +250,10 @@ def main():
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
     # loss selection
-    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce'], help='Loss type: event-ce (masked cross-entropy) or event-bce (masked BCE per event class)')
+    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce'],
+                        help='Loss type: event-ce (masked cross-entropy) or event-bce (masked BCE per event class)')
+
+    margin_bp = min(200, args.max_seq_length // 2)
 
     args = parser.parse_args()
     
@@ -287,14 +278,6 @@ def main():
             else:
                 raise ValueError(f"Invalid attention mask format: {mask_spec}. Use 'head:window', 'head:before:after', or 'head:before:gap:after'")
 
-    # Parse focal alpha list if provided
-    focal_alpha = None
-    if args.focal_alpha:
-        try:
-            focal_alpha = [float(x) for x in args.focal_alpha.split(',') if x.strip() != '']
-        except Exception as e:
-            raise ValueError(f"Invalid --focal-alpha '{args.focal_alpha}': must be comma-separated floats") from e
-    
     # Resolve DSS motifs
     if args.dss_motifs == 'standard':
         dss_set = StandardDonorDinucleotides
@@ -317,8 +300,6 @@ def main():
                 int(P.DSS): float(args.dss_weight),
                 int(P.ASS): float(args.ass_weight),
             }
-        margin_bp = 200
-        print("using margin", margin_bp)
         custom_loss = event_based_ce_loss_factory(dss_set, class_weights=ce_weights, loss_window_margin_bp=margin_bp)
     else:
         pos_weights = None
@@ -336,8 +317,6 @@ def main():
                 int(P.DSS): float(args.dss_neg_weight),
                 int(P.ASS): float(args.ass_neg_weight),
             }
-        margin_bp = 200
-        print("using margin", margin_bp)
         custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=pos_weights, neg_weights=neg_weights, loss_window_margin_bp=margin_bp)
 
     # Run training
