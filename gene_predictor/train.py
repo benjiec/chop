@@ -43,12 +43,12 @@ def main():
     parser.add_argument('--disable-class-weights-for-loss', action='store_true', help='Disable class weights in loss function (still used for dataset)')
     parser.add_argument('--start-weight', type=float, default=5.0, help='Weight for START class')
     parser.add_argument('--stop-weight', type=float, default=3.0, help='Weight for STOP class')
-    parser.add_argument('--dss-weight', type=float, default=3.0, help='Weight for DSS class')
+    parser.add_argument('--dss-weight', type=float, default=4.0, help='Weight for DSS class')
     parser.add_argument('--ass-weight', type=float, default=2.0, help='Weight for ASS class')
     # Negative weights for BCE-style losses (reuse class weights for positive weights)
     parser.add_argument('--start-neg-weight', type=float, default=2.0, help='Negative class weight for START (BCE)')
     parser.add_argument('--stop-neg-weight', type=float, default=2.0, help='Negative class weight for STOP (BCE)')
-    parser.add_argument('--dss-neg-weight', type=float, default=3.0, help='Negative class weight for DSS (BCE)')
+    parser.add_argument('--dss-neg-weight', type=float, default=4.0, help='Negative class weight for DSS (BCE)')
     parser.add_argument('--ass-neg-weight', type=float, default=3.0, help='Negative class weight for ASS (BCE)')
 
     # class conditional readout
