@@ -8,6 +8,7 @@ import torch
 
 from synthetic.start_detection.train import create_utr_start_config
 from dna_learner.model import GenePredictorModule
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestTrainer(unittest.TestCase):
@@ -28,6 +29,6 @@ class TestTrainer(unittest.TestCase):
             max_seq_length=128,
             use_focal=False,
         )
-        module = GenePredictorModule(cfg)
+        module = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
         w = module.criterion.weight.detach().cpu().numpy().tolist()
         self.assertEqual(w, [1.0, 4.0, 8.0])

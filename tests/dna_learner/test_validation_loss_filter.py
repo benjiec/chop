@@ -2,6 +2,7 @@ import unittest
 import torch
 
 from dna_learner.model import GenePredictorModule, create_base_config
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestValidationLossFilter(unittest.TestCase):
@@ -23,7 +24,18 @@ class TestValidationLossFilter(unittest.TestCase):
         )
         cfg['loss']['use_focal'] = False
         cfg['loss']['entropy_lambda'] = entropy_lambda
-        mod = GenePredictorModule(cfg)
+        mod = GenePredictorModule(
+            cfg,
+            custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(
+                l,
+                t,
+                loss_window_margin_bp=0,
+                class_weights=class_weights,
+                entropy_lambda=entropy_lambda,
+                fp_beta=0.0,
+                components_out=c,
+            ),
+        )
         return mod
 
     def test_val_loss_weighted_all_center_tokens(self):

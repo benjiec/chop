@@ -8,6 +8,7 @@ import torch
 
 from dna_learner.trainer import train as train_fn
 from dna_learner.model import create_base_config
+from utils.losses import adjusted_ce_entropy_loss
 from utils.dataset import GenomicSyntheticTestingDataset, RandomBasesGenerator, RandomUTR5Generator, AddATGGenerator
 from utils.sequences import KOZAK_SEQUENCES, UTR5_REAL_SEQUENCES, IRES_SEQUENCES
 from utils.constants import GenePredictionClass as P
@@ -68,6 +69,7 @@ class TestTrainer(unittest.TestCase):
                 cb_gen,
                 monitor_metric='val_loss',
                 monitor_mode='min',
+                custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
             )
             # Sanity checks
             self.assertIsNotNone(model)
@@ -114,6 +116,7 @@ class TestTrainer(unittest.TestCase):
                 additional_callback_generator=lambda v: [],
                 monitor_metric='val_loss',
                 monitor_mode='max',
+                custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
             )
             ckpts = list((outdir / 'checkpoints').glob('model_epoch=*_val_loss=*.ckpt'))
             self.assertTrue(len(ckpts) >= 1)

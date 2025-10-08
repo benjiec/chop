@@ -334,12 +334,7 @@ def main():
                 int(P.DSS): float(args.dss_weight),
                 int(P.ASS): float(args.ass_weight),
             }
-        margin_bp = create_config.__defaults__[13] if False else None  # placeholder to keep context alignment
-        margin_bp = None
-        try:
-            margin_bp = int(config.get('loss', {}).get('loss_window_margin_bp'))
-        except Exception:
-            margin_bp = config.get('loss', {}).get('loss_window_margin_bp', None)
+        margin_bp = 200
         print("using margin", margin_bp)
         custom_loss = event_based_ce_loss_factory(dss_set, class_weights=ce_weights, loss_window_margin_bp=margin_bp)
     else:
@@ -358,11 +353,7 @@ def main():
                 int(P.DSS): float(args.dss_neg_weight),
                 int(P.ASS): float(args.ass_neg_weight),
             }
-        margin_bp = None
-        try:
-            margin_bp = int(config.get('loss', {}).get('loss_window_margin_bp'))
-        except Exception:
-            margin_bp = config.get('loss', {}).get('loss_window_margin_bp', None)
+        margin_bp = 200
         print("using margin", margin_bp)
         custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=pos_weights, neg_weights=neg_weights, loss_window_margin_bp=margin_bp)
 

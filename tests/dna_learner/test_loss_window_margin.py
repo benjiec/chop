@@ -4,6 +4,7 @@ import unittest
 import torch
 
 from dna_learner.model import GenePredictorModule, create_base_config
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestLossWindowMargin(unittest.TestCase):
@@ -38,7 +39,7 @@ class TestLossWindowMargin(unittest.TestCase):
                 batch_size=1,
                 loss_window_margin_bp=margin_bp,
             )
-            mod = GenePredictorModule(cfg)
+            mod = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=margin_bp, class_weights=None, entropy_lambda=0.0, fp_beta=0.0, components_out=c))
             # Replace model with a dummy nn.Module returning fixed logits
             class DummyModel(torch.nn.Module):
                 def __init__(self, logits):

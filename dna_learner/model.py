@@ -434,148 +434,32 @@ class GenePredictorModule(pl.LightningModule):
         if class_weights is not None:
             class_weights = torch.tensor(class_weights, dtype=torch.float32)
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
-        # Keep a reference to class weights for manual per-token loss when needed
-        self._class_weights_tensor = class_weights
 
-        # Edge masking margin in base-pairs (per side). Default 200 bp.
-        self.loss_window_margin_bp: int = int(loss_config.get('loss_window_margin_bp', 200))
-
-        # Focal loss options
+        # Focal loss options (used by tests via _focal_loss)
         self.use_focal: bool = bool(loss_config.get('use_focal', False))
         self.focal_gamma: float = float(loss_config.get('focal_gamma', 2.0))
         focal_alpha = loss_config.get('focal_alpha')
-        # If explicit focal_alpha is not provided, fall back to class_weights as alphas
-        if focal_alpha is None:
-            focal_alpha = class_weights.tolist() if class_weights is not None else None
+        if focal_alpha is None and class_weights is not None:
+            focal_alpha = class_weights.tolist()
         self.focal_alpha = torch.tensor(focal_alpha, dtype=torch.float32) if focal_alpha is not None else None
         
         # Save hyperparameters for logging
         self.save_hyperparameters(config)
 
-        # Entropy regularization strength (lambda). Default 1e-3 if not specified
-        self.entropy_lambda: float = float(loss_config.get('entropy_lambda', 0))
-
-        # False-positive penalty coefficient (beta). Applies one-vs-rest BCE for weighted classes
-        self.fp_beta: float = float(loss_config.get('fp_beta', 0.1))
-
-        # Optional externally provided custom loss function
-        self.custom_loss_fn: Optional[Callable] = custom_loss_fn
+        # Require externally provided custom loss function
+        if custom_loss_fn is None:
+            raise ValueError("custom_loss_fn must be provided for GenePredictorModule")
+        self.custom_loss_fn: Callable = custom_loss_fn
 
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
-    def _compute_adjusted_loss(self, logits: torch.Tensor, targets: torch.Tensor, components_out: Optional[Dict[str, Any]] = None) -> torch.Tensor:
-        """Compute loss with edge masking over all classes and entropy regularization.
-
-        - Includes all center tokens (no class filter); edge tokens excluded by margin
-        - Applies class weights to per-token loss if provided
-        - Uses weighted mean across included tokens
-        """
-        batch_size, seq_length, num_classes = logits.shape
-        logits_flat = logits.view(-1, num_classes)
-        targets_flat = targets.view(-1)
-
-        # Edge mask (exclude window edges)
-        margin = int(max(0, min(seq_length // 2, int(self.loss_window_margin_bp))))
-        if margin > 0 and seq_length > 2 * margin:
-            center = torch.ones(seq_length, dtype=torch.float32, device=logits.device)
-            center[:margin] = 0.0
-            center[-margin:] = 0.0
-            include_mask = center.unsqueeze(0).expand(batch_size, -1).contiguous().view(-1) > 0
-        else:
-            include_mask = torch.ones_like(targets_flat, dtype=torch.bool)
-
-        if not include_mask.any():
-            # Return a zero loss connected to the graph to allow backward()
-            return logits_flat.sum() * 0.0
-
-        # Shared primitives (compute once)
-        log_probs = F.log_softmax(logits_flat, dim=-1)
-        probs = torch.exp(log_probs)
-
-        # Per-token CE (unreduced) via negative log-likelihood of true class
-        idx = torch.arange(logits_flat.size(0), device=logits.device)
-        ce_vec = -log_probs[idx, targets_flat]
-
-        # Entropy per-token
-        ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
-
-        # Build unified per-token weights (mask × class weights if provided)
-        if self._class_weights_tensor is not None:
-            cw = self._class_weights_tensor.to(device=logits.device, dtype=logits_flat.dtype)
-            token_weights_full = cw[targets_flat]
-        else:
-            token_weights_full = torch.ones_like(ce_vec)
-
-        w = include_mask.to(token_weights_full.dtype) * token_weights_full
-        denom = torch.clamp(w.sum(), min=1e-12)
-
-        # Weighted means for CE, entropy, and combined objective
-        ce_mean = (ce_vec * w).sum() / denom
-        ent_mean = (ent_vec * w).sum() / denom
-        lambda_h = float(getattr(self, 'entropy_lambda', 0.0))
-        ce_entropy_loss = ((ce_vec - lambda_h * ent_vec) * w).sum() / denom
-
-        # Optional FP penalty (one-vs-rest BCE over weighted classes) on included tokens
-        beta = float(self.fp_beta)
-        fp_penalty = 0
-        if beta > 0.0 and self._class_weights_tensor is not None:
-            cw_full = self._class_weights_tensor.to(device=logits.device)
-            weighted_classes_mask = cw_full > 1.0
-            if weighted_classes_mask.any():
-                probs_full = probs[include_mask]  # (N_incl, C)
-                targets_incl = targets_flat[include_mask]
-                # clamp for numerical stability
-                probs_full = torch.clamp(probs_full, min=1e-6, max=1.0 - 1e-6)
-                # Select only weighted classes columns
-                class_indices = torch.nonzero(weighted_classes_mask, as_tuple=False).view(-1)
-                p_sel = probs_full[:, class_indices]  # (N_incl, C_w)
-                # Build y for selected classes
-                y_sel = (targets_incl.view(-1, 1) == class_indices.view(1, -1)).to(p_sel.dtype)
-                bce = -(y_sel * torch.log(p_sel) + (1.0 - y_sel) * torch.log(1.0 - p_sel))
-                # Keep FP penalty unweighted: mean over tokens and selected classes
-                fp_penalty = bce.mean()
-        else:
-            beta = 0
-            fp_penalty = 0
-
-        total_loss = ce_entropy_loss + beta * fp_penalty
-
-        # Optionally emit loss components (overall and per-class CE aggregates)
-        if components_out is not None:
-            # Per-class CE weighted sums and denominators (included tokens only)
-            ce_weighted_sum_by_class: Dict[int, float] = {}
-            weight_sum_by_class: Dict[int, float] = {}
-            total_weighted_ce_sum = float(((ce_vec * w).sum()).detach().cpu().item())
-            C = int(logits.shape[-1])
-            for k in range(C):
-                cls_mask = include_mask & (targets_flat == k)
-                if cls_mask.any():
-                    num_k = float(((ce_vec[cls_mask] * token_weights_full[cls_mask]).sum()).detach().cpu().item())
-                    den_k = float((token_weights_full[cls_mask].sum()).detach().cpu().item())
-                    ce_weighted_sum_by_class[int(k)] = num_k
-                    weight_sum_by_class[int(k)] = den_k
-
-            components_out['total'] = float(total_loss.detach().cpu().item())
-            components_out['ce'] = float(ce_mean.detach().cpu().item())
-            components_out['entropy'] = float(ent_mean.detach().cpu().item())
-            components_out['fp_penalty'] = float((fp_penalty if isinstance(fp_penalty, torch.Tensor) else torch.tensor(fp_penalty)).detach().cpu().item())
-            components_out['ce_weighted_sum_by_class'] = ce_weighted_sum_by_class
-            components_out['weight_sum_by_class'] = weight_sum_by_class
-            components_out['total_weighted_ce_sum'] = total_weighted_ce_sum
-
-        return total_loss
-
     def training_step(self, batch, batch_idx):
         sequences, targets = batch
         logits = self.model(sequences)
         
-        # Use custom loss if provided; otherwise use default adjusted loss
         comp = {}
-        if self.custom_loss_fn is not None:
-            loss = self.custom_loss_fn(sequences, targets, logits, comp)
-        else:
-            loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        loss = self.custom_loss_fn(sequences, targets, logits, comp)
         # Expose components for callback aggregation without extra forwards
         self._last_train_components = comp
 
@@ -596,12 +480,8 @@ class GenePredictorModule(pl.LightningModule):
         sequences, targets = batch
         logits = self.model(sequences)
         
-        # Use custom loss if provided; otherwise use default adjusted loss
         comp = {}
-        if self.custom_loss_fn is not None:
-            loss = self.custom_loss_fn(sequences, targets, logits, comp)
-        else:
-            loss = self._compute_adjusted_loss(logits, targets, components_out=comp)
+        loss = self.custom_loss_fn(sequences, targets, logits, comp)
         # Expose components for callback aggregation
         self._last_val_components = comp
 

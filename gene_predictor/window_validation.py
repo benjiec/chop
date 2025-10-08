@@ -58,7 +58,21 @@ def run_test(dataset, model):
             logits = model.model(sequences)
             predictions = logits.argmax(dim=-1)
             probabilities = torch.softmax(logits, dim=-1)
-            loss = model._compute_adjusted_loss(logits, targets)
+            from utils.losses import adjusted_ce_entropy_loss
+            loss_cfg = getattr(model, 'config', {}).get('loss', {}) if hasattr(model, 'config') else {}
+            class_weights = loss_cfg.get('class_weights')
+            margin_bp = int(loss_cfg.get('loss_window_margin_bp', 0))
+            entropy_lambda = float(loss_cfg.get('entropy_lambda', 0.0))
+            fp_beta = float(loss_cfg.get('fp_beta', 0.0))
+            loss = adjusted_ce_entropy_loss(
+                logits,
+                targets,
+                loss_window_margin_bp=margin_bp,
+                class_weights=class_weights,
+                entropy_lambda=entropy_lambda,
+                fp_beta=fp_beta,
+                components_out=None,
+            )
             losses.append(loss)
 
             batch_size = sequences.size(0)

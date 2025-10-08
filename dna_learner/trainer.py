@@ -50,6 +50,8 @@ def train(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if custom_loss_fn is None:
+        raise ValueError("custom_loss_fn is required for training; please provide one")
     module = GenePredictorModule(config, custom_loss_fn=custom_loss_fn)
     
     total_params = sum(p.numel() for p in module.parameters())

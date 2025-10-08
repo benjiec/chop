@@ -11,6 +11,7 @@ from dna_learner.model import (
     GenePredictorModule,
     create_base_config,
 )
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestGenePredictorModel(unittest.TestCase):
@@ -58,7 +59,7 @@ class TestGenePredictorModel(unittest.TestCase):
             attention_masks={0: 2},
             kmer_size=0,
         )
-        module = GenePredictorModule(config)
+        module = GenePredictorModule(config, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
         # Verify d_model adjusted
         self.assertEqual(module.model.embedding.d_model % module.model.transformer_layers[0].n_heads, 0)
         x = torch.randint(0, 5, (2, 40))
@@ -101,8 +102,8 @@ class TestGenePredictorModel(unittest.TestCase):
         )
 
         # Create modules
-        ce_module = GenePredictorModule(base_cfg)
-        focal_module = GenePredictorModule(focal_cfg)
+        ce_module = GenePredictorModule(base_cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=base_cfg.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
+        focal_module = GenePredictorModule(focal_cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=focal_cfg.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
 
         # Construct logits and targets: make them confidently correct to compare magnitude differences
         N, C = 10, 3
@@ -237,12 +238,12 @@ class TestGenePredictorModel(unittest.TestCase):
         cfg['loss']['entropy_lambda'] = 0.0
         # First, set fp_beta=0
         cfg['loss']['fp_beta'] = 0.0
-        mod_no_fp = GenePredictorModule(cfg)
+        mod_no_fp = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=cfg.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg.get('loss',{}).get('fp_beta',0.0), components_out=c))
         # Now same with fp_beta>0
         cfg2 = dict(cfg)
         cfg2['loss'] = dict(cfg['loss'])
         cfg2['loss']['fp_beta'] = 0.5
-        mod_with_fp = GenePredictorModule(cfg2)
+        mod_with_fp = GenePredictorModule(cfg2, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg2.get('loss',{}).get('class_weights'), entropy_lambda=cfg2.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg2.get('loss',{}).get('fp_beta',0.0), components_out=c))
 
         # Construct logits to create FP toward START on background tokens
         # batch=1, L=4, C=3

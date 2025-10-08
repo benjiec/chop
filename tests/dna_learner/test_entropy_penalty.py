@@ -3,6 +3,7 @@ import torch
 import numpy as np
 
 from dna_learner.model import GenePredictorModule, create_base_config
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestEntropyPenalty(unittest.TestCase):
@@ -25,7 +26,8 @@ class TestEntropyPenalty(unittest.TestCase):
         cfg['loss']['use_focal'] = False
         cfg['loss']['entropy_lambda'] = entropy_lambda
         cfg['loss']['fp_beta'] = 0.0
-        mod = GenePredictorModule(cfg)
+        # Provide a trivial custom loss (won't be used in this test's manual check path)
+        mod = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=[1.0]*num_classes, entropy_lambda=entropy_lambda, fp_beta=0.0, components_out=c))
         return mod
 
     def test_entropy_term_effect(self):
@@ -42,7 +44,15 @@ class TestEntropyPenalty(unittest.TestCase):
         targets = torch.tensor([[0, 0, 1, 2]], dtype=torch.long)
         # CE-only over included tokens (all here):
         ce_only = torch.nn.functional.cross_entropy(logits.view(-1, 3), targets.view(-1), reduction='mean')
-        loss_with_entropy = mod._compute_adjusted_loss(logits, targets)
+        loss_with_entropy = adjusted_ce_entropy_loss(
+            logits,
+            targets,
+            loss_window_margin_bp=0,
+            class_weights=[1.0]*3,
+            entropy_lambda=1e-2,
+            fp_beta=0.0,
+            components_out=None,
+        )
         # With entropy regularization subtracting lambda*H, the loss should be <= CE-only (since entropy >= 0)
         self.assertLessEqual(float(loss_with_entropy), float(ce_only) + 1e-6)
 

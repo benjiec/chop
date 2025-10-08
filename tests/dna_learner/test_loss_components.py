@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 
 from dna_learner.model import GenePredictorModule, create_base_config
+from utils.losses import adjusted_ce_entropy_loss
 
 
 class TestLossComponents(unittest.TestCase):
@@ -23,7 +24,7 @@ class TestLossComponents(unittest.TestCase):
             fp_beta=0.0,
         )
 
-        module = GenePredictorModule(cfg)
+        module = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=None, entropy_lambda=0.0, fp_beta=0.0, components_out=c))
         module.eval()
 
         # Construct a tiny batch: (B=1, L=4, C=3)
@@ -50,7 +51,15 @@ class TestLossComponents(unittest.TestCase):
         expected_total = expected_ce_mean  # lambda=0, beta=0
 
         components = {}
-        loss = module._compute_adjusted_loss(logits, targets, components_out=components)
+        loss = adjusted_ce_entropy_loss(
+            logits,
+            targets,
+            loss_window_margin_bp=0,
+            class_weights=None,
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=components,
+        )
 
         # Top-level components
         self.assertAlmostEqual(components['total'], expected_total, places=6)
