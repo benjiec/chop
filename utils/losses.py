@@ -58,6 +58,7 @@ def _normalize_class_weight_mapping(
 def event_based_ce_loss_factory(
     dss_motifs: Iterable[str],
     class_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    loss_window_margin_bp: Optional[int] = None,
 ):
     """
     Build an event-based CE loss that only computes cross-entropy on motif event positions.
@@ -136,6 +137,16 @@ def event_based_ce_loss_factory(
                     if seq_str[i:i+k] in motifs:
                         event_mask[b, i:i+k] = True
 
+        # Optional edge masking (exclude window edges)
+        if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
+            m = int(loss_window_margin_bp)
+            m = max(0, min(L // 2, m))
+            if m > 0 and L > 2 * m:
+                center = torch.ones(L, dtype=torch.bool, device=device)
+                center[:m] = False
+                center[-m:] = False
+                event_mask = event_mask & center.unsqueeze(0).expand(B, -1)
+
         if not event_mask.any():
             # no events; return connected zero
             return logits.sum() * 0.0
@@ -172,6 +183,7 @@ def event_based_bce_loss_factory(
     dss_motifs: Iterable[str],
     pos_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     neg_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    loss_window_margin_bp: Optional[int] = None,
 ):
     """
     Build an event-based BCE loss that computes binary cross-entropy for each event class
@@ -249,6 +261,17 @@ def event_based_bce_loss_factory(
                     if seq_str[i:i+k] in motifs:
                         event_masks[P.ASS][b, i:i+k] = True
 
+        # Optional edge masking: build center mask once
+        center_mask = None
+        if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
+            m = int(loss_window_margin_bp)
+            m = max(0, min(L // 2, m))
+            if m > 0 and L > 2 * m:
+                cm = torch.ones((B, L), dtype=torch.bool, device=device)
+                cm[:, :m] = False
+                cm[:, -m:] = False
+                center_mask = cm
+
         # If no class has any events, return connected zero
         any_events = any(mask.any().item() for mask in event_masks.values())
         if not any_events:
@@ -271,6 +294,8 @@ def event_based_bce_loss_factory(
         # Compute BCE per event class over its event mask
         for cls in (P.START, P.STOP, P.DSS, P.ASS):
             mask = event_masks[cls]
+            if center_mask is not None:
+                mask = mask & center_mask
             if not mask.any():
                 continue
             p_c = probs[:, :, int(cls)]  # (B, L)

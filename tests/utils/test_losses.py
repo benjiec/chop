@@ -226,6 +226,45 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         loss_weighted = event_based_ce_loss_factory({'GT'}, class_weights=cw)(sequences, targets, logits, {})
         self.assertGreater(float(loss_weighted.detach().cpu().item()), float(loss_unweighted.detach().cpu().item()))
 
+    def test_edge_masking_excludes_events_near_edges_ce(self):
+        # Build a sequence with ATG at positions 0..2 and GT at 13..14 in a 16-length window
+        A, T, G, C = 0, 1, 2, 3
+        seq = [A, T, G,  C, C, C, C, C,  C, C, C, C,  C, G, T, C]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START  # near left edge
+        targets[0, 13:15] = P.DSS  # near right edge
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        logits[0, 0:3, P.START] = 0.0  # make CE > 0 at edge span
+        logits[0, 13:15, P.DSS] = 0.0
+
+        # With margin=3, both spans are entirely within margins and should be excluded
+        loss_margin = event_based_ce_loss_factory({'GT'}, loss_window_margin_bp=3)(sequences, targets, logits, {})
+        # With margin=0, events included
+        loss_nomargin = event_based_ce_loss_factory({'GT'}, loss_window_margin_bp=0)(sequences, targets, logits, {})
+        self.assertAlmostEqual(float(loss_margin.detach().cpu().item()), 0.0, places=8)
+        self.assertGreater(float(loss_nomargin.detach().cpu().item()), 0.0)
+
+    def test_edge_masking_excludes_events_near_edges_bce(self):
+        A, T, G, C = 0, 1, 2, 3
+        seq = [A, T, G,  C, C, C, C, C,  C, C, C, C,  C, G, T, C]
+        sequences = torch.tensor([seq])
+        L = len(seq)
+        Cn = 8
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 0:3] = P.START
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+        logits[0, 0:3, P.START] = 0.5  # uncertain -> non-zero BCE if included
+
+        bce_margin = event_based_bce_loss_factory({'GT'}, loss_window_margin_bp=3)
+        bce_nomargin = event_based_bce_loss_factory({'GT'}, loss_window_margin_bp=0)
+        v_margin = float(bce_margin(sequences, targets, logits, {}).detach().cpu().item())
+        v_nomargin = float(bce_nomargin(sequences, targets, logits, {}).detach().cpu().item())
+        self.assertAlmostEqual(v_margin, 0.0, places=8)
+        self.assertGreater(v_nomargin, 0.0)
+
     def test_bce_neg_weight_increases_loss_for_false_positives(self):
         # Two ATG spans: first is true START, second is not START
         A, T, G, C = 0, 1, 2, 3
