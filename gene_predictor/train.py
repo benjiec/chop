@@ -329,18 +329,21 @@ def main():
             }
         custom_loss = event_based_ce_loss_factory(dss_set, class_weights=ce_weights)
     else:
-        pos_weights = {
-            int(P.START): float(args.start_weight),
-            int(P.STOP): float(args.stop_weight),
-            int(P.DSS): float(args.dss_weight),
-            int(P.ASS): float(args.ass_weight),
-        }
-        neg_weights = {
-            int(P.START): float(args.start_neg_weight),
-            int(P.STOP): float(args.stop_neg_weight),
-            int(P.DSS): float(args.dss_neg_weight),
-            int(P.ASS): float(args.ass_neg_weight),
-        }
+        pos_weights = None
+        neg_weights = None
+        if not args.disable_class_weights:
+            pos_weights = {
+                int(P.START): float(args.start_weight),
+                int(P.STOP): float(args.stop_weight),
+                int(P.DSS): float(args.dss_weight),
+                int(P.ASS): float(args.ass_weight),
+            }
+            neg_weights = {
+                int(P.START): float(args.start_neg_weight),
+                int(P.STOP): float(args.stop_neg_weight),
+                int(P.DSS): float(args.dss_neg_weight),
+                int(P.ASS): float(args.ass_neg_weight),
+            }
         custom_loss = event_based_bce_loss_factory(dss_set, pos_weights=pos_weights, neg_weights=neg_weights)
 
     # Run training
