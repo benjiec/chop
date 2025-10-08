@@ -619,32 +619,10 @@ def main():
     model = load_trained_model(ckpt_path, args.device)
     if model is None:
         return
-    # Reflect CC status from checkpoint (informational only)
-    try:
-        cc_cfg = getattr(model, 'config', {}).get('model', {}).get('class_conditional_readouts')
-        if cc_cfg and bool(cc_cfg.get('enabled')):
-            print("Class-conditional readouts: enabled")
-            for e in (cc_cfg.get('entries') or []):
-                print(f"  - {e.get('class')} before={e.get('before')} gap={e.get('gap')} after={e.get('after')}")
-        else:
-            print("Class-conditional readouts: disabled")
-    except Exception:
-        pass
-    
-    # Generic metrics: use class weights from config if available (needed for consistent Brier computation)
-    try:
-        cw = getattr(model, 'config', {}).get('loss', {}).get('class_weights')
-    except Exception:
-        cw = None
 
-    # Generate test data, aligned to model's max_seq_length
-    model_max_len = getattr(getattr(model, 'config', {}).get('model', {}), 'get', lambda k, d=None: None)('max_seq_length', None)
-    if model_max_len is None:
-        # Fallback: try to read attribute directly from embedding
-        try:
-            model_max_len = int(model.model.embedding.max_seq_length)
-        except Exception:
-            model_max_len = 1000
+    config = getattr(model, 'config', {})
+    print(config)
+    cw = config['loss']['class_weights']
 
     data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
     

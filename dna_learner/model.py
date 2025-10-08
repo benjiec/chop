@@ -489,8 +489,6 @@ class GenePredictorModule(pl.LightningModule):
             },
         }
 
-    
-
 
 def create_base_config(
     max_seq_length: int, num_classes: int, class_names: list,
@@ -540,3 +538,23 @@ def create_base_config(
         cfg['training']['accumulate_grad_batches'] = int(accumulate_grad_batches)
 
     return cfg
+
+
+def set_class_conditional_readout_config(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int) -> None:
+    """
+    Enable and set a class-conditional readout entry on the config.
+
+    - cfg: configuration dict produced by create_base_config
+    - classidx: integer class index (use utils.constants.GenePredictionClass)
+    - before/after/gap: integer window parameters
+    """
+    model_cfg = cfg.setdefault('model', {})
+    ccr = model_cfg.setdefault('class_conditional_readouts', {})
+    ccr['enabled'] = True
+    entries = ccr.setdefault('entries', [])
+    entries.append({
+        'class': int(classidx),
+        'before': int(before),
+        'after': int(after),
+        'gap': int(gap),
+    })

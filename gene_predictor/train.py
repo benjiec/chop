@@ -15,7 +15,7 @@ import pytorch_lightning as pl
 from utils.constants import GenePredictionClass as P
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
-from dna_learner.model import GenePredictorModule, create_base_config
+from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config
 from utils.constants import GenePredictionClass as P
 from gene_predictor.metrics_callback import F1Callback
 from gene_predictor.metrics_callback import LossComponentsCallback
@@ -76,13 +76,8 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
     )
 
     if cc_enabled:
-        cfg['model']['class_conditional_readouts'] = {
-            'enabled': True,
-            'entries': [
-                {'class': int(P.START), 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
-                {'class': int(P.STOP), 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
-            ]
-        }
+        set_class_conditional_readout_config(cfg, int(P.START), int(start_before), int(start_after), int(cc_gap))
+        set_class_conditional_readout_config(cfg, int(P.STOP), int(stop_before), int(stop_after), int(cc_gap))
 
     # Record loss weights in config for reference (not consumed by dna_learner yet)
     cfg.setdefault('loss', {})
