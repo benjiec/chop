@@ -67,8 +67,8 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
         cfg['model']['class_conditional_readouts'] = {
             'enabled': True,
             'entries': [
-                {'class': 'START', 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
-                {'class': 'STOP', 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
+                {'class': int(P.START), 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
+                {'class': int(P.STOP), 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
             ]
         }
 

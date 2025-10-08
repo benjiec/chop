@@ -39,8 +39,7 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                   cc_gap: int = 0,
                   entropy_lambda: float = 0.0,
                   fp_beta: float = 5.0,
-                  accumulate_grad_batches: int = 1,
-                  min_per_class_per_batch: int = 1) -> dict:
+                  accumulate_grad_batches: int = 1) -> dict:
 
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
@@ -58,7 +57,6 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         }
         class_weights = [weights_map.get(i, 1.0) for i in sorted(P.idx_to_cls.keys())]
     else:
-        weights_map = None
         class_weights = None
     
     cfg = create_base_config(
@@ -81,13 +79,10 @@ def create_config(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         cfg['model']['class_conditional_readouts'] = {
             'enabled': True,
             'entries': [
-                {'class': 'START', 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
-                {'class': 'STOP', 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
+                {'class': int(P.START), 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
+                {'class': int(P.STOP), 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
             ]
         }
-
-    # Trainer-level sampler option
-    cfg['training']['min_per_class_per_batch'] = int(min_per_class_per_batch)
 
     # Record loss weights in config for reference (not consumed by dna_learner yet)
     cfg.setdefault('loss', {})
@@ -143,7 +138,6 @@ def train(fna_fn: str, tsv_fn: str,
           entropy_lambda: float = 0.0,
           fp_beta: float = 5.0,
           accumulate_grad_batches: int = 1,
-          min_per_class_per_batch: int = 1,
           custom_loss_fn: Optional[Callable] = None,
           dss_motifs: Optional[str] = None):
 
@@ -162,7 +156,6 @@ def train(fna_fn: str, tsv_fn: str,
         entropy_lambda=entropy_lambda,
         fp_beta=fp_beta,
         accumulate_grad_batches=accumulate_grad_batches,
-        min_per_class_per_batch=min_per_class_per_batch,
         start_neg_weight=start_neg_weight,
         stop_neg_weight=stop_neg_weight,
         dss_neg_weight=dss_neg_weight,
@@ -271,7 +264,6 @@ def main():
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--entropy-lambda', type=float, default=0.0, help='Entropy regularization strength')
     parser.add_argument('--fp-beta', type=float, default=5.0, help='False positive penalty coefficient')
-    parser.add_argument('--min-per-class-per-batch', type=int, default=1, help='Minimum items per target class per batch (recycling allowed)')
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
     # loss selection
@@ -380,7 +372,6 @@ def main():
         stop_after=args.stop_after,
         cc_gap=args.cc_gap,
         accumulate_grad_batches=args.accumulate_grad_batches,
-        min_per_class_per_batch=args.min_per_class_per_batch,
         custom_loss_fn=custom_loss,
         dss_motifs=args.dss_motifs,
         start_neg_weight=args.start_neg_weight,

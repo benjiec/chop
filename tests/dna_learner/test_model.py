@@ -145,7 +145,7 @@ class TestGenePredictorModel(unittest.TestCase):
             class_conditional_readouts={
                 'enabled': True,
                 'entries': [
-                    {'class': 'START', 'before': 8, 'after': 0},
+                    {'class': 2, 'before': 8, 'after': 0},
                 ]
             }
         )
