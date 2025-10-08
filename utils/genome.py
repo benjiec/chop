@@ -353,6 +353,15 @@ class AnnotatedGenomeDataset:
             contig_idx, start, end = self.windows[real_idx]
             seq = self.sequences[contig_idx][start:end]
             tgt = self.targets[contig_idx][start:end]
+            # Pad to fixed window length for batching
+            win_len = int(self.window)
+            cur_len = end - start
+            if cur_len < win_len:
+                pad = win_len - cur_len
+                if pad > 0:
+                    seq = seq + ('N' * pad)
+                    # Use INTERGENIC for padded targets
+                    tgt = np.concatenate([tgt, np.full((pad,), P.INTERGENIC, dtype=tgt.dtype)])
             return _encode_sequence(seq), tgt
         else:
             seq = self.sequences[idx]

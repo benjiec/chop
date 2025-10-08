@@ -55,3 +55,32 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
             x_full, y_full = ds_full[0]
             self.assertEqual(x_full.shape[0], 50)
             self.assertEqual(y_full.shape[0], 50)
+
+    def test_windowing_pads_last_short_window_to_fixed_length(self):
+        # Contig length 30; use window 16 and stride 16 so second window is only length 14 before padding
+        seq_list = list('N' * 30)
+        # Add valid START/STOP so targets build without None
+        seq_list[0:3] = list('ATG')
+        seq_list[27:30] = list('TAA')
+        fasta = f">ctg\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctg\tg\t1\t30\t1\t30\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "s.fna.gz"
+            tsv_path = fp / "a.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=16, stride=16, random_prefix_ns=False)
+            # Expect two windows
+            self.assertEqual(len(ds), 2)
+            # First is full 16, second should be padded to 16
+            x0, y0 = ds[0]
+            x1, y1 = ds[1]
+            self.assertEqual(x0.shape[0], 16)
+            self.assertEqual(y0.shape[0], 16)
+            self.assertEqual(x1.shape[0], 16)
+            self.assertEqual(y1.shape[0], 16)
