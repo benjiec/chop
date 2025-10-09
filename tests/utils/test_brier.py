@@ -69,6 +69,30 @@ class TestBrier(unittest.TestCase):
         self.assertAlmostEqual(out['brier_by_class'][P.STOP], 0.09, places=6)
         self.assertAlmostEqual(out['brier'], (0.04 + 0.09) / 2.0, places=6)
 
+    def test_positive_and_negative_predictions(self):
+        # Sequence with START at 3..5 and STOP 'TAA' at 9..11 (to fit length)
+        dna = 'NNNATGNNNTAA'
+        tokens = encode_sequence(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = self._blank_probs(L, C)
+        # START motif probs
+        probs[3:6, P.INTERGENIC] = 0.2
+        probs[3:6, P.START] = 0.8
+        # STOP motif probs (indices 9..11)
+        probs[9:12, P.INTERGENIC] = 0.3
+        probs[9:12, P.STOP] = 0.7
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        targets[9:12] = P.INTERGENIC  # negative, not STOP
+        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        out = self.compute_brier(rd)
+        # START per-class: mean((0.8-1)^2) = 0.04
+        # STOP per-class: mean((0.7-0)^2) = 0.49
+        self.assertAlmostEqual(out['brier_by_class'][P.START], 0.04, places=6)
+        self.assertAlmostEqual(out['brier_by_class'][P.STOP], 0.49, places=6)
+        self.assertAlmostEqual(out['brier'], (0.04 + 0.49) / 2.0, places=6)
+
     def test_min_weight_filtering(self):
         # Include START and STOP but filter to STOP only
         dna = 'NNNATGNNNTAA'
@@ -108,9 +132,6 @@ class TestBrier(unittest.TestCase):
         # Included positions 3 and 5 only; (0.8-1)^2 each = 0.04 -> mean 0.04
         self.assertAlmostEqual(out['brier_by_class'][P.START], 0.04, places=6)
         self.assertAlmostEqual(out['brier'], 0.04, places=6)
-
-        
-
 
 if __name__ == '__main__':
     unittest.main()
