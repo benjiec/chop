@@ -9,14 +9,9 @@ import numpy as np
 from utils.constants import GenePredictionClass as P
 
 
-# Module-level CSV writer state and function (so it can be patched in tests)
-RUN_DIR: Path | None = None
-
-def write_epoch_csv_tall(trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict) -> None:
-    global RUN_DIR
-    if RUN_DIR is None:
+def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict) -> None:
+    if run_dir is None:
         return
-    run_dir = RUN_DIR
     run_dir.mkdir(parents=True, exist_ok=True)
     csv_path = run_dir / 'epoch_summary.csv'
     exists = csv_path.exists()
@@ -55,37 +50,24 @@ class MetricsCallback(pl.Callback):
         self._calculate_metrics_fn = calculate_metrics_fn
         self._compute_brier_fn = compute_brier_fn
         self.run_dir = Path(run_dir) if run_dir is not None else None
-        # Set module-level run directory for CSV writer
-        global RUN_DIR
-        RUN_DIR = self.run_dir
+        # Initialize results accumulator so tests that call only epoch_end won't fail
+        self._results_data = []
+
+    def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        self._results_data = []
 
     @torch.no_grad()
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module):
         pl_module.eval()
-        device = next(pl_module.parameters()).device
 
-        results_data = []
+        results_data = self._results_data
 
-        for sequences, targets in self.val_loader:
-            sequences = sequences.to(device)
-            targets = targets.to(device)
-            logits = pl_module.model(sequences)
-            predictions = logits.argmax(dim=-1)
-            probabilities = torch.softmax(logits, dim=-1)
-
-            batch_size = sequences.size(0)
-            for b in range(batch_size):
-                seq_tokens = sequences[b].detach().cpu().numpy()
-                tgt = targets[b].detach().cpu().numpy()
-                pred = predictions[b].detach().cpu().numpy()
-                probs = probabilities[b].detach().cpu().numpy()
-                results_data.append({
-                    'sequence_index': len(results_data),
-                    'sequence_tokens': seq_tokens,
-                    'targets': tgt,
-                    'predictions': pred,
-                    'probabilities': probs,
-                })
+        # If the module collected per-batch results, append them here
+        coll = getattr(pl_module, '_cb_results_data', None)
+        if isinstance(coll, list) and coll:
+            if results_data is None:
+                results_data = []
+            results_data.extend(list(coll))
 
         # Optional validity masks to exclude window edges using bp margin
         valid_masks = None
@@ -143,20 +125,12 @@ class MetricsCallback(pl.Callback):
         )
         for cls_idx, vals in per_class.items():
             name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            if 'f1' in vals:
-                pl_module.log(f"val_f1_classes/{name}", float(vals['f1']), prog_bar=False, on_epoch=True)
-            if 'sensitivity' in vals:
-                pl_module.log(f"val_sensitivity_classes/{name}", float(vals['sensitivity']), prog_bar=False, on_epoch=True)
-            if 'precision' in vals:
-                pl_module.log(f"val_precision_classes/{name}", float(vals['precision']), prog_bar=False, on_epoch=True)
-            if 'brier' in vals:
-                pl_module.log(f"val_brier_classes/{name}", float(vals['brier']), prog_bar=False, on_epoch=True)
             if should_print:
                 print(name, 'sen', vals.get('sensitivity', 0.0), 'pre', vals.get('precision', 0.0), 'f1', vals.get('f1', 0.0), 'brier', vals.get('brier', 0.0))
 
         # Optionally write tall TSV of metrics
         if self.run_dir is not None:
-            write_epoch_csv_tall(trainer, macro_f1, overall_brier, per_class)
+            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class)
 
 
 class DualMetricEarlyStopping(pl.Callback):

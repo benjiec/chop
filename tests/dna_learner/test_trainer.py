@@ -126,7 +126,6 @@ class TestTrainer(unittest.TestCase):
             self.assertFalse(any('val_loss=val_loss=' in p.name for p in ckpts))
 
 
-# Consolidated from tests/dna_learner/test_custom_loss.py
 class TestCustomLossHook(unittest.TestCase):
     def test_custom_loss_called_in_training_and_validation(self):
         cfg = create_base_config(
@@ -168,7 +167,6 @@ class TestCustomLossHook(unittest.TestCase):
         self.assertAlmostEqual(float(loss_val.detach().cpu().item()), 0.42, places=6)
 
 
-# Consolidated from tests/dna_learner/test_validation_loss_filter.py
 class TestValidationLossFilter(unittest.TestCase):
     def _make_module(self, class_weights, entropy_lambda=0.0):
         cfg = create_base_config(
@@ -221,7 +219,6 @@ class TestValidationLossFilter(unittest.TestCase):
         self.assertAlmostEqual(float(loss), expected, places=3)
 
 
-# Consolidated from tests/dna_learner/test_loss_window_margin.py
 class TestLossWindowMargin(unittest.TestCase):
     def test_edge_masking_reduces_loss(self):
         L = 20
@@ -263,7 +260,6 @@ class TestLossWindowMargin(unittest.TestCase):
         self.assertLess(loss_with_margin, loss_no_margin)
 
 
-# Consolidated from tests/dna_learner/test_loss_components.py
 class TestLossComponents(unittest.TestCase):
     def test_compute_adjusted_loss_emits_components_correctly(self):
         cfg = create_base_config(

@@ -1,4 +1,4 @@
-Cursor, please following these rules
+LLM, please following these rules
 
 1. When answering a question, don't assume you need to make changes
 immediately. Propose solution, get confirmation, then make the change.
@@ -54,13 +54,16 @@ Sensitivity = TP / (TP + FN)
 Precision = TP / (TP + FP)
 Specificity = TN / (TN + FP)
 
-14. Directory structure
+15. Do not use try/except unless catching a specific, documented exception
+type. Never use bare except or catch broad types like Exception/BaseException.
+For example, please DO NOT use "except:" or "except Exception:".
 
-dna_learner - Re-usable DNA learning NN transformer model code
-gene_predictor - Training and prediction code for detection gene boundary and splice sites from GFF
-synthetic - Various experiments to learn how to use transformers to detect genomic features
+16. Do not use single line functions that just returns outcome of another
+function with the exact same arguments. Just go and change all the use of
+former to the latter.
 
-15. Do not ever hide errors using try-except blocks, unless you are explicitly
-catching a specific exception. Otherwise better expose any exceptions so we can
-fix the code.
+17. Do not leave empty functions around if they are not used anymore. E.g. "def
+hello(): pass" or "def hello(): return". Just remove code we don't use.
 
+18. Do not use this style "getattr(self, <field name>, None)" - just set the
+field in the class and use self.<field name>.

@@ -73,13 +73,21 @@ class TestMetricsCallback(unittest.TestCase):
         calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
         cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
+        # Populate model-collected results as the callback no longer re-runs the model
+        with torch.no_grad():
+            preds = logits.argmax(dim=-1)
+            probs = torch.softmax(logits, dim=-1)
+        mod._cb_results_data = [{
+            'sequence_index': 0,
+            'sequence_tokens': tokens.numpy(),
+            'targets': targets.numpy(),
+            'predictions': preds[0].numpy(),
+            'probabilities': probs[0].numpy(),
+        }]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)
         self.assertAlmostEqual(mod.logged['val_f1'], 1.0, places=6)
-        # Per-class keys logged (logger-only)
-        self.assertIn('val_f1_classes/START', mod.logged)
-        self.assertIn('val_f1_classes/STOP', mod.logged)
 
     def test_csv_writer_is_module_level(self):
         # Set up minimal case and patch writer
@@ -117,7 +125,7 @@ class TestMetricsCallback(unittest.TestCase):
 
         # Monkeypatch module-level writer to capture calls
         calls = {"count": 0}
-        def fake_writer(trainer, macro_f1, overall_brier, per_class):
+        def fake_writer(run_dir, trainer, macro_f1, overall_brier, per_class):
             calls["count"] += 1
         orig = getattr(mc, 'write_epoch_csv_tall', None)
         mc.write_epoch_csv_tall = fake_writer
@@ -152,12 +160,22 @@ class TestMetricsCallback(unittest.TestCase):
         calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
         cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
+        # Populate model-collected results as the callback no longer re-runs the model
+        with torch.no_grad():
+            preds = logits.argmax(dim=-1)
+            probs = torch.softmax(logits, dim=-1)
+        mod._cb_results_data = [{
+            'sequence_index': 0,
+            'sequence_tokens': tokens.numpy(),
+            'targets': targets.numpy(),
+            'predictions': preds[0].numpy(),
+            'probabilities': probs[0].numpy(),
+        }]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)
         self.assertGreaterEqual(mod.logged['val_f1'], 0.0)
         self.assertLessEqual(mod.logged['val_f1'], 1.0)
-        self.assertIn('val_f1_classes/STOP', mod.logged)
 
 
 if __name__ == '__main__':

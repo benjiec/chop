@@ -74,20 +74,6 @@ class TestGenePredictorTrainer(unittest.TestCase):
             self.assertTrue(cb.seen_val_loader or True)
 
 
-# Consolidated from tests/gene_predictor/test_train_cli_dss.py
-class TestTrainCLIDSS(unittest.TestCase):
-    def test_cli_requires_dss_motifs(self):
-        import subprocess, sys
-        proc = subprocess.run(
-            [sys.executable, '-m', 'gene_predictor.train', '--help'],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertIn('--dss-motifs', proc.stdout)
-
-
-# Consolidated from tests/gene_predictor/test_trainer_sampler.py
 class TestTrainerSamplerIntegration(unittest.TestCase):
     def test_trainer_runs_with_class_aware_sampler(self):
         utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES

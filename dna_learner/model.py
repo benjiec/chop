@@ -437,6 +437,9 @@ class GenePredictorModule(pl.LightningModule):
         # Require externally provided custom loss function
         self.custom_loss_fn: Callable = custom_loss_fn
 
+        # Initialize per-epoch validation collection for callbacks (populated in validation_step)
+        self._cb_results_data = []
+
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         return self.model(x, return_attention=return_attention)
     
@@ -466,7 +469,26 @@ class GenePredictorModule(pl.LightningModule):
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
         
+        # Provide per-batch predictions to callbacks via module attribute to avoid a second pass
+        coll = self._cb_results_data
+        with torch.no_grad():
+            predictions = logits.argmax(dim=-1)
+            probabilities = torch.softmax(logits, dim=-1)
+        B = sequences.size(0)
+        for b in range(B):
+            coll.append({
+                'sequence_index': len(coll),
+                'sequence_tokens': sequences[b].detach().cpu().numpy(),
+                'targets': targets[b].detach().cpu().numpy(),
+                'predictions': predictions[b].detach().cpu().numpy(),
+                'probabilities': probabilities[b].detach().cpu().numpy(),
+            })
+        
         return loss
+
+    def on_validation_epoch_start(self) -> None:
+        # Reset per-epoch collection container for callback
+        self._cb_results_data = []
     
     def test_step(self, batch, batch_idx):
         # Same as validation step for testing
