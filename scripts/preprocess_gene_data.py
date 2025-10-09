@@ -36,7 +36,7 @@ import csv
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from utils.dna_processor import reverse_complement, validate_start_stop_codons_from_exons
+from utils.sequences import reverse_complement, validate_start_stop_codons_from_exons
 
 
 def parse_gff_file(gff_path: str) -> List[Dict]:

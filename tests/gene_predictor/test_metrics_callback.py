@@ -5,6 +5,9 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 
 from gene_predictor.metrics_callback import F1Callback
+from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
+from utils.events import build_event_motifs
+from utils.constants import StandardDonorDinucleotides
 
 
 def encode_sequence_tokens(seq: str):
@@ -63,7 +66,10 @@ class TestMetricsCallback(unittest.TestCase):
         cw[START] = 10.0
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0)
+        # Provide required metric functions
+        calc_metrics, _calc_with = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
+        calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
+        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
@@ -93,7 +99,9 @@ class TestMetricsCallback(unittest.TestCase):
         cw = [1.0] * num_classes
         cw[STOP] = 10.0
 
-        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0)
+        calc_metrics, _calc_with = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
+        calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
+        cb = F1Callback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 

@@ -1,111 +1,115 @@
 import unittest
 import numpy as np
 
-from utils.metrics import compute_brier_scores
+from utils.metrics import event_based_brier_factory
+from utils.events import build_event_motifs
+from utils.constants import GenePredictionClass as P
+from utils.constants import DNAEmbed, StandardDonorDinucleotides
+
+
+def encode_sequence(seq: str):
+    vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+    return np.array([vocab.get(ch, 4) for ch in seq], dtype=np.int64)
 
 
 class TestBrier(unittest.TestCase):
-    def test_binary_perfect(self):
-        # Two tokens, binary classes
-        probs = np.array([[0.1, 0.9], [0.8, 0.2]], dtype=np.float32)
-        targets = np.array([1, 0], dtype=int)
-        rd = [{'targets': targets, 'probabilities': probs}]
-        out = compute_brier_scores(rd)
-        # Perfect predictions at 0.9 and 0.8 are not perfect; compute explicitly
-        # token1: (0.1-0)^2 + (0.9-1)^2 = 0.01 + 0.01 = 0.02
-        # token2: (0.8-1)^2 + (0.2-0)^2 = 0.04 + 0.04 = 0.08
-        # mean over tokens: (0.02 + 0.08) / 2 = 0.05
-        self.assertAlmostEqual(out['brier'], 0.05, places=6)
-        # per-class
-        # class 0: ((0.1-0)^2 + (0.8-1)^2)/2 = (0.01 + 0.04)/2 = 0.025
-        # class 1: ((0.9-1)^2 + (0.2-0)^2)/2 = (0.01 + 0.04)/2 = 0.025
-        self.assertAlmostEqual(out['brier_by_class'][0], 0.025, places=6)
-        self.assertAlmostEqual(out['brier_by_class'][1], 0.025, places=6)
+    @classmethod
+    def setUpClass(cls):
+        # Build default event-based brier for tests
+        cls.compute_brier = staticmethod(event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides)))
 
-    def test_multiclass_simple(self):
-        probs = np.array([
-            [0.7, 0.2, 0.1],
-            [0.1, 0.8, 0.1],
-            [0.2, 0.2, 0.6],
-        ], dtype=np.float32)
-        targets = np.array([0, 1, 2], dtype=int)
-        rd = [{'targets': targets, 'probabilities': probs}]
-        out = compute_brier_scores(rd)
-        # Compute overall per token sum of squared errors then mean
-        # token1 vs [1,0,0]: (0.7-1)^2+(0.2-0)^2+(0.1-0)^2 = 0.09+0.04+0.01=0.14
-        # token2 vs [0,1,0]: (0.1-0)^2+(0.8-1)^2+(0.1-0)^2 = 0.01+0.04+0.01=0.06
-        # token3 vs [0,0,1]: (0.2-0)^2+(0.2-0)^2+(0.6-1)^2 = 0.04+0.04+0.16=0.24
-        # mean: (0.14+0.06+0.24)/3 = 0.146666...
-        self.assertAlmostEqual(out['brier'], (0.14+0.06+0.24)/3.0, places=6)
+    def _blank_probs(self, L: int, C: int) -> np.ndarray:
+        p = np.zeros((L, C), dtype=np.float32)
+        # default tiny mass on INTERGENIC to keep rows summing to 1
+        p[:, P.INTERGENIC] = 1.0
+        return p
+
+    def test_start_event_brier_unweighted(self):
+        # Sequence with one START motif 'ATG' at positions 3..5
+        dna = 'NNNATGNN'
+        tokens = encode_sequence(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = self._blank_probs(L, C)
+        # Put probability mass on START around the motif span
+        probs[3:6, P.INTERGENIC] = 0.1
+        probs[3:6, P.START] = 0.9
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        out = self.compute_brier(rd)
+        # Included positions are exactly the motif span 3..5 for START
+        # Per-class (START) Brier: mean((0.9-1)^2 over 3 positions) = 0.01
+        self.assertIn(P.START, out['brier_by_class'])
+        self.assertAlmostEqual(out['brier_by_class'][P.START], 0.01, places=6)
+        # Overall equals unweighted mean over classes with tokens -> only START here
+        self.assertAlmostEqual(out['brier'], 0.01, places=6)
+
+    def test_start_stop_overall_is_unweighted_mean(self):
+        # Sequence with START at 3..5 and STOP 'TAA' at 9..11 (to fit length)
+        dna = 'NNNATGNNNTAA'
+        tokens = encode_sequence(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = self._blank_probs(L, C)
+        # START motif probs
+        probs[3:6, P.INTERGENIC] = 0.2
+        probs[3:6, P.START] = 0.8
+        # STOP motif probs (indices 9..11)
+        probs[9:12, P.INTERGENIC] = 0.3
+        probs[9:12, P.STOP] = 0.7
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        targets[9:12] = P.STOP
+        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        out = self.compute_brier(rd)
+        # START per-class: mean((0.8-1)^2) = 0.04
+        # STOP per-class: mean((0.7-1)^2) = 0.09
+        self.assertAlmostEqual(out['brier_by_class'][P.START], 0.04, places=6)
+        self.assertAlmostEqual(out['brier_by_class'][P.STOP], 0.09, places=6)
+        self.assertAlmostEqual(out['brier'], (0.04 + 0.09) / 2.0, places=6)
 
     def test_min_weight_filtering(self):
-        # 3 classes; only class 1 has weight > 1.0
-        probs = np.array([
-            [0.7, 0.2, 0.1],  # y=0
-            [0.1, 0.8, 0.1],  # y=1
-            [0.2, 0.2, 0.6],  # y=2
-        ], dtype=np.float32)
-        targets = np.array([0, 1, 2], dtype=int)
-        rd = [{'targets': targets, 'probabilities': probs}]
-        class_weights = [1.0, 2.0, 0.0]
-        out = compute_brier_scores(rd, class_weights=class_weights, min_weight=1.0)
-        # Only class 1 should be included in overall and per-class
-        # per-token error for class 1: (p1 - y1)^2
-        e0 = (0.2 - 0.0)**2
-        e1 = (0.8 - 1.0)**2
-        e2 = (0.2 - 0.0)**2
-        overall = (e0 + e1 + e2) / 3.0
-        self.assertAlmostEqual(out['brier'], overall, places=6)
-        self.assertIn(1, out['brier_by_class'])
-        self.assertNotIn(0, out['brier_by_class'])
-        self.assertNotIn(2, out['brier_by_class'])
-        self.assertAlmostEqual(out['brier_by_class'][1], (e0 + e1 + e2) / 3.0, places=6)
-
-    def test_event_only_positions(self):
-        # 2 classes; include only positions where target or prediction is class 1
-        probs = np.array([
-            [0.9, 0.1],  # y=0, pred=0
-            [0.6, 0.4],  # y=0, pred=0 (near miss)
-            [0.1, 0.9],  # y=1, pred=1
-            [0.8, 0.2],  # y=0, pred=0 (should be excluded if class 1 only)
-        ], dtype=np.float32)
-        targets = np.array([0, 0, 1, 0], dtype=int)
-        preds = np.array([0, 0, 1, 0], dtype=int)
-        rd = [{'targets': targets, 'probabilities': probs, 'predictions': preds}]
-        # Only class 1 allowed
-        cw = [0.0, 2.0]
-        out = compute_brier_scores(rd, class_weights=cw, min_weight=1.0, event_only=True)
-        # Included positions: idx 1 (pred not class1, target not class1) -> excluded; idx 2 (target=1) -> included
-        # idx 0,3 are TN for class1 and excluded when event_only=True with class1 only
-        # So overall equals per-class for class1 at idx 2 only: (0.9 - 1)^2 = 0.01
-        self.assertAlmostEqual(out['brier'], 0.01, places=6)
-        self.assertIn(1, out['brier_by_class'])
-        self.assertAlmostEqual(out['brier_by_class'][1], 0.01, places=6)
+        # Include START and STOP but filter to STOP only
+        dna = 'NNNATGNNNTAA'
+        tokens = encode_sequence(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = self._blank_probs(L, C)
+        probs[3:6, P.INTERGENIC] = 0.1
+        probs[3:6, P.START] = 0.9
+        probs[9:12, P.INTERGENIC] = 0.4
+        probs[9:12, P.STOP] = 0.6
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        targets[9:12] = P.STOP
+        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        # With new event-based Brier (no class weights), this test now checks STOP directly
+        out = self.compute_brier(rd)
+        self.assertIn(P.STOP, out['brier_by_class'])
+        self.assertAlmostEqual(out['brier_by_class'][P.STOP], 0.16, places=6)
+        # Overall equals mean across classes with events (START and STOP)
+        self.assertAlmostEqual(out['brier'], (0.16 + 0.01) / 2.0, places=6)
 
     def test_valid_masks_masks_positions(self):
-        # 3 tokens, 2 classes; mask excludes middle token
-        probs = np.array([
-            [0.2, 0.8],  # y=1
-            [0.9, 0.1],  # y=0 (will be masked out)
-            [0.6, 0.4],  # y=1
-        ], dtype=np.float32)
-        targets = np.array([1, 0, 1], dtype=int)
-        preds = np.array([1, 0, 0], dtype=int)
-        rd = [{'targets': targets, 'probabilities': probs, 'predictions': preds}]
-        # No class filtering; event_only=False so we include all valid positions
-        # valid_masks: mask out position 1 only
-        valid_masks = [[True, False, True]]
-        out = compute_brier_scores(rd, class_weights=None, min_weight=0.0, event_only=False, valid_masks=valid_masks)
-        # Manually compute expected over positions 0 and 2 only
-        # pos0 one-hot [0,1]: se = (0.2-0)^2 + (0.8-1)^2 = 0.04 + 0.04 = 0.08
-        # pos2 one-hot [0,1]: se = (0.6-0)^2 + (0.4-1)^2 = 0.36 + 0.36 = 0.72
-        expected_overall = (0.08 + 0.72) / 2.0
-        self.assertAlmostEqual(out['brier'], expected_overall, places=6)
-        # Per-class brier: average binary squared error over positions 0 and 2
-        # class 0: (0.2-0)^2 + (0.6-0)^2 = 0.04 + 0.36 = 0.40 -> /2 = 0.20
-        # class 1: (0.8-1)^2 + (0.4-1)^2 = 0.04 + 0.36 = 0.40 -> /2 = 0.20
-        self.assertAlmostEqual(out['brier_by_class'][0], 0.20, places=6)
-        self.assertAlmostEqual(out['brier_by_class'][1], 0.20, places=6)
+        # One START motif at 3..5, but mask out position 4 only
+        dna = 'NNNATGNN'
+        tokens = encode_sequence(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = self._blank_probs(L, C)
+        probs[3:6, P.INTERGENIC] = 0.2
+        probs[3:6, P.START] = 0.8
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        valid_masks = [[True, True, True, True, False, True, True, True]]
+        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        out = self.compute_brier(rd, event_only=True, valid_masks=valid_masks)
+        # Included positions 3 and 5 only; (0.8-1)^2 each = 0.04 -> mean 0.04
+        self.assertAlmostEqual(out['brier_by_class'][P.START], 0.04, places=6)
+        self.assertAlmostEqual(out['brier'], 0.04, places=6)
+
+        
 
 
 if __name__ == '__main__':

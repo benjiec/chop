@@ -17,8 +17,10 @@ from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_
 from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
-from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics_and_predictions
-from utils.metrics import compute_brier_scores
+from utils.metrics import convert_tokens_to_sequence
+from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
+from utils.events import build_event_motifs
+from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits
@@ -604,6 +606,7 @@ def main():
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
     parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence and report means')
     parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
+    parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based analysis: standard or dino')
     
     args = parser.parse_args()
 
@@ -640,10 +643,17 @@ def main():
     )
     
     # Compute metrics and motif-span prediction events for visualization (single call)
-    generic, events = calculate_generic_metrics_and_predictions(results, class_weights=cw, min_weight=1.0)
+    # Build event-driven metrics/brier honoring DSS motifs choice from CLI
+    if args.dss_motifs == 'dino':
+        dss_set = DinoDonorDinucleotides
+    else:
+        dss_set = StandardDonorDinucleotides
+    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(build_event_motifs(dss_set))
+    brier_fn = event_based_brier_factory(build_event_motifs(dss_set))
+    generic, events = calc_metrics_with_windows(results, min_weight=1.0)
     
     # Brier score on final results
-    brier = compute_brier_scores(results, class_weights=cw, min_weight=1.0, event_only=True)
+    brier = brier_fn(results, event_only=True)
     print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
     by_cls = brier.get('brier_by_class', {})
     if by_cls:

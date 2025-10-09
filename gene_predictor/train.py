@@ -13,7 +13,9 @@ import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, build_event_motifs
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.events import build_event_motifs
+from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config
 from gene_predictor.metrics_callback import F1Callback
 from gene_predictor.metrics_callback import LossComponentsCallback
@@ -193,6 +195,10 @@ def main():
     output_dir = Path(f"gene_predictor/gene_predictor_run_{timestamp}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build event-based metrics and brier functions (passed directly to callbacks)
+    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(event_motifs_by_class)
+    calc_brier = event_based_brier_factory(event_motifs_by_class)
+
     def mk_training_cb(val_loader):
         f1_ckpt = pl.callbacks.ModelCheckpoint(
             dirpath=output_dir / "checkpoints",
@@ -203,7 +209,7 @@ def main():
             save_last=False,
             auto_insert_metric_name=False,
         )
-        return [ F1Callback(val_loader, margin_bp=margin_bp), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
+        return [ F1Callback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
 
     model, val_loader = run_trainer(
         dataset,

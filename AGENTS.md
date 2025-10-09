@@ -18,7 +18,9 @@ not in the tests/ directory.
 
 6. Please add new unit tests whenever you are adding new features. New tests
 should follow Python unittest module convention (e.g. subclass from
-unittest.TestCase).
+unittest.TestCase). IMPORTANT - place all tests for a .py file into the same
+test .py file, i.e. don't put different behavior tests for the same .py file
+into multiple test files.
 
 7. Don't leave comments that only pertain to an action you took, e.g. to undo
 something. Comments should describe the current state of the code or

@@ -18,6 +18,7 @@ from utils.constants import (
 )
 from utils.windowing import compute_window_slices
 from torch.utils.data import Subset
+from utils.sequences import reverse_complement
 
 
 def build_class_windows(
@@ -89,9 +90,6 @@ class GeneAnnotation:
     exons: List[Tuple[int, int]]  # 0-based half-open [start, end)
 
 
-def _reverse_complement(seq: str) -> str:
-    comp = str.maketrans('ATGCNatgcn', 'TACGNtacgn')
-    return seq.translate(comp)[::-1]
 
 
 def _load_fasta(fasta_path: str) -> Dict[str, str]:
@@ -203,8 +201,8 @@ def build_targets_for_annotation(
         last_exon = ann.exons[-1]
         start_pos = last_exon[1] - 3
         stop_pos = first_exon[0]
-        start_codon = _reverse_complement(seq[start_pos:last_exon[1]])
-        stop_codon = _reverse_complement(seq[stop_pos:stop_pos+3])
+        start_codon = reverse_complement(seq[start_pos:last_exon[1]])
+        stop_codon = reverse_complement(seq[stop_pos:stop_pos+3])
         start_ok = (start_codon == 'ATG')
         stop_ok = (stop_codon in ConventionalStopCodons)
         if not start_ok:
@@ -264,7 +262,7 @@ def build_targets_for_annotation(
             donor_pos = e2[0] - 2
             acceptor_pos = e1[1]
             if 0 <= donor_pos and donor_pos+1 < L:
-                donor_di = _reverse_complement(seq[donor_pos:donor_pos+2])
+                donor_di = reverse_complement(seq[donor_pos:donor_pos+2])
                 donor_ok = (donor_di in StandardDonorDinucleotides.union(DinoDonorDinucleotides))
                 if not donor_ok:
                     if failure_counts is not None:
@@ -273,7 +271,7 @@ def build_targets_for_annotation(
                         return None
                 tgt[donor_pos:donor_pos+2] = P.DSS
             if 0 <= acceptor_pos and acceptor_pos+1 < L:
-                acceptor_di = _reverse_complement(seq[acceptor_pos:acceptor_pos+2])
+                acceptor_di = reverse_complement(seq[acceptor_pos:acceptor_pos+2])
                 acceptor_ok = (acceptor_di in ConventionalAcceptorDinucleotides)
                 if not acceptor_ok:
                     if failure_counts is not None:

@@ -3,7 +3,8 @@
 import unittest
 import torch
 
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, build_event_motifs
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P
 
 

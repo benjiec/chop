@@ -10,49 +10,13 @@ from utils.constants import (
     ConventionalStopCodons,
     ConventionalAcceptorDinucleotides,
 )
-
-
-def _normalize_class_weight_mapping(
-    class_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]],
-) -> Optional[torch.Tensor]:
-    """
-    Convert various class weight specifications into a tensor of shape (num_classes,).
-
-    Accepts one of:
-      - Sequence[float | None] indexed by class id
-      - Dict[int | str, float | None] where int is class id or str is class name in GenePredictionClass
-    Returns None if class_weights is None.
-    """
-    if class_weights is None:
-        return None
-    # Build mapping id -> weight
-    id_to_weight: Dict[int, float] = {}
-    if isinstance(class_weights, dict):
-        for k, v in class_weights.items():
-            if v is None:
-                continue
-            if isinstance(k, int):
-                id_to_weight[int(k)] = float(v)
-            else:
-                # assume class name string
-                for cid, cname in P.idx_to_cls.items():
-                    if str(k).upper() == str(cname).upper():
-                        id_to_weight[int(cid)] = float(v)
-                        break
-    else:
-        # sequence by id
-        for cid, w in enumerate(class_weights):
-            if w is None:
-                continue
-            id_to_weight[int(cid)] = float(w)
-
-    # Build dense vector
-    num_classes = len(P.idx_to_cls)
-    vec = torch.ones(num_classes, dtype=torch.float32)
-    for cid, w in id_to_weight.items():
-        if 0 <= int(cid) < num_classes:
-            vec[int(cid)] = float(w)
-    return vec
+from utils.events import (
+    normalize_event_motifs_map,
+    group_motifs_by_length,
+    build_event_masks,
+    build_center_mask,
+    normalize_class_weight_mapping,
+)
 
 
 def adjusted_ce_entropy_loss(
@@ -108,7 +72,7 @@ def adjusted_ce_entropy_loss(
     ent_vec = -(probs * torch.log(torch.clamp(probs, min=1e-12))).sum(dim=-1)
 
     # Build unified per-token weights (mask × class weights if provided)
-    cw_vec = _normalize_class_weight_mapping(class_weights)
+    cw_vec = normalize_class_weight_mapping(class_weights)
     if cw_vec is not None:
         cw = cw_vec.to(device=logits.device, dtype=logits_flat.dtype)
         token_weights_full = cw[targets_flat]
@@ -175,39 +139,6 @@ def adjusted_ce_entropy_loss(
     return total_loss
 
 
-def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
-    """
-    Build the default event-motifs mapping used by event-based losses.
-
-    Returns a dict keyed by class id (GenePredictionClass) with a set of uppercase motifs.
-    Includes defaults for START, STOP, ASS, and uses the provided DSS motifs.
-    """
-    return {
-        int(P.START): {'ATG'},
-        int(P.STOP): set(m.upper() for m in ConventionalStopCodons),
-        int(P.DSS): set(m.upper() for m in dss_motifs),
-        int(P.ASS): set(m.upper() for m in ConventionalAcceptorDinucleotides),
-    }
-
-
-def _normalize_event_motifs_map(event_motifs_by_class: Dict[Union[int, str], Iterable[str]]) -> Dict[int, Set[str]]:
-    normalized: Dict[int, Set[str]] = {}
-    for key, motifs in event_motifs_by_class.items():
-        if isinstance(key, int):
-            cls_id = int(key)
-        else:
-            found = None
-            for cid, cname in P.idx_to_cls.items():
-                if str(key).upper() == str(cname).upper():
-                    found = int(cid)
-                    break
-            if found is None:
-                continue
-            cls_id = found
-        normalized[cls_id] = set(m.upper() for m in motifs)
-    return normalized
-
-
 def event_based_ce_loss_factory(
     event_motifs_by_class: Dict[Union[int, str], Iterable[str]],
     *,
@@ -229,7 +160,7 @@ def event_based_ce_loss_factory(
     Returns:
         A function (sequences, targets, logits, components_out) -> loss_tensor
     """
-    normalized_motifs = _normalize_event_motifs_map(event_motifs_by_class)
+    normalized_motifs = normalize_event_motifs_map(event_motifs_by_class)
 
     def event_based_ce_loss(sequences, targets, logits, components_out: Dict[str, Any]):
         # sequences: (B, L) int tokens
@@ -243,39 +174,14 @@ def event_based_ce_loss_factory(
 
         # Build event mask of shape (B, L)
         event_mask = torch.zeros((B, L), dtype=torch.bool, device=device)
-
-        # Precompute motif groups by length for all classes
-        from collections import defaultdict
-        by_len_by_class: Dict[int, Dict[int, Set[str]]] = {}
-        for cls_id, motif_set in normalized_motifs.items():
-            lens: Dict[int, Set[str]] = defaultdict(set)
-            for m in motif_set:
-                lens[len(m)].add(m.upper())
-            by_len_by_class[int(cls_id)] = lens
-
-        for b in range(B):
-            # Convert to list of chars and string for substring checks
-            bases = [idx_to_bp[int(sequences[b, i].item())] for i in range(L)]
-            seq_str = ''.join(bases)
-
-            # Generic scan across all configured classes/motifs
-            for cls_id, lens in by_len_by_class.items():
-                for k, motifs in lens.items():
-                    if k <= 0 or k > L:
-                        continue
-                    for i in range(0, L - k + 1):
-                        if seq_str[i:i+k] in motifs:
-                            event_mask[b, i:i+k] = True
+        per_class_masks = build_event_masks(sequences, normalized_motifs)
+        for m in per_class_masks.values():
+            event_mask |= m
 
         # Optional edge masking (exclude window edges)
         if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
-            m = int(loss_window_margin_bp)
-            m = max(0, min(L // 2, m))
-            if m > 0 and L > 2 * m:
-                center = torch.ones(L, dtype=torch.bool, device=device)
-                center[:m] = False
-                center[-m:] = False
-                event_mask = event_mask & center.unsqueeze(0).expand(B, -1)
+            center = build_center_mask(B, L, int(loss_window_margin_bp), device=device)
+            event_mask = event_mask & center
 
         if not event_mask.any():
             # no events; return connected zero
@@ -289,7 +195,7 @@ def event_based_ce_loss_factory(
         mask_flat = event_mask.view(-1).to(ce_vec.dtype)
 
         # Optional per-class weights applied only on masked tokens
-        cw_vec = _normalize_class_weight_mapping(class_weights)
+        cw_vec = normalize_class_weight_mapping(class_weights)
         if cw_vec is not None:
             cw_vec = cw_vec.to(device=logits.device, dtype=ce_vec.dtype)
             token_w = cw_vec[targets_flat]
@@ -325,11 +231,11 @@ def event_based_bce_loss_factory(
       - per-token weight = y_c * pos_weight[c] + (1-y_c) * neg_weight[c]
     The final loss is the weighted mean over all included tokens across the four classes.
     """
-    normalized_motifs = _normalize_event_motifs_map(event_motifs_by_class)
+    normalized_motifs = normalize_event_motifs_map(event_motifs_by_class)
 
     # Prepare per-class positive/negative weight vectors
-    pos_vec = _normalize_class_weight_mapping(pos_weights)
-    neg_vec = _normalize_class_weight_mapping(neg_weights)
+    pos_vec = normalize_class_weight_mapping(pos_weights)
+    neg_vec = normalize_class_weight_mapping(neg_weights)
 
     def event_based_bce_loss(sequences, targets, logits, components_out: Dict[str, Any]):
         device = logits.device
@@ -340,39 +246,12 @@ def event_based_bce_loss_factory(
         idx_to_bp = DNAEmbed.idx_to_bp
 
         # Build class-specific event masks of shape (B, L)
-        event_masks: Dict[int, torch.Tensor] = {int(k): torch.zeros((B, L), dtype=torch.bool, device=device) for k in normalized_motifs.keys()}
-
-        from collections import defaultdict
-        by_len_by_class: Dict[int, Dict[int, Set[str]]] = {}
-        for cls_id, motif_set in normalized_motifs.items():
-            lens: Dict[int, Set[str]] = defaultdict(set)
-            for m in motif_set:
-                lens[len(m)].add(m.upper())
-            by_len_by_class[int(cls_id)] = lens
-
-        for b in range(B):
-            bases = [idx_to_bp[int(sequences[b, i].item())] for i in range(L)]
-            seq_str = ''.join(bases)
-
-            # Generic spans for all configured classes
-            for cls_id, lens in by_len_by_class.items():
-                for k, motifs in lens.items():
-                    if k <= 0 or k > L:
-                        continue
-                    for i in range(0, L - k + 1):
-                        if seq_str[i:i+k] in motifs:
-                            event_masks[int(cls_id)][b, i:i+k] = True
+        event_masks: Dict[int, torch.Tensor] = build_event_masks(sequences, normalized_motifs)
 
         # Optional edge masking: build center mask once
         center_mask = None
         if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
-            m = int(loss_window_margin_bp)
-            m = max(0, min(L // 2, m))
-            if m > 0 and L > 2 * m:
-                cm = torch.ones((B, L), dtype=torch.bool, device=device)
-                cm[:, :m] = False
-                cm[:, -m:] = False
-                center_mask = cm
+            center_mask = build_center_mask(B, L, int(loss_window_margin_bp), device=device)
 
         # If no class has any events, return connected zero
         any_events = any(mask.any().item() for mask in event_masks.values())
@@ -424,5 +303,3 @@ def event_based_bce_loss_factory(
         return loss
 
     return event_based_bce_loss
-
-

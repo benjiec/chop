@@ -15,7 +15,10 @@ from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_
 from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from synthetic.gene_boundary.layouts import generate_dataset
-from utils.metrics import convert_tokens_to_sequence, calculate_generic_metrics
+from utils.metrics import convert_tokens_to_sequence
+from utils.metrics import event_based_generic_metrics_factory
+from utils.events import build_event_motifs
+from utils.constants import StandardDonorDinucleotides
 
 # DRY visualization window sizes
 VIS_UPSTREAM_BP = 200
@@ -777,7 +780,8 @@ def main():
         cw = getattr(model, 'config', {}).get('loss', {}).get('class_weights')
     except Exception:
         cw = None
-    generic = calculate_generic_metrics(results, class_weights=cw, min_weight=1.0)
+    calc_metrics, _ = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
+    generic = calc_metrics(results, min_weight=1.0)
     
     # Analyze predictions
     predictions = analyze_all_predictions(results)

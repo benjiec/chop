@@ -6,11 +6,7 @@ from pathlib import Path
 import torch
 import numpy as np
 
-from utils.metrics import calculate_generic_metrics
 from utils.constants import GenePredictionClass as P
-
-# Add Brier computation
-from utils.metrics import compute_brier_scores
 
 
 class F1Callback(pl.Callback):
@@ -20,11 +16,14 @@ class F1Callback(pl.Callback):
     print a compact per-class summary to stdout every N epochs.
     """
 
-    def __init__(self, val_loader, print_per_class_every: int = 1, margin_bp: int = 0):
+    def __init__(self, val_loader, print_per_class_every: int = 1, margin_bp: int = 0,
+                 calculate_metrics_fn=None, compute_brier_fn=None):
         super().__init__()
         self.val_loader = val_loader
         self.print_per_class_every = int(print_per_class_every) if print_per_class_every is not None else 0
         self.margin_bp = int(margin_bp) if margin_bp is not None else 0
+        self._calculate_metrics_fn = calculate_metrics_fn
+        self._compute_brier_fn = compute_brier_fn
 
     @torch.no_grad()
     def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module):
@@ -54,9 +53,6 @@ class F1Callback(pl.Callback):
                     'probabilities': probs,
                 })
 
-        # Pull class weights from model config if available
-        class_weights = pl_module.config.get('loss', {}).get('class_weights')
-
         # Optional validity masks to exclude window edges using bp margin
         valid_masks = None
 
@@ -73,7 +69,12 @@ class F1Callback(pl.Callback):
                         mask[i] = False
                 valid_masks.append(mask)
 
-        metrics_by_class = calculate_generic_metrics(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
+        metrics_fn = self._calculate_metrics_fn
+        brier_fn = self._compute_brier_fn
+        if metrics_fn is None or brier_fn is None:
+            raise RuntimeError("F1Callback requires calculate_metrics_fn and compute_brier_fn to be provided")
+
+        metrics_by_class = metrics_fn(results_data, min_weight=1.0, valid_masks=valid_masks)
 
         # Optional compact stdout summary
         should_print = self.print_per_class_every and (
@@ -88,7 +89,9 @@ class F1Callback(pl.Callback):
             sensitivity = float(m.get('sensitivity', 0.0))
             denom = precision + sensitivity
             f1 = (2.0 * precision * sensitivity / denom) if denom > 0.0 else 0.0
-            f1_values.append(f1)
+            # Include only classes with any events (tp+fp+fn > 0)
+            if int(m.get('tp', 0)) + int(m.get('fp', 0)) + int(m.get('fn', 0)) > 0:
+                f1_values.append(f1)
             cls_name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             per_class_f1[cls_name] = f1
             if should_print:
@@ -104,7 +107,7 @@ class F1Callback(pl.Callback):
             pl_module.log(f"val_f1_classes/{name}", float(value), prog_bar=False, on_epoch=True)
 
         # Brier score (overall + per-class)
-        brier = compute_brier_scores(results_data, class_weights=class_weights, min_weight=1.0, valid_masks=valid_masks)
+        brier = brier_fn(results_data, valid_masks=valid_masks)
         pl_module.log('val_brier', float(brier.get('brier', 0.0)), prog_bar=True, on_epoch=True)
         by_class = brier.get('brier_by_class', {})
         for cls_idx, val in by_class.items():
