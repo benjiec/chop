@@ -17,8 +17,7 @@ from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_facto
 from utils.events import build_event_motifs
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config
-from gene_predictor.metrics_callback import F1Callback
-from gene_predictor.metrics_callback import LossComponentsCallback
+from gene_predictor.metrics_callback import MetricsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
@@ -209,7 +208,7 @@ def main():
             save_last=False,
             auto_insert_metric_name=False,
         )
-        return [ F1Callback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier), LossComponentsCallback(report_train_components=True, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
+        return [ MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir), DualMetricEarlyStopping(patience=8), f1_ckpt ]
 
     model, val_loader = run_trainer(
         dataset,
