@@ -3,7 +3,7 @@
 import unittest
 import torch
 
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, adjusted_ce_entropy_loss
 from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P
 
@@ -331,6 +331,125 @@ class TestEventBasedWeightedLosses(unittest.TestCase):
         v_str = float(bce_str(sequences, targets, logits, {}).detach().cpu().item())
         self.assertAlmostEqual(v_int, v_str, places=8)
 
+
+
+class TestAdjustedCEEntropyLoss(unittest.TestCase):
+    def test_ce_and_fp_penalty(self):
+        B, L, C = 1, 5, 4
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        targets = torch.zeros((B, L), dtype=torch.long)
+        targets[0, 2] = 1
+        logits[0, 2, 1] = 4.0  # confident correct
+        # Background positions induce FP for class 1
+        logits[0, 0, 1] = 2.0
+        logits[0, 1, 1] = 2.0
+        logits[0, 3, 1] = 2.0
+        logits[0, 4, 1] = 2.0
+
+        comp0 = {}
+        v0 = adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=0,
+            class_weights={1: 2.0},
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=comp0,
+        )
+
+        comp1 = {}
+        v1 = adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=0,
+            class_weights={1: 2.0},
+            entropy_lambda=0.0,
+            fp_beta=1.0,
+            components_out=comp1,
+        )
+
+        assert float(v1.detach().cpu().item()) > float(v0.detach().cpu().item())
+        assert comp1.get('fp_penalty', 0.0) >= 0.0
+
+    def test_edge_masking(self):
+        B, L, C = 1, 8, 3
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        targets = torch.zeros((B, L), dtype=torch.long)
+        logits[0, :, 0] = 5.0
+        targets[0, :] = 0
+        targets[0, 3:5] = 1
+        logits[0, 3:5, 0] = 0.0
+
+        v_all = float(adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=0,
+            class_weights=None,
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=None,
+        ).detach().cpu().item())
+
+        v_margin = float(adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=2,
+            class_weights=None,
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=None,
+        ).detach().cpu().item())
+
+        assert v_all != v_margin
+
+    def test_class_weights(self):
+        B, L, C = 1, 4, 3
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        targets = torch.zeros((B, L), dtype=torch.long)
+        targets[0, 1] = 1
+        targets[0, 2] = 1
+        logits[0, 1, 2] = 2.0
+        logits[0, 2, 2] = 2.0
+
+        comp_unw = {}
+        v_unw = adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=0,
+            class_weights=None,
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=comp_unw,
+        )
+
+        comp_w = {}
+        v_w = adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=0,
+            class_weights={1: 2.0},
+            entropy_lambda=0.0,
+            fp_beta=0.0,
+            components_out=comp_w,
+        )
+
+        assert float(v_w.detach().cpu().item()) > float(v_unw.detach().cpu().item())
+
+    def test_outputs_components(self):
+        B, L, C = 1, 5, 3
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        targets = torch.zeros((B, L), dtype=torch.long)
+        targets[0, 2] = 1
+        logits[0, 2, 1] = 3.0
+
+        comp = {}
+        v = adjusted_ce_entropy_loss(
+            logits, targets,
+            loss_window_margin_bp=1,
+            class_weights=[1.0, 1.0, 1.0],
+            entropy_lambda=0.1,
+            fp_beta=0.5,
+            components_out=comp,
+        )
+        assert torch.is_tensor(v)
+        for key in ['total', 'ce', 'entropy', 'fp_penalty', 'ce_weighted_sum_by_class', 'weight_sum_by_class', 'total_weighted_ce_sum']:
+            assert key in comp
+        assert isinstance(comp['ce_weighted_sum_by_class'], dict)
+        assert isinstance(comp['weight_sum_by_class'], dict)
 
 
 if __name__ == '__main__':
