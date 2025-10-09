@@ -125,7 +125,7 @@ class TestMetricsCallback(unittest.TestCase):
 
         # Monkeypatch module-level writer to capture calls
         calls = {"count": 0}
-        def fake_writer(run_dir, trainer, macro_f1, overall_brier, per_class):
+        def fake_writer(run_dir, trainer, macro_f1, overall_brier, per_class, val_loss=None):
             calls["count"] += 1
         orig = getattr(mc, 'write_epoch_csv_tall', None)
         mc.write_epoch_csv_tall = fake_writer

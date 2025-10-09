@@ -604,7 +604,6 @@ def main():
     parser.add_argument('--no-random-prefix-ns', dest='random_prefix_ns', action='store_false', help='Disable random N-prefix before windowing')
     parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
-    parser.add_argument('--report-loss-components', action='store_true', help='Compute adjusted loss and its components per sequence and report means')
     parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based analysis: standard or dino')
     

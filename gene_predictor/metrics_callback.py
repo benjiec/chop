@@ -9,7 +9,7 @@ import numpy as np
 from utils.constants import GenePredictionClass as P
 
 
-def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict) -> None:
+def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None) -> None:
     if run_dir is None:
         return
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -17,25 +17,37 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
     exists = csv_path.exists()
 
     rows = []
-    def add(name, value):
-        rows.append([int(trainer.current_epoch) if trainer is not None else 0, 'val', name, _safe_float(value)])
+    def add(metric_name, class_name, value):
+        rows.append([
+            int(trainer.current_epoch) if trainer is not None else 0,
+            'val',
+            metric_name,
+            class_name,
+            _safe_float(value),
+        ])
 
     # Aggregates
-    add('f1', macro_f1)
-    add('brier', overall_brier)
+    add('f1', '', macro_f1)
+    add('brier', '', overall_brier)
+    if val_loss is not None:
+        add('loss', '', val_loss)
 
     # Per-class metrics
     for cls_idx, vals in per_class.items():
         name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-        add(f'f1_{name}', vals.get('f1'))
-        add(f'sensitivity_{name}', vals.get('sensitivity'))
-        add(f'precision_{name}', vals.get('precision'))
-        add(f'brier_{name}', vals.get('brier'))
+        if 'sensitivity' in vals:
+            add('sensitivity', name, vals.get('sensitivity'))
+        if 'precision' in vals:
+            add('precision', name, vals.get('precision'))
+        if 'f1' in vals:
+            add('f1', name, vals.get('f1'))
+        if 'brier' in vals:
+            add('brier', name, vals.get('brier'))
 
     with csv_path.open('a', newline='') as f:
         writer = csv.writer(f)
         if not exists:
-            writer.writerow(['epoch', 'batch', 'metric', 'value'])
+            writer.writerow(['epoch', 'batch', 'metric', 'class', 'value'])
         writer.writerows(rows)
 
 class MetricsCallback(pl.Callback):
@@ -126,11 +138,22 @@ class MetricsCallback(pl.Callback):
         for cls_idx, vals in per_class.items():
             name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             if should_print:
-                print(name, 'sen', vals.get('sensitivity', 0.0), 'pre', vals.get('precision', 0.0), 'f1', vals.get('f1', 0.0), 'brier', vals.get('brier', 0.0))
+                print(name,
+                      'sen', "%.4f" % vals.get('sensitivity', 0.0),
+                      'pre', "%.4f" % vals.get('precision', 0.0),
+                      'f1',  "%.4f" % vals.get('f1', 0.0),
+                      'brier', "%.4f" % vals.get('brier', 0.0)
+                )
 
-        # Optionally write tall TSV of metrics
+        # Optionally write tall TSV of metrics (aggregate loss via trainer metrics)
+        val_loss = None
+        if trainer is not None and hasattr(trainer, 'callback_metrics'):
+            try:
+                val_loss = float(trainer.callback_metrics.get('val_loss')) if 'val_loss' in trainer.callback_metrics else None
+            except Exception:
+                val_loss = None
         if self.run_dir is not None:
-            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class)
+            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss)
 
 
 class DualMetricEarlyStopping(pl.Callback):
