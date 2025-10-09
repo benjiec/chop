@@ -72,3 +72,62 @@ class TestGenePredictorTrainer(unittest.TestCase):
             self.assertIsNotNone(model)
             self.assertTrue(hasattr(val_loader, '__iter__'))
             self.assertTrue(cb.seen_val_loader or True)
+
+
+# Consolidated from tests/gene_predictor/test_train_cli_dss.py
+class TestTrainCLIDSS(unittest.TestCase):
+    def test_cli_requires_dss_motifs(self):
+        import subprocess, sys
+        proc = subprocess.run(
+            [sys.executable, '-m', 'gene_predictor.train', '--help'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertIn('--dss-motifs', proc.stdout)
+
+
+# Consolidated from tests/gene_predictor/test_trainer_sampler.py
+class TestTrainerSamplerIntegration(unittest.TestCase):
+    def test_trainer_runs_with_class_aware_sampler(self):
+        utr_choices = KOZAK_SEQUENCES + UTR5_REAL_SEQUENCES + IRES_SEQUENCES
+        layouts = [
+            RandomBasesGenerator(length=50, target=P.INTERGENIC),
+            RandomUTR5Generator(choices=utr_choices, target=P.UTR5, mutation_prob=0.0),
+            AddATGGenerator(),
+            RandomBasesGenerator(length=50, target=P.INTERGENIC),
+        ]
+        dataset = GenomicSyntheticTestingDataset(
+            max_sequence_length=200,
+            num_contigs=12,
+            layouts_per_contig=1,
+            layouts=layouts,
+        )
+
+        config = create_base_config(
+            max_seq_length=200,
+            num_classes=3,
+            class_names=['INTERGENIC', 'UTR5', 'START'],
+            d_model=16,
+            n_layers=1,
+            n_heads=4,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=3,
+            class_weights=[1.0, 1.0, 1.0],
+            attention_masks={0: 2},
+            kmer_size=0,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model, val_loader = train_fn(
+                dataset,
+                config,
+                Path(tmpdir),
+                additional_callback_generator=lambda v: [],
+                monitor_metric='val_loss',
+                monitor_mode='min',
+                custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
+            )
+            self.assertIsNotNone(model)
+            self.assertTrue(hasattr(val_loader, '__iter__'))
