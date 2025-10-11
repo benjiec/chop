@@ -13,6 +13,7 @@ from utils.metrics import SequenceResult
 from utils.events import build_event_motifs
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from gene_predictor.metrics_callback import MetricsCallback
+from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 
 
 def load_model(model_path):
@@ -28,7 +29,7 @@ def load_model(model_path):
     return model
 
 
-def run_test(dataset, model, dss_motifs, margin_bp = 200, batch_size = 8):
+def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
 
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -67,7 +68,7 @@ def run_test(dataset, model, dss_motifs, margin_bp = 200, batch_size = 8):
 
         # Set up metrics callback (no CSV) and invoke epoch end
         # Default to standard DSS motif set for metrics in this utility
-        event_motifs_by_class = build_event_motifs(dss_motifs)
+        event_motifs_by_class = build_event_motifs(dss_set)
         calc_metrics, _ = event_based_generic_metrics_factory(event_motifs_by_class)
         calc_brier = event_based_brier_factory(event_motifs_by_class)
         cb = MetricsCallback(val_loader, print_per_class_every=1, margin_bp=int(margin_bp),
@@ -117,6 +118,11 @@ def main():
     max_seq_len = int(model.model.embedding.max_seq_length)
     print("config", model.config)
 
+    if args.dss_motifs == 'dino':
+        dss_set = DinoDonorDinucleotides
+    else:
+        dss_set = StandardDonorDinucleotides
+
     dataset = AnnotatedGenomeDataset(
         args.fna_fn,
         args.tsv_fn,
@@ -126,7 +132,7 @@ def main():
         class_weights=model.config["loss"]["class_weights"]
     )
 
-    run_test(dataset, model, args.dss_motifs)
+    run_test(dataset, model, dss_set)
 
 if __name__ == "__main__":
     main()

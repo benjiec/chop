@@ -522,14 +522,14 @@ class AnnotatedGenomeDataset:
             val_positions: List[int] = []
             for cid in contig_ids:
                 group = contig_to_positions[cid]
-                # Greedy assignment: push the next whole contig to the split that is currently farther from its target size
+                # Greedy assignment: push the next whole contig to the split that is currently lowest and can be filled
                 # Avoid trimming; accept slight size mismatch to keep contigs disjoint
                 train_gap = max(0, train_size - len(train_positions))
                 val_gap = max(0, val_size - len(val_positions))
-                if train_gap >= val_gap:
-                    train_positions.extend(group)
-                else:
+                if len(val_positions) < len(train_positions) and val_gap > 0:
                     val_positions.extend(group)
+                else:
+                    train_positions.extend(group)
             return Subset(self, train_positions), Subset(self, val_positions)
         else:
             # No windowing; split by sequence index deterministically

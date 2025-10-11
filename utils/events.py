@@ -105,6 +105,9 @@ def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
 
     Returns a dict keyed by integer class id with a set of uppercase motifs.
     """
+
+    assert type(dss_motifs) != type("")
+
     return {
         int(P.START): {'ATG'},
         int(P.STOP): set(m.upper() for m in ConventionalStopCodons),
