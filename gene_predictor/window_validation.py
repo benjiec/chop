@@ -7,17 +7,16 @@ from pathlib import Path
 import numpy as np
 import argparse
 
-from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
-from utils.events import build_event_motifs
 from dna_learner.model import GenePredictorModule as ModelModule
 from utils.genome import AnnotatedGenomeDataset
-from utils.metrics import calculate_generic_metrics
-from utils.constants import GenePredictionClass as P
+from utils.metrics import SequenceResult
+from utils.events import build_event_motifs
+from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
+from gene_predictor.metrics_callback import MetricsCallback
 
 
 def load_model(model_path):
-    model = ModelModule.load_from_checkpoint(model_path, map_location="cpu")
+    model = ModelModule.load_from_checkpoint(model_path, map_location="cpu", custom_loss_fn=None)
     model.eval()
     model = model.to("cpu")
     cfg = getattr(model, 'config', None)
@@ -29,7 +28,7 @@ def load_model(model_path):
     return model
 
 
-def run_test(dataset, model, loss_type, dss_set, margin_bp = 200, batch_size = 8):
+def run_test(dataset, model, margin_bp = 200, batch_size = 8):
 
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -48,72 +47,51 @@ def run_test(dataset, model, loss_type, dss_set, margin_bp = 200, batch_size = 8
         num_workers=0
     )
 
-    config = model.config
-    bce_pos_weight_map = config['custom']['loss']['bce_pos_weights']
-    bce_neg_weight_map = config['custom']['loss']['bce_neg_weights']
-    ce_weight_map = config['custom']['loss']['ce_class_weights']
-
-    event_motifs_by_class = build_event_motifs(dss_set)
-
-    # Build event motifs map and custom loss
-    if loss_type == 'event-ce':
-        custom_loss = event_based_ce_loss_factory(
-            event_motifs_by_class,
-            class_weights=ce_weight_map,
-            loss_window_margin_bp=margin_bp,
-        )
-    else:
-        custom_loss = event_based_bce_loss_factory(
-            event_motifs_by_class,
-            pos_weights=bce_pos_weight_map,
-            neg_weights=bce_neg_weight_map,
-            loss_window_margin_bp=margin_bp,
-        )
-    
     print(f"training samples: {len(train_dataset)}")
     print(f"validation samples: {len(val_dataset)}")
     
     device = "cpu"
-    losses = []
     with torch.no_grad():
-        results_data = []
+        # Build SequenceResult list over validation loader
+        seq_results = []
         for sequences, targets in val_loader:
             sequences = sequences.to(device)
             targets = targets.to(device)
             logits = model.model(sequences)
-            predictions = logits.argmax(dim=-1)
-            probabilities = torch.softmax(logits, dim=-1)
-            loss = self.custom_loss_fn(sequences, targets, logits)
-            losses.append(loss)
+            seq_results.extend(SequenceResult.from_batch(
+                sequence_tokens_batch=sequences,
+                targets_batch=targets,
+                logits_batch=logits,
+                sequence_index_start=len(seq_results),
+            ))
 
-            batch_size = sequences.size(0)
-            for b in range(batch_size):
-                seq_tokens = sequences[b].detach().cpu().numpy()
-                tgt = targets[b].detach().cpu().numpy()
-                pred = predictions[b].detach().cpu().numpy()
-                probs = probabilities[b].detach().cpu().numpy()
-                results_data.append({
-                    'sequence_index': len(results_data),
-                    'sequence_tokens': seq_tokens,
-                    'targets': tgt,
-                    'predictions': pred,
-                    'probabilities': probs,
-                })
-            if len(results_data) % 40 == 0:
-                print("Processed", len(results_data), "windows")
+        # Set up metrics callback (no CSV) and invoke epoch end
+        # Default to standard DSS motif set for metrics in this utility
+        event_motifs_by_class = build_event_motifs('standard')
+        calc_metrics, _ = event_based_generic_metrics_factory(event_motifs_by_class)
+        calc_brier = event_based_brier_factory(event_motifs_by_class)
+        cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=int(margin_bp),
+                             calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=None)
 
-        valid_masks = None
-        if margin_bp > 0:
-            valid_masks = []
-            for r in results_data:
-                L = len(r['sequence_tokens'])
-                mask = [True] * L
-                if L > 2 * margin_bp:
-                    for i in range(0, margin_bp):
-                        mask[i] = False
-                    for i in range(L - margin_bp, L):
-                        mask[i] = False
-                valid_masks.append(mask)
+        class DummyModule:
+            def __init__(self, results):
+                self._cb_results_data = results
+                self.logged = {}
+                self._param = torch.nn.Parameter(torch.zeros(1))
+            def parameters(self):
+                return iter([self._param])
+            def eval(self):
+                return self
+            def log(self, name, value, prog_bar=False, on_epoch=False):
+                try:
+                    self.logged[name] = float(value)
+                except Exception:
+                    self.logged[name] = value
+
+        mod = DummyModule(seq_results)
+        cb.on_validation_epoch_end(trainer=None, pl_module=mod)
+        print("val_f1:", mod.logged.get('val_f1'))
+        print("val_brier:", mod.logged.get('val_brier'))
 
 
 
@@ -144,7 +122,6 @@ def main():
         window=max_seq_len,
         stride=args.window_stride,
         num_windows=args.num_windows,
-        class_weights=class_weights
     )
 
     run_test(dataset, model)
