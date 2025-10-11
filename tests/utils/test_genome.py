@@ -520,6 +520,41 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
             self.assertEqual(x1.shape[0], 16)
             self.assertEqual(y1.shape[0], 16)
 
+    def test_window_filter_skips_windows_without_weighted_targets(self):
+        # Sequence with START and STOP present, but all class weights are 1.0
+        seq_list = list('N' * 50)
+        seq_list[9:12] = list('ATG')
+        seq_list[37:40] = list('TAA')
+        fasta = f">ctg\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctg\tg\t10\t40\t10\t40\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "s.fna.gz"
+            tsv_path = fp / "a.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            cw = [1.0] * 8
+            ds = AnnotatedGenomeDataset(
+                str(fasta_path), str(tsv_path), window=16, stride=8,
+                class_weights=cw, random_prefix_ns=False
+            )
+            # With all class weights == 1.0, no window should be kept
+            self.assertEqual(len(ds.windows), 0)
+            self.assertEqual(len(ds), 0)
+
+            # Increasing a class weight (>1) should admit windows containing that class
+            cw2 = [1.0] * 8
+            cw2[P.START] = 2.0
+            ds2 = AnnotatedGenomeDataset(
+                str(fasta_path), str(tsv_path), window=16, stride=8,
+                class_weights=cw2, random_prefix_ns=False
+            )
+            self.assertGreater(len(ds2.windows), 0)
+
 
 class TestAnnotatedGenomeDatasetPadding(unittest.TestCase):
     def test_random_n_prefix_added_with_seed(self):

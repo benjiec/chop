@@ -410,7 +410,20 @@ class AnnotatedGenomeDataset:
             for contig_idx, seq in enumerate(self.sequences):
                 L = len(seq)
                 slices = compute_window_slices(L, window=win, stride=st)
+                # Exclude windows that don't contain any targets with weight > 1
+                weights = self.class_weights
                 for s, e in slices:
+                    if weights is not None:
+                        tgt_seg = self.targets[contig_idx][s:e]
+                        # any class index with weight > 1 present?
+                        has_weighted = False
+                        for cls_idx in np.unique(tgt_seg):
+                            w = float(weights[int(cls_idx)])
+                            if w > 1.0:
+                                has_weighted = True
+                                break
+                        if not has_weighted:
+                            continue
                     self.windows.append((contig_idx, s, e))
             print(len(self.windows), "windows")
 
