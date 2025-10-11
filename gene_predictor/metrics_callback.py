@@ -194,9 +194,6 @@ class DualMetricEarlyStopping(pl.Callback):
                 trainer.should_stop = True
 
 
-    
-
-
 def _safe_float(x):
     try:
         if x is None:
