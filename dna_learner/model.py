@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Tuple, Optional, Callable
 import math
 import sys
 from pathlib import Path
+from utils.metrics import SequenceResult
 
 DEFAULT_VOCAB_SIZE = 5
 DEFAULT_MAX_SEQ_LENGTH = 8192
@@ -476,13 +477,13 @@ class GenePredictorModule(pl.LightningModule):
             probabilities = torch.softmax(logits, dim=-1)
         B = sequences.size(0)
         for b in range(B):
-            coll.append({
-                'sequence_index': len(coll),
-                'sequence_tokens': sequences[b].detach().cpu().numpy(),
-                'targets': targets[b].detach().cpu().numpy(),
-                'predictions': predictions[b].detach().cpu().numpy(),
-                'probabilities': probabilities[b].detach().cpu().numpy(),
-            })
+            coll.append(SequenceResult(
+                sequence_index=len(coll),
+                sequence_tokens=sequences[b].detach().cpu().numpy(),
+                targets=targets[b].detach().cpu().numpy(),
+                predictions=predictions[b].detach().cpu().numpy(),
+                probabilities=probabilities[b].detach().cpu().numpy(),
+            ))
         
         return loss
 

@@ -7,6 +7,7 @@ import torch
 import numpy as np
 
 from utils.constants import GenePredictionClass as P
+from utils.metrics import SequenceResult
 
 
 def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None) -> None:
@@ -86,7 +87,7 @@ class MetricsCallback(pl.Callback):
         if self.margin_bp > 0:
             valid_masks = []
             for r in results_data:
-                L = len(r['sequence_tokens'])
+                L = len(r.sequence_tokens)
                 mask = [True] * L
                 if L > 2 * self.margin_bp:
                     for i in range(0, self.margin_bp):

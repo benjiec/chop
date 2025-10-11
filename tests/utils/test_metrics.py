@@ -6,6 +6,7 @@ import numpy as np
 from utils.metrics import (
     event_based_brier_factory,
     event_based_generic_metrics_factory,
+    SequenceResult,
 )
 from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P, StandardDonorDinucleotides
@@ -40,7 +41,7 @@ class TestBrier(unittest.TestCase):
         probs[3:6, P.START] = 0.9
         targets = np.zeros(L, dtype=int)
         targets[3:6] = P.START
-        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        rd = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
         out = self.compute_brier(rd)
         # Included positions are exactly the motif span 3..5 for START
         # Per-class (START) Brier: mean((0.9-1)^2 over 3 positions) = 0.01
@@ -65,7 +66,7 @@ class TestBrier(unittest.TestCase):
         targets = np.zeros(L, dtype=int)
         targets[3:6] = P.START
         targets[9:12] = P.STOP
-        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        rd = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
         out = self.compute_brier(rd)
         # START per-class: mean((0.8-1)^2) = 0.04
         # STOP per-class: mean((0.7-1)^2) = 0.09
@@ -89,7 +90,7 @@ class TestBrier(unittest.TestCase):
         targets = np.zeros(L, dtype=int)
         targets[3:6] = P.START
         targets[9:12] = P.INTERGENIC  # negative, not STOP
-        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        rd = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
         out = self.compute_brier(rd)
         # START per-class: mean((0.8-1)^2) = 0.04
         # STOP per-class: mean((0.7-0)^2) = 0.49
@@ -111,7 +112,7 @@ class TestBrier(unittest.TestCase):
         targets = np.zeros(L, dtype=int)
         targets[3:6] = P.START
         targets[9:12] = P.STOP
-        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        rd = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
         # With new event-based Brier (no class weights), this test now checks STOP directly
         out = self.compute_brier(rd)
         self.assertIn(P.STOP, out['brier_by_class'])
@@ -131,7 +132,7 @@ class TestBrier(unittest.TestCase):
         targets = np.zeros(L, dtype=int)
         targets[3:6] = P.START
         valid_masks = [[True, True, True, True, False, True, True, True]]
-        rd = [{'sequence_tokens': tokens, 'targets': targets, 'probabilities': probs}]
+        rd = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
         out = self.compute_brier(rd, event_only=True, valid_masks=valid_masks)
         # Included positions 3 and 5 only; (0.8-1)^2 each = 0.04 -> mean 0.04
         self.assertAlmostEqual(out['brier_by_class'][P.START], 0.04, places=6)
@@ -148,7 +149,7 @@ class TestGenericMetrics(unittest.TestCase):
 
     def test_no_targets_returns_empty(self):
         seq = encode_sequence('NNNN')
-        results = [{'sequence_index': 0, 'sequence_tokens': seq, 'targets': None, 'predictions': np.zeros(4, dtype=np.int64)}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=seq, targets=None, predictions=np.zeros(4, dtype=np.int64))]
         m = self.calc_metrics(results)
         self.assertEqual(m, {})
 
@@ -160,7 +161,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[4:7] = P.START
         targets[10:13] = P.STOP
         predictions = np.copy(targets)
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         # Event-based metrics ignore weights; both START and STOP present
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.STOP, m)
@@ -175,7 +176,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[10:13] = P.START
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[4:7] = P.START  # one TP, one FN
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.START, m)
         self.assertEqual(m[P.START]['tp'], 1)
@@ -194,7 +195,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[20:22] = P.DSS
         predictions = np.zeros_like(targets)
         predictions[5:7] = P.DSS  # TP on first, miss second (FN)
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.DSS, m)
         # Expect at least 1 TP and 1 FN counted on motif-aware windows
@@ -209,7 +210,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[4:7] = P.START
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[5] = P.START  # only middle token predicted
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Window should be counted as TP due to any token rule
         spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.START}
@@ -223,7 +224,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[3:5] = P.ASS  # 'AG' at [3,4]
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[8:10] = P.ASS  # 'TA' at [8,9] (non-motif)
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Expect FN for true 'AG' and no FP for 'TA'
         ev_ass = [e for e in events if e['class_index'] == P.ASS]
@@ -242,7 +243,7 @@ class TestGenericMetrics(unittest.TestCase):
         predictions[4:7] = P.START  # TP at first ATG
         # Predicted-only START at a non-motif window "TTG" near end
         predictions[16:18] = P.START
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Expect TP for first ATG window [4,6] and FN for second [10,12]
         spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.START}
@@ -263,7 +264,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[20:22] = P.DSS  # span [20,21]
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[5:7] = P.DSS  # TP at first DSS, FN at second
-        results = [{'sequence_index': 0, 'sequence_tokens': tokens, 'targets': targets, 'predictions': predictions}]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.DSS}
         self.assertIn((5, 6, 'TP'), spans)
@@ -289,13 +290,13 @@ class TestMetricsValidMask(unittest.TestCase):
             targets[s:e] = cls
         for (s, e, cls) in pred_runs:
             predictions[s:e] = cls
-        return {
-            'sequence_index': 0,
-            'sequence_tokens': tokens,
-            'targets': targets,
-            'predictions': predictions,
-            'probabilities': None,
-        }
+        return SequenceResult(
+            sequence_index=0,
+            sequence_tokens=tokens,
+            targets=targets,
+            predictions=predictions,
+            probabilities=None,
+        )
 
     def test_valid_mask_excludes_edges_for_motif_classes(self):
         # Build a sequence with one STOP triplet window at center and also create FP at edge
@@ -346,4 +347,33 @@ class TestMetricsValidMask(unittest.TestCase):
         self.assertIn(C, m_yes)
         self.assertEqual(m_yes[C]['fp'], 0)
 
+
+class TestSequenceResult(unittest.TestCase):
+    def test_ensure_probabilities_from_logits(self):
+        # Simple logits for two classes across three positions
+        logits = np.array([
+            [2.0, 0.0],  # p ~ [0.8808, 0.1192]
+            [0.0, 0.0],  # p = [0.5, 0.5]
+            [0.0, 2.0],  # p ~ [0.1192, 0.8808]
+        ], dtype=np.float32)
+        sr = SequenceResult(
+            sequence_index=0,
+            sequence_tokens=np.zeros(3, dtype=np.int64),
+            targets=np.zeros(3, dtype=np.int64),
+            predictions=None,
+            probabilities=None,
+            logits=logits,
+        )
+        sr2 = sr.ensure_probabilities()
+        self.assertIsNotNone(sr2.probabilities)
+        self.assertIsNone(sr2.logits)
+        # Row-wise softmax check
+        probs = sr2.probabilities
+        self.assertEqual(probs.shape, (3, 2))
+        # Sums to 1
+        np.testing.assert_allclose(np.sum(probs, axis=1), np.ones(3), rtol=1e-6, atol=1e-6)
+        # Symmetry checks
+        self.assertGreater(probs[0, 0], probs[0, 1])
+        self.assertAlmostEqual(probs[1, 0], 0.5, places=6)
+        self.assertGreater(probs[2, 1], probs[2, 0])
 

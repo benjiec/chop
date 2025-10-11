@@ -7,7 +7,7 @@ from torch.utils.data import TensorDataset, DataLoader
 from gene_predictor.metrics_callback import MetricsCallback
 from pathlib import Path
 import gene_predictor.metrics_callback as mc
-from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
+from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory, SequenceResult
 from utils.events import build_event_motifs
 from utils.constants import StandardDonorDinucleotides
 
@@ -77,13 +77,15 @@ class TestMetricsCallback(unittest.TestCase):
         with torch.no_grad():
             preds = logits.argmax(dim=-1)
             probs = torch.softmax(logits, dim=-1)
-        mod._cb_results_data = [{
-            'sequence_index': 0,
-            'sequence_tokens': tokens.numpy(),
-            'targets': targets.numpy(),
-            'predictions': preds[0].numpy(),
-            'probabilities': probs[0].numpy(),
-        }]
+        mod._cb_results_data = [
+            SequenceResult(
+                sequence_index=0,
+                sequence_tokens=tokens.numpy(),
+                targets=targets.numpy(),
+                predictions=preds[0].numpy(),
+                probabilities=probs[0].numpy(),
+            )
+        ]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)
@@ -164,13 +166,15 @@ class TestMetricsCallback(unittest.TestCase):
         with torch.no_grad():
             preds = logits.argmax(dim=-1)
             probs = torch.softmax(logits, dim=-1)
-        mod._cb_results_data = [{
-            'sequence_index': 0,
-            'sequence_tokens': tokens.numpy(),
-            'targets': targets.numpy(),
-            'predictions': preds[0].numpy(),
-            'probabilities': probs[0].numpy(),
-        }]
+        mod._cb_results_data = [
+            SequenceResult(
+                sequence_index=0,
+                sequence_tokens=tokens.numpy(),
+                targets=targets.numpy(),
+                predictions=preds[0].numpy(),
+                probabilities=probs[0].numpy(),
+            )
+        ]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
 
         self.assertIn('val_f1', mod.logged)

@@ -54,6 +54,11 @@ Sensitivity = TP / (TP + FN)
 Precision = TP / (TP + FP)
 Specificity = TN / (TN + FP)
 
+14. Don't worry about backwards compatibility. Propose the most
+concise/clean/DRY solution and then propose possible backwards compatibility
+approaches. But don't just create code and leave code around for backward
+compatibility reasons.
+
 15. Do not use try/except unless catching a specific, documented exception
 type. Never use bare except or catch broad types like Exception/BaseException.
 For example, please DO NOT use "except:" or "except Exception:".

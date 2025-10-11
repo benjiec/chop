@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from typing import List, Dict, Optional, Sequence, Iterable, Union, Set, Tuple, Callable
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -10,6 +11,41 @@ from utils.events import normalize_event_motifs_map
 from utils.events import group_motifs_by_length
 from utils.events import convert_tokens_to_sequence
 
+
+@dataclass(frozen=True)
+class SequenceResult:
+    sequence_index: Optional[int]
+    sequence_tokens: np.ndarray
+    targets: Optional[np.ndarray]
+    predictions: Optional[np.ndarray]
+    probabilities: Optional[np.ndarray] = None
+    logits: Optional[np.ndarray] = None
+
+    def ensure_probabilities(self) -> "SequenceResult":
+        if self.probabilities is not None or self.logits is None:
+            return self
+        import numpy as _np
+        x = self.logits - _np.max(self.logits, axis=-1, keepdims=True)
+        ex = _np.exp(x)
+        probs = ex / _np.clip(_np.sum(ex, axis=-1, keepdims=True), 1e-12, None)
+        return SequenceResult(
+            sequence_index=self.sequence_index,
+            sequence_tokens=self.sequence_tokens,
+            targets=self.targets,
+            predictions=self.predictions,
+            probabilities=probs.astype(_np.float32),
+            logits=None,
+        )
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            'sequence_index': self.sequence_index,
+            'sequence_tokens': self.sequence_tokens,
+            'targets': self.targets,
+            'predictions': self.predictions,
+            'probabilities': self.probabilities,
+            'logits': self.logits,
+        }
 
 def _build_valid_mask_for(seq_len: int, mask_like: Optional[Sequence[bool]]) -> np.ndarray:
     if mask_like is None:
@@ -29,9 +65,9 @@ def event_based_generic_metrics_factory(event_motifs_by_class: Dict[Union[int, s
     normalized = normalize_event_motifs_map(event_motifs_by_class)
     motifs_by_len = group_motifs_by_length(normalized)
 
-    def calculate_generic_metrics_and_predictions(results_data: List[Dict], min_weight: float = 1.0,
+    def calculate_generic_metrics_and_predictions(results_data: List[SequenceResult], min_weight: float = 1.0,
                                                   valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None):
-        has_targets = any(result.get('targets') is not None for result in results_data)
+        has_targets = any(result.targets is not None for result in results_data)
         if not has_targets:
             return {}, []
 
@@ -47,12 +83,12 @@ def event_based_generic_metrics_factory(event_motifs_by_class: Dict[Union[int, s
             if not lens_map:
                 continue
             for ridx, result in enumerate(results_data):
-                seq = convert_tokens_to_sequence(result['sequence_tokens'])
-                tgt = result['targets']
-                pred = result['predictions']
+                seq = convert_tokens_to_sequence(result.sequence_tokens)
+                tgt = result.targets
+                pred = result.predictions
                 L = min(len(seq), len(tgt), len(pred))
                 vm = _build_valid_mask_for(L, valid_masks[ridx] if (valid_masks is not None and ridx < len(valid_masks)) else None)
-                seq_idx = result.get('sequence_index')
+                seq_idx = result.sequence_index
 
                 for k, motifs in lens_map.items():
                     if k <= 0 or k > L:
@@ -115,7 +151,7 @@ def event_based_generic_metrics_factory(event_motifs_by_class: Dict[Union[int, s
             ev['class_label'] = P.idx_to_cls.get(idx, str(idx))
         return metrics_by_class, window_events
 
-    def calculate_generic_metrics(results_data: List[Dict], min_weight: float = 1.0,
+    def calculate_generic_metrics(results_data: List[SequenceResult], min_weight: float = 1.0,
                                   valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None) -> Dict[int, Dict[str, float]]:
         metrics_by_class, _events = calculate_generic_metrics_and_predictions(results_data, min_weight=min_weight, valid_masks=valid_masks)
         return metrics_by_class
@@ -134,7 +170,7 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
     normalized = normalize_event_motifs_map(event_motifs_by_class)
     motifs_by_len = group_motifs_by_length(normalized)
 
-    def compute_brier_scores(results_data: List[Dict],
+    def compute_brier_scores(results_data: List[SequenceResult],
                              valid_masks: Optional[Sequence[Optional[Sequence[bool]]]] = None,
                              event_only: bool = True) -> Dict[str, object]:
         # Evaluate exactly the classes configured in the motifs map
@@ -143,17 +179,12 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
         per_class_sq_error_sum: Dict[int, float] = {}
         per_class_token_count: Dict[int, int] = {}
 
-        for ridx, result in enumerate(results_data):
-            probs = result.get('probabilities')
-            logits = result.get('logits')
-            if probs is None and logits is not None:
-                import numpy as _np
-                x = logits - _np.max(logits, axis=-1, keepdims=True)
-                ex = _np.exp(x)
-                probs = ex / _np.clip(_np.sum(ex, axis=-1, keepdims=True), 1e-12, None)
+        for ridx, _result in enumerate(results_data):
+            result = _result.ensure_probabilities()
+            probs = result.probabilities
             if probs is None:
                 continue
-            tgt = result.get('targets')
+            tgt = result.targets
             if tgt is None:
                 continue
             L = min(int(len(tgt)), int(probs.shape[0]))
@@ -168,7 +199,7 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
             one_hot = np.zeros((L, C), dtype=np.float32)
             one_hot[np.arange(L), tgtL] = 1.0
 
-            seq_str = convert_tokens_to_sequence(result['sequence_tokens'])[:L]
+            seq_str = convert_tokens_to_sequence(result.sequence_tokens)[:L]
 
             for cls in classes:
                 lens_map = motifs_by_len.get(int(cls), {})
