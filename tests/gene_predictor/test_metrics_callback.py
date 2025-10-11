@@ -74,16 +74,13 @@ class TestMetricsCallback(unittest.TestCase):
         cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         # Populate model-collected results as the callback no longer re-runs the model
-        with torch.no_grad():
-            preds = logits.argmax(dim=-1)
-            probs = torch.softmax(logits, dim=-1)
         mod._cb_results_data = [
             SequenceResult(
                 sequence_index=0,
                 sequence_tokens=tokens.numpy(),
                 targets=targets.numpy(),
-                predictions=preds[0].numpy(),
-                probabilities=probs[0].numpy(),
+                predictions=logits[0].argmax(dim=-1).numpy(),
+                probabilities=torch.softmax(logits[0], dim=-1).numpy(),
             )
         ]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
@@ -163,16 +160,13 @@ class TestMetricsCallback(unittest.TestCase):
         cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         # Populate model-collected results as the callback no longer re-runs the model
-        with torch.no_grad():
-            preds = logits.argmax(dim=-1)
-            probs = torch.softmax(logits, dim=-1)
         mod._cb_results_data = [
             SequenceResult(
                 sequence_index=0,
                 sequence_tokens=tokens.numpy(),
                 targets=targets.numpy(),
-                predictions=preds[0].numpy(),
-                probabilities=probs[0].numpy(),
+                predictions=logits[0].argmax(dim=-1).numpy(),
+                probabilities=torch.softmax(logits[0], dim=-1).numpy(),
             )
         ]
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)

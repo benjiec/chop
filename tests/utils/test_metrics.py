@@ -149,7 +149,7 @@ class TestGenericMetrics(unittest.TestCase):
 
     def test_no_targets_returns_empty(self):
         seq = encode_sequence('NNNN')
-        results = [SequenceResult(sequence_index=0, sequence_tokens=seq, targets=None, predictions=np.zeros(4, dtype=np.int64))]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=seq, targets=None, predictions=np.zeros(4, dtype=np.int64), probabilities=None)]
         m = self.calc_metrics(results)
         self.assertEqual(m, {})
 
@@ -161,7 +161,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[4:7] = P.START
         targets[10:13] = P.STOP
         predictions = np.copy(targets)
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         # Event-based metrics ignore weights; both START and STOP present
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.STOP, m)
@@ -176,7 +176,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[10:13] = P.START
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[4:7] = P.START  # one TP, one FN
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.START, m)
         self.assertEqual(m[P.START]['tp'], 1)
@@ -195,7 +195,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[20:22] = P.DSS
         predictions = np.zeros_like(targets)
         predictions[5:7] = P.DSS  # TP on first, miss second (FN)
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         m = self.calc_metrics(results, min_weight=1.0)
         self.assertIn(P.DSS, m)
         # Expect at least 1 TP and 1 FN counted on motif-aware windows
@@ -210,7 +210,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[4:7] = P.START
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[5] = P.START  # only middle token predicted
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Window should be counted as TP due to any token rule
         spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.START}
@@ -224,7 +224,7 @@ class TestGenericMetrics(unittest.TestCase):
         targets[3:5] = P.ASS  # 'AG' at [3,4]
         predictions = np.zeros(len(dna), dtype=np.int64)
         predictions[8:10] = P.ASS  # 'TA' at [8,9] (non-motif)
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Expect FN for true 'AG' and no FP for 'TA'
         ev_ass = [e for e in events if e['class_index'] == P.ASS]
@@ -243,7 +243,7 @@ class TestGenericMetrics(unittest.TestCase):
         predictions[4:7] = P.START  # TP at first ATG
         # Predicted-only START at a non-motif window "TTG" near end
         predictions[16:18] = P.START
-        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions)]
+        results = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=predictions, probabilities=np.zeros((len(tokens), len(P.idx_to_cls)), dtype=np.float32))]
         m, events = self.calc_metrics_and_windows(results, min_weight=1.0)
         # Expect TP for first ATG window [4,6] and FN for second [10,12]
         spans = {(e['start'], e['end'], e['classification']) for e in events if e['class_index'] == P.START}
@@ -349,31 +349,26 @@ class TestMetricsValidMask(unittest.TestCase):
 
 
 class TestSequenceResult(unittest.TestCase):
-    def test_ensure_probabilities_from_logits(self):
-        # Simple logits for two classes across three positions
-        logits = np.array([
-            [2.0, 0.0],  # p ~ [0.8808, 0.1192]
-            [0.0, 0.0],  # p = [0.5, 0.5]
-            [0.0, 2.0],  # p ~ [0.1192, 0.8808]
-        ], dtype=np.float32)
-        sr = SequenceResult(
-            sequence_index=0,
-            sequence_tokens=np.zeros(3, dtype=np.int64),
-            targets=np.zeros(3, dtype=np.int64),
-            predictions=None,
-            probabilities=None,
-            logits=logits,
-        )
-        sr2 = sr.ensure_probabilities()
-        self.assertIsNotNone(sr2.probabilities)
-        self.assertIsNone(sr2.logits)
-        # Row-wise softmax check
-        probs = sr2.probabilities
-        self.assertEqual(probs.shape, (3, 2))
-        # Sums to 1
-        np.testing.assert_allclose(np.sum(probs, axis=1), np.ones(3), rtol=1e-6, atol=1e-6)
-        # Symmetry checks
-        self.assertGreater(probs[0, 0], probs[0, 1])
-        self.assertAlmostEqual(probs[1, 0], 0.5, places=6)
-        self.assertGreater(probs[2, 1], probs[2, 0])
+    def test_from_batch_builds_sequence_results(self):
+        # Build tiny batch
+        import torch
+        tokens = torch.tensor([
+            [0, 1, 2],
+            [3, 4, 0],
+        ], dtype=torch.long)
+        targets = torch.tensor([
+            [1, 1, 1],
+            [0, 0, 0],
+        ], dtype=torch.long)
+        logits = torch.zeros((2, 3, 2), dtype=torch.float32)
+        logits[0, :, 1] = 2.0  # class 1 for first sequence
+        logits[1, :, 0] = 2.0  # class 0 for second sequence
+
+        rs = SequenceResult.from_batch(tokens, targets, logits, sequence_index_start=5)
+        self.assertEqual(len(rs), 2)
+        self.assertEqual(rs[0].sequence_index, 5)
+        self.assertEqual(rs[1].sequence_index, 6)
+        # Predictions auto-computed
+        np.testing.assert_array_equal(rs[0].predictions, np.array([1,1,1], dtype=np.int64))
+        np.testing.assert_array_equal(rs[1].predictions, np.array([0,0,0], dtype=np.int64))
 

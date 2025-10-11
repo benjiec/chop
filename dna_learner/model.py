@@ -472,18 +472,13 @@ class GenePredictorModule(pl.LightningModule):
         
         # Provide per-batch predictions to callbacks via module attribute to avoid a second pass
         coll = self._cb_results_data
-        with torch.no_grad():
-            predictions = logits.argmax(dim=-1)
-            probabilities = torch.softmax(logits, dim=-1)
-        B = sequences.size(0)
-        for b in range(B):
-            coll.append(SequenceResult(
-                sequence_index=len(coll),
-                sequence_tokens=sequences[b].detach().cpu().numpy(),
-                targets=targets[b].detach().cpu().numpy(),
-                predictions=predictions[b].detach().cpu().numpy(),
-                probabilities=probabilities[b].detach().cpu().numpy(),
-            ))
+        start_idx = len(coll)
+        coll.extend(SequenceResult.from_batch(
+            sequence_tokens_batch=sequences,
+            targets_batch=targets,
+            logits_batch=logits,
+            sequence_index_start=start_idx,
+        ))
         
         return loss
 

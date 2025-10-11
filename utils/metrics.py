@@ -10,6 +10,7 @@ from utils.constants import GenePredictionClass as P
 from utils.events import normalize_event_motifs_map
 from utils.events import group_motifs_by_length
 from utils.events import convert_tokens_to_sequence
+import torch
 
 
 @dataclass(frozen=True)
@@ -17,25 +18,36 @@ class SequenceResult:
     sequence_index: Optional[int]
     sequence_tokens: np.ndarray
     targets: Optional[np.ndarray]
-    predictions: Optional[np.ndarray]
+    predictions: Optional[np.ndarray] = None
     probabilities: Optional[np.ndarray] = None
-    logits: Optional[np.ndarray] = None
 
-    def ensure_probabilities(self) -> "SequenceResult":
-        if self.probabilities is not None or self.logits is None:
-            return self
-        import numpy as _np
-        x = self.logits - _np.max(self.logits, axis=-1, keepdims=True)
-        ex = _np.exp(x)
-        probs = ex / _np.clip(_np.sum(ex, axis=-1, keepdims=True), 1e-12, None)
-        return SequenceResult(
-            sequence_index=self.sequence_index,
-            sequence_tokens=self.sequence_tokens,
-            targets=self.targets,
-            predictions=self.predictions,
-            probabilities=probs.astype(_np.float32),
-            logits=None,
-        )
+    @staticmethod
+    def from_batch(
+        sequence_tokens_batch: torch.Tensor,
+        targets_batch: Optional[torch.Tensor],
+        logits_batch: torch.Tensor,
+        sequence_index_start: int = 0,
+    ) -> List["SequenceResult"]:
+        """Build a list of SequenceResult from batched tensors/arrays.
+
+        Accepts PyTorch tensors for inputs. Computes predictions and probabilities
+        for the full batch and returns SequenceResult objects (fields stored as numpy arrays).
+        """
+        with torch.no_grad():
+            predictions_t = logits_batch.argmax(dim=-1)
+            probabilities_t = torch.softmax(logits_batch, dim=-1)
+
+        B = int(logits_batch.size(0))
+        results: List[SequenceResult] = []
+        for b in range(B):
+            results.append(SequenceResult(
+                sequence_index=sequence_index_start + b,
+                sequence_tokens=sequence_tokens_batch[b].detach().cpu().numpy(),
+                targets=(targets_batch[b].detach().cpu().numpy() if targets_batch is not None else None),
+                predictions=predictions_t[b].detach().cpu().numpy().astype(np.int64),
+                probabilities=probabilities_t[b].detach().cpu().numpy().astype(np.float32),
+            ))
+        return results
 
     def to_dict(self) -> Dict[str, object]:
         return {
@@ -44,7 +56,6 @@ class SequenceResult:
             'targets': self.targets,
             'predictions': self.predictions,
             'probabilities': self.probabilities,
-            'logits': self.logits,
         }
 
 def _build_valid_mask_for(seq_len: int, mask_like: Optional[Sequence[bool]]) -> np.ndarray:
@@ -179,8 +190,7 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
         per_class_sq_error_sum: Dict[int, float] = {}
         per_class_token_count: Dict[int, int] = {}
 
-        for ridx, _result in enumerate(results_data):
-            result = _result.ensure_probabilities()
+        for ridx, result in enumerate(results_data):
             probs = result.probabilities
             if probs is None:
                 continue
