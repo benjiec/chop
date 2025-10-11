@@ -28,7 +28,7 @@ def load_model(model_path):
     return model
 
 
-def run_test(dataset, model, margin_bp = 200, batch_size = 8):
+def run_test(dataset, model, dss_motifs, margin_bp = 200, batch_size = 8):
 
     # Split dataset
     train_size = int(0.8 * len(dataset))
@@ -67,10 +67,10 @@ def run_test(dataset, model, margin_bp = 200, batch_size = 8):
 
         # Set up metrics callback (no CSV) and invoke epoch end
         # Default to standard DSS motif set for metrics in this utility
-        event_motifs_by_class = build_event_motifs('standard')
+        event_motifs_by_class = build_event_motifs(dss_motifs)
         calc_metrics, _ = event_based_generic_metrics_factory(event_motifs_by_class)
         calc_brier = event_based_brier_factory(event_motifs_by_class)
-        cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=int(margin_bp),
+        cb = MetricsCallback(val_loader, print_per_class_every=1, margin_bp=int(margin_bp),
                              calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=None)
 
         class DummyModule:
@@ -105,6 +105,7 @@ def main():
                        help='Checkpoint path. If relative, it is resolved under <run-dir>/checkpoints/. Absolute paths are accepted.')
     parser.add_argument('--num-windows', type=int, required=True)
     parser.add_argument('--window-stride', type=int, required=True)
+    parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based analysis: standard or dino')
 
     args = parser.parse_args()
 
@@ -122,9 +123,10 @@ def main():
         window=max_seq_len,
         stride=args.window_stride,
         num_windows=args.num_windows,
+        class_weights=model.config["loss"]["class_weights"]
     )
 
-    run_test(dataset, model)
+    run_test(dataset, model, args.dss_motifs)
 
 if __name__ == "__main__":
     main()
