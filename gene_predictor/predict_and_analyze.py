@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
+from utils.metrics import SequenceResult
 from utils.events import build_event_motifs
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from gene_decoder import PredictedSequence
@@ -36,8 +37,11 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                              aggregator: str = 'blend',  # 'blend' | 'max_weight' | 'max_prob'
                              random_prefix_ns: bool = True,
                              random_prefix_min: int = 100,
-                             random_prefix_max: int = 400) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Predict a single sequence (shape (1, L)) and return (preds, probs, logits_raw).
+                             random_prefix_max: int = 400,
+                             targets_b: Optional[torch.Tensor] = None,
+                             sequence_index: Optional[int] = None,
+                             sequence_id: Optional[str] = None) -> Tuple[SequenceResult, Optional[Dict[str, np.ndarray]]]:
+    """Predict a single sequence (shape (1, L)) and return (SequenceResult, layer_attn).
 
     Handles windowed inference and blending when sequence length exceeds model max length.
     """
@@ -64,15 +68,21 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             logits_b, _layer_attn_b = out
         else:
             logits_b = out
-        logits_raw_np = logits_b[0].detach().cpu().numpy()
-        preds_b = torch.argmax(logits_b, dim=-1)[0].cpu().numpy()
-        probs_b = torch.softmax(logits_b, dim=-1)[0].cpu().numpy()
-        # Strip prefix if applied
+        logits_trim = logits_b[0].detach().cpu()
         if pad_len > 0:
-            preds_b = preds_b[pad_len:]
-            probs_b = probs_b[pad_len:]
-            logits_raw_np = logits_raw_np[pad_len:]
-        return preds_b, probs_b, logits_raw_np, _layer_attn_b
+            logits_trim = logits_trim[pad_len:]
+            seq_tokens_b = seq_tokens_b[:, pad_len:]
+        sr_list = SequenceResult.from_batch(
+            sequence_tokens_batch=seq_tokens_b,
+            targets_batch=targets_b if targets_b is not None else None,
+            logits_batch=logits_trim.unsqueeze(0),
+            sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
+        )
+        sr = sr_list[0]
+        # Attach sequence_id
+        if sequence_id is not None:
+            object.__setattr__(sr, 'sequence_id', sequence_id)
+        return sr, _layer_attn_b
 
     else:
         # Windowed inference and blending
@@ -86,7 +96,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             out = model(win_tokens, return_attention=False)
             if isinstance(out, tuple):
                 out = out[0]
-            wl = out[0].detach().cpu().numpy()  # (win_len, C)
+            wl = out[0].detach().cpu().numpy()  # (win_len, C) kept as numpy for blending
             window_logits_np.append(wl)
         # Cap margin to avoid leaving uncovered gaps when stride is small
         eff_margin = int(blending_window_margin_bp)
@@ -120,16 +130,23 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             logits_raw_np = blended_raw
 
         blended = logits_raw_np
-        probs_b = torch.softmax(torch.from_numpy(blended), dim=-1).cpu().numpy()
-        preds_b = np.argmax(probs_b, axis=-1)
 
         # Strip prefix if applied
         if pad_len > 0:
-            preds_b = preds_b[pad_len:]
-            probs_b = probs_b[pad_len:]
             logits_raw_np = logits_raw_np[pad_len:]
+            seq_tokens_b = seq_tokens_b[:, pad_len:]
 
-        return preds_b, probs_b, logits_raw_np, None
+        logits_trim_t = torch.from_numpy(logits_raw_np)
+        sr_list = SequenceResult.from_batch(
+            sequence_tokens_batch=seq_tokens_b,
+            targets_batch=targets_b if targets_b is not None else None,
+            logits_batch=logits_trim_t.unsqueeze(0),
+            sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
+        )
+        sr = sr_list[0]
+        if sequence_id is not None:
+            object.__setattr__(sr, 'sequence_id', sequence_id)
+        return sr, None
 
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -158,12 +175,12 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
 
 def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, log_every: Optional[int] = 10,
                     blending_window_margin_bp: int = 200, aggregator: str = 'blend', random_prefix_ns: bool = True,
-                    random_prefix_min: int = 100, random_prefix_max: int = 400):
-    """Run predictions on test data. Optionally return encoder attention per layer."""
+                    random_prefix_min: int = 100, random_prefix_max: int = 400) -> List[SequenceResult]:
+    """Run predictions on test data. Returns list of SequenceResult. Optionally layer attention per layer (ignored here)."""
     
     print("Running predictions on test data...")
     
-    all_results = []
+    all_results: List[SequenceResult] = []
     predicted_count = 0
 
     max_len = int(model.model.embedding.max_seq_length)
@@ -180,11 +197,19 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
             assert B == 1, "run_predictions expects DataLoader with batch_size == 1"
             for b in range(B):
                 seq_tokens_b = sequences[b:b+1]  # (1, L)
-                targets_b = targets[b].cpu().numpy()
+                targets_b = targets[b].detach().cpu()
                 L = int(seq_tokens_b.size(1))
 
                 # Run per-sequence prediction via helper
-                preds_b, probs_b, logits_raw_np, layer_attn_b = predict_sequence_outputs(
+                seq_np = seq_tokens_b[0].cpu().numpy()
+                # Fetch sequence_id if available
+                ds = data_loader.dataset
+                sequence_id: Optional[str] = None
+                if hasattr(ds, 'contig_ids'):
+                    assert seq_counter < len(ds.contig_ids), "Sequence counter out of range for contig_ids"
+                    sequence_id = ds.contig_ids[seq_counter]
+
+                sr, layer_attn_b = predict_sequence_outputs(
                     model, max_len, seq_tokens_b,
                     device=device,
                     return_attention=False,
@@ -193,50 +218,30 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     random_prefix_ns=random_prefix_ns,
                     random_prefix_min=random_prefix_min,
                     random_prefix_max=random_prefix_max,
+                    targets_b=targets_b,
+                    sequence_index=(batch_idx if B == 1 else 0),
+                    sequence_id=sequence_id,
                 )
 
                 predicted_count += 1
                 if (predicted_count + 1) % log_every == 0:
                     print(f"  Processed {predicted_count + 1} sequences...")
 
-                attn_export = None
-                if return_attention and layer_attn_b:
-                    attn_export = {name: tensor[0].cpu().numpy() for name, tensor in layer_attn_b.items() if tensor is not None}
-
-                seq_np = seq_tokens_b[0].cpu().numpy()
-                # Fetch the sequence_id (accession) from the dataset's contig_ids using global counter, if available
-                ds = data_loader.dataset
-                sequence_id: Optional[str] = None
-                if hasattr(ds, 'contig_ids'):
-                    assert seq_counter < len(ds.contig_ids), "Sequence counter out of range for contig_ids"
-                    sequence_id = ds.contig_ids[seq_counter]
-                result_entry = {
-                    'sequence_index': batch_idx if B == 1 else f"{batch_idx}:{b}",
-                    'sequence_tokens': seq_np,
-                    'targets': targets_b,
-                    'predictions': preds_b,
-                    'probabilities': probs_b,
-                    'logits_raw': logits_raw_np,
-                    'sequence_id': sequence_id,
-                }
-                if return_attention and attn_export is not None:
-                    result_entry['attentions'] = attn_export
-
-                all_results.append(result_entry)
+                all_results.append(sr)
                 seq_counter += 1
             
     print(f"✓ Completed predictions for {len(all_results)} sequences")
     return all_results
 
 
-def save_input_sequences_fasta(results_data: List[Dict], output_path: Path):
+def save_input_sequences_fasta(results_data: List[SequenceResult], output_path: Path):
     """Save input sequences as FASTA file."""
     
     with open(output_path, 'w') as f:
         for result in results_data:
-            seq_idx = result['sequence_index']
-            sequence = convert_tokens_to_sequence(result['sequence_tokens'])
-            sequence_id = result.get('sequence_id')
+            seq_idx = result.sequence_index
+            sequence = convert_tokens_to_sequence(result.sequence_tokens)
+            sequence_id = result.sequence_id
             
             # Write FASTA header and sequence
             if sequence_id:
@@ -350,7 +355,7 @@ def _merge_site_priority_map(length: int, sites: List[Dict]) -> Tuple[List[bool]
     return uppercase, site_at
 
 
-def generate_per_contig_report(results_data: List[Dict], output_path: Path, class_weights: Optional[List[float]] = None,
+def generate_per_contig_report(results_data: List[SequenceResult], output_path: Path, class_weights: Optional[List[float]] = None,
                                line_width: int = 100, ansi_colors: bool = True, events: Optional[List[Dict]] = None):
     """Write one report per contig with colored spans and end-of-line annotations.
 
@@ -375,12 +380,12 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
 
     with open(output_path, 'w') as f:
         for result in results_data:
-            seq_idx = result['sequence_index']
-            sequence = convert_tokens_to_sequence(result['sequence_tokens'])
+            seq_idx = result.sequence_index
+            sequence = convert_tokens_to_sequence(result.sequence_tokens)
             L = len(sequence)
-            targets = result['targets']
-            preds = result['predictions']
-            probs = result['probabilities']
+            targets = result.targets
+            preds = result.predictions
+            probs = result.probabilities
 
             # Build sites from metrics events if provided; otherwise fall back to local derivation
             sites: List[Dict] = []
@@ -442,7 +447,7 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
             uppercase, site_at = _merge_site_priority_map(L, sites)
 
             # Header per sequence (include sequence_id if available)
-            seq_id = result.get('sequence_id')
+            seq_id = result.sequence_id
             if seq_id:
                 f.write(f">{seq_id} sequence_{seq_idx}\n")
             else:
@@ -499,7 +504,7 @@ def generate_per_contig_report(results_data: List[Dict], output_path: Path, clas
     print(f"✓ Per-contig report saved to: {output_path}")
 
 
-def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
+def dump_attention_fragments(results_data: List[SequenceResult], predictions: List[Dict], output_fasta: Path, k: int = 5, window: int = 20):
     """Dump top-k attended sequence fragments around predicted START/STOP sites to FASTA.
 
     FASTA header format:
@@ -508,8 +513,8 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
     """
     with open(output_fasta, 'w') as f:
         # Build sequence map for quick slicing
-        seq_map = {r['sequence_index']: convert_tokens_to_sequence(r['sequence_tokens']) for r in results_data}
-        attn_map = {r['sequence_index']: r.get('attentions') for r in results_data}
+        seq_map = {r.sequence_index: convert_tokens_to_sequence(r.sequence_tokens) for r in results_data}
+        attn_map = {r.sequence_index: r.attentions for r in results_data}
         for p in predictions:
             if p.get('classification') not in ('TP', 'FP'):
                 continue
@@ -544,7 +549,7 @@ def dump_attention_fragments(results_data: List[Dict], predictions: List[Dict], 
                         f.write(f"{frag}\n")
 
 
-def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weights: Optional[List[float]] = None,
+def save_analysis_results(results_data: List[SequenceResult], output_dir: Path, class_weights: Optional[List[float]] = None,
                          line_width: int = 100, ansi_colors: bool = True, events: Optional[List[Dict]] = None):
     """Save analysis results with timestamped filenames (FASTA + per-contig colored report)."""
     
@@ -554,7 +559,7 @@ def save_analysis_results(results_data: List[Dict], output_dir: Path, class_weig
     # Compute dataset hash from sequences to bind FASTA and report
     hasher = hashlib.sha256()
     for result in results_data:
-        seq = convert_tokens_to_sequence(result['sequence_tokens'])
+        seq = convert_tokens_to_sequence(result.sequence_tokens)
         hasher.update(seq.encode('utf-8'))
         hasher.update(b"\n")
     dataset_hash = hasher.hexdigest()[:10]
@@ -669,13 +674,13 @@ def main():
         class_order = [GenePredictionClass.idx_to_cls[i] for i in sorted(GenePredictionClass.idx_to_cls.keys())]
         items = []
         for r in results:
-            seq = convert_tokens_to_sequence(r['sequence_tokens'])
+            seq = convert_tokens_to_sequence(r.sequence_tokens)
             items.append(PredictedSequence(
-                sequence_index=r['sequence_index'],
+                sequence_index=r.sequence_index,
                 sequence=seq,
-                probabilities=r['probabilities'],
+                probabilities=r.probabilities,
                 class_order=class_order,
-                sequence_id=r.get('sequence_id'),
+                sequence_id=r.sequence_id,
             ))
         pkl_path = Path(f"{base_name}_decoder.pickle")
         if not pkl_path.is_absolute():

@@ -18,8 +18,10 @@ class SequenceResult:
     sequence_index: Optional[int]
     sequence_tokens: np.ndarray
     targets: Optional[np.ndarray]
+    sequence_id: Optional[str] = None
     predictions: Optional[np.ndarray] = None
     probabilities: Optional[np.ndarray] = None
+    attentions: Optional[Dict[str, np.ndarray]] = None
 
     @staticmethod
     def from_batch(

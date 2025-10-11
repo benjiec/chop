@@ -35,11 +35,10 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         model = DummyModel(max_len=64, num_classes=3)
         seq_len = 20
         seq = torch.full((1, seq_len), 4, dtype=torch.long)
-        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=True)
-        self.assertEqual(preds.shape[0], seq_len)
-        self.assertEqual(probs.shape, (seq_len, 3))
-        self.assertEqual(logits_raw.shape, (seq_len, 3))
-        self.assertTrue(np.all(preds == 1))
+        sr, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=True)
+        self.assertEqual(sr.predictions.shape[0], seq_len)
+        self.assertEqual(sr.probabilities.shape, (seq_len, 3))
+        self.assertTrue(np.all(sr.predictions == 1))
         self.assertIsInstance(attn, dict)
 
     def test_blended_long_sequence(self):
@@ -68,12 +67,11 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         model = SmallMaxLenModel(max_len=32, num_classes=2)
         seq_len = 101
         seq = torch.full((1, seq_len), 4, dtype=torch.long)
-        preds, probs, logits_raw, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False,
+        sr, attn = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False,
                                                                  blending_window_margin_bp=0)
-        self.assertEqual(preds.shape[0], seq_len)
-        self.assertEqual(probs.shape, (seq_len, 2))
-        self.assertEqual(logits_raw.shape, (seq_len, 2))
-        self.assertTrue(np.all(probs[:, 1] > 0.5))
+        self.assertEqual(sr.predictions.shape[0], seq_len)
+        self.assertEqual(sr.probabilities.shape, (seq_len, 2))
+        self.assertTrue(np.all(sr.probabilities[:, 1] > 0.5))
 
     def test_max_weight_aggregator_and_random_prefix(self):
         class SmallMaxLenModel(torch.nn.Module):
@@ -101,7 +99,7 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         model = SmallMaxLenModel(max_len=32, num_classes=2)
         seq_len = 80
         seq = torch.full((1, seq_len), 4, dtype=torch.long)
-        preds, probs, logits_raw, attn = predict_sequence_outputs(
+        sr, attn = predict_sequence_outputs(
             model,
             model.model.embedding.max_seq_length,
             seq,
@@ -113,14 +111,12 @@ class TestPredictSequenceOutputs(unittest.TestCase):
             random_prefix_min=5,
             random_prefix_max=5,
         )
-        self.assertEqual(preds.shape[0], seq_len)  # prefix trimmed
-        self.assertEqual(probs.shape, (seq_len, 2))
-        self.assertEqual(logits_raw.shape, (seq_len, 2))
-        self.assertEqual(preds.shape[0], seq_len)
-        self.assertEqual(probs.shape, (seq_len, 2))
-        self.assertEqual(logits_raw.shape, (seq_len, 2))
+        self.assertEqual(sr.predictions.shape[0], seq_len)  # prefix trimmed
+        self.assertEqual(sr.probabilities.shape, (seq_len, 2))
+        self.assertEqual(sr.predictions.shape[0], seq_len)
+        self.assertEqual(sr.probabilities.shape, (seq_len, 2))
         # Sanity: probabilities for class 1 should be > 0.5
-        self.assertTrue(np.all(probs[:, 1] > 0.5))
+        self.assertTrue(np.all(sr.probabilities[:, 1] > 0.5))
 
 
 class TestSequenceIdPropagation(unittest.TestCase):
@@ -165,17 +161,16 @@ class TestSequenceIdPropagation(unittest.TestCase):
                                       random_prefix_ns=False)
             self.assertGreaterEqual(len(results), 1)
             r0 = results[0]
-            self.assertIn('sequence_id', r0)
-            self.assertEqual(r0['sequence_id'], 'accX|random')
+            self.assertEqual(r0.sequence_id, 'accX|random')
 
             class_order = ['intergenic', 'gene', 'start']
             items = [
                 PredictedSequence(
-                    sequence_index=r['sequence_index'],
-                    sequence=''.join(['N'] * len(r['sequence_tokens'])),
-                    probabilities=r['probabilities'],
+                    sequence_index=r.sequence_index,
+                    sequence=''.join(['N'] * len(r.sequence_tokens)),
+                    probabilities=r.probabilities,
                     class_order=class_order,
-                    sequence_id=r.get('sequence_id'),
+                    sequence_id=r.sequence_id,
                 ) for r in results
             ]
             out_pkl = fp / "items.pkl"
@@ -239,8 +234,8 @@ class TestWindowedRunPredictions(unittest.TestCase):
         )
         self.assertEqual(len(results), 1)
         r = results[0]
-        self.assertEqual(r['probabilities'].shape[0], seq_len)
-        self.assertEqual(r['predictions'].shape[0], seq_len)
+        self.assertEqual(r.probabilities.shape[0], seq_len)
+        self.assertEqual(r.predictions.shape[0], seq_len)
 
         expected_slices = compute_window_slices(seq_len, window=model_max, stride=model_max // 3)
         self.assertEqual(model.calls, len(expected_slices))
@@ -256,7 +251,7 @@ class TestWindowedRunPredictions(unittest.TestCase):
         blended = blend_logits(seq_len, expected_slices, window_logits, weight_mode='cosine', margin=None)
         v = blended[:, 1]
         expected_p1 = 1.0 / (1.0 + np.exp(-v))
-        np.testing.assert_allclose(r['probabilities'][:, 1], expected_p1, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(r.probabilities[:, 1], expected_p1, rtol=1e-6, atol=1e-6)
 
 
 if __name__ == '__main__':
