@@ -74,7 +74,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             seq_tokens_b = seq_tokens_b[:, pad_len:]
         sr_list = SequenceResult.from_batch(
             sequence_tokens_batch=seq_tokens_b,
-            targets_batch=targets_b if targets_b is not None else None,
+            targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
             logits_batch=logits_trim.unsqueeze(0),
             sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
         )
@@ -139,7 +139,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         logits_trim_t = torch.from_numpy(logits_raw_np)
         sr_list = SequenceResult.from_batch(
             sequence_tokens_batch=seq_tokens_b,
-            targets_batch=targets_b if targets_b is not None else None,
+            targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
             logits_batch=logits_trim_t.unsqueeze(0),
             sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
         )
