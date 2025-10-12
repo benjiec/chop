@@ -114,17 +114,22 @@ def main():
     ce_weight_map = None
     bce_pos_weight_map = None
     bce_neg_weight_map = None
+    pos_weights_by_head_idx = None
+    neg_weights_by_head_idx = None
     event_motifs_by_class = build_event_motifs(dss_set)
 
     # Build event motifs map and custom loss
     if args.loss_type == 'event-ce':
         if not args.disable_class_weights_for_loss:
             ce_weight_map = class_weights_map
+
+        print("using event_based_ce_loss")
         custom_loss = event_based_ce_loss_factory(
             event_motifs_by_class,
             class_weights=ce_weight_map,
             loss_window_margin_bp=margin_bp,
         )
+
     elif args.loss_type == 'event-bce':
         if not args.disable_class_weights_for_loss:
             bce_pos_weight_map = {
@@ -139,12 +144,15 @@ def main():
                 int(P.DSS): float(args.dss_neg_weight),
                 int(P.ASS): float(args.ass_neg_weight),
             }
+
+        print("using event_based_bce_loss")
         custom_loss = event_based_bce_loss_factory(
             event_motifs_by_class,
             pos_weights=bce_pos_weight_map,
             neg_weights=bce_neg_weight_map,
             loss_window_margin_bp=margin_bp,
         )
+
     else:
         # Build head-indexed mapping for clarity and explicitness
         event_motifs_by_head_idx = {
@@ -172,6 +180,7 @@ def main():
             pos_weights_by_head_idx = None
             neg_weights_by_head_idx = None
 
+        print("using event_head_bce_loss")
         custom_loss = event_head_bce_loss_factory(
             event_motifs_by_head_idx,
             pos_weights_by_head_idx=pos_weights_by_head_idx,
@@ -206,6 +215,8 @@ def main():
     config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
     config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
     config['custom']['loss']['ce_class_weights'] = ce_weight_map
+    config['custom']['loss']['event_head_bce_pos_weights'] = pos_weights_by_head_idx
+    config['custom']['loss']['event_head_bce_neg_weights'] = neg_weights_by_head_idx
 
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
