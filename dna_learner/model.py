@@ -259,6 +259,7 @@ class GenePredictorModel(nn.Module):
                  dropout: float = 0.1, 
                  attention_masks: Optional[Dict[int, int]] = None,
                  kmer_size: int = 0,
+                 num_event_heads: int = 0,
                  class_conditional_readouts: Optional[Dict[str, Any]] = None):
 
         super().__init__()
@@ -272,6 +273,7 @@ class GenePredictorModel(nn.Module):
         self.n_heads = n_heads
         self.max_seq_length = max_seq_length
         self.class_conditional_readouts = class_conditional_readouts or {'enabled': False}
+        self.num_event_heads = int(num_event_heads) if num_event_heads is not None else 0
         
         # DNA embedding
         self.embedding = DNAEmbedding(vocab_size=vocab_size, d_model=d_model, max_seq_length=max_seq_length, kmer_size=kmer_size)
@@ -293,6 +295,15 @@ class GenePredictorModel(nn.Module):
         
         # Dropout for regularization
         self.dropout = nn.Dropout(dropout)
+
+        # Optional per-event heads (each outputs a single logit)
+        if self.num_event_heads and self.num_event_heads > 0:
+            self.event_heads = nn.ModuleList([nn.Linear(d_model, 1) for _ in range(self.num_event_heads)])
+        else:
+            self.event_heads = None
+
+        # Cache for latest event logits computed in forward
+        self._latest_computed_event_logits: Optional[torch.Tensor] = None
 
         # Optional generic class-conditional readouts
         self.use_cc_readouts: bool = bool(self.class_conditional_readouts.get('enabled', False))
@@ -318,7 +329,17 @@ class GenePredictorModel(nn.Module):
                     'before': int(e.get('before', 0)),
                     'after': int(e.get('after', 0)),
                     'gap': int(e.get('gap', 0)),
+                    'head_idx': (int(e.get('head_idx')) if e.get('head_idx') is not None else None),
                 })
+
+        # Constructor-time validation: if CC enabled and event heads enabled, require head_idx per CC entry
+        if self.use_cc_readouts and self.cc_entries and self.event_heads is not None:
+            for e in self.cc_entries:
+                if e.get('head_idx', None) is None:
+                    raise AssertionError("CC readouts enabled with event heads: each CC entry must include head_idx")
+                h = int(e['head_idx'])
+                if h < 0 or h >= self.num_event_heads:
+                    raise AssertionError(f"CC entry head_idx {h} out of range for num_event_heads={self.num_event_heads}")
         
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         # Embed DNA sequence
@@ -332,10 +353,20 @@ class GenePredictorModel(nn.Module):
                 layer_attention_weights[f'layer_{i}'] = attention_weights
             else:
                 x = layer(x)  # (batch_size, seq_length, d_model)
-        
+
         # Apply dropout
         x = self.dropout(x)
-        
+
+        # If event heads enabled, compute event logits from the same representation
+        if self.event_heads is not None:
+            event_logits_list = [head(x).squeeze(-1) for head in self.event_heads]  # list of (B,L)
+            if len(event_logits_list) > 0:
+                self._latest_computed_event_logits = torch.stack(event_logits_list, dim=-1)  # (B,L,H)
+            else:
+                self._latest_computed_event_logits = None
+        else:
+            self._latest_computed_event_logits = None
+
         # Classify each position (base logits)
         logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
 
@@ -395,7 +426,15 @@ class GenePredictorModel(nn.Module):
                 attn = torch.where(torch.isnan(attn), torch.zeros_like(attn), attn)
                 c = torch.matmul(attn, v)
                 logit_delta = self.cc_proj[idx](torch.cat([x, c], dim=-1)).squeeze(-1)  # (B,L)
+                # Always apply to classifier logits
                 logits[..., cls_idx] = logits[..., cls_idx] + logit_delta
+
+                # Optionally also apply to event head by head_idx if provided
+                head_idx = entry.get('head_idx', None)
+                if head_idx is not None and self._latest_computed_event_logits is not None:
+                    h = int(head_idx)
+                    if 0 <= h < self._latest_computed_event_logits.size(-1):
+                        self._latest_computed_event_logits[..., h] = self._latest_computed_event_logits[..., h] + logit_delta
         
         if return_attention:
             return logits, layer_attention_weights
@@ -426,6 +465,7 @@ class GenePredictorModule(pl.LightningModule):
             dropout=model_config['dropout'],
             attention_masks=model_config.get('attention_masks'),
             kmer_size=model_config.get('kmer_size', 0),
+            num_event_heads=model_config.get('num_event_heads', 0),
             class_conditional_readouts=model_config.get('class_conditional_readouts')
         )
 
@@ -447,9 +487,12 @@ class GenePredictorModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         sequences, targets = batch
         logits = self.model(sequences)
+        # Retrieve event logits if model produced them
+        event_logits = self.model._latest_computed_event_logits
         
         comp = {}
-        loss = self.custom_loss_fn(sequences, targets, logits, comp)
+        # Call custom loss always with event_logits (may be None)
+        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
         # Expose components for callback aggregation without extra forwards
         self._last_train_components = comp
         
@@ -461,9 +504,10 @@ class GenePredictorModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         sequences, targets = batch
         logits = self.model(sequences)
+        event_logits = self.model._latest_computed_event_logits
         
         comp = {}
-        loss = self.custom_loss_fn(sequences, targets, logits, comp)
+        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
         # Expose components for callback aggregation
         self._last_val_components = comp
         
@@ -521,6 +565,7 @@ def create_base_config(
     attention_masks: Optional[Dict[int, int]] = None,
     kmer_size: int = 0,
     accumulate_grad_batches: Optional[int] = None,
+    num_event_heads: Optional[int] = None,
 ) -> dict:
 
     # Validate d_model is divisible by n_heads
@@ -555,6 +600,9 @@ def create_base_config(
     if accumulate_grad_batches is not None:
         cfg['training']['accumulate_grad_batches'] = int(accumulate_grad_batches)
 
+    if num_event_heads is not None:
+        cfg['model']['num_event_heads'] = int(num_event_heads)
+
     return cfg
 
 
@@ -576,3 +624,21 @@ def set_class_conditional_readout_config(cfg: Dict[str, Any], classidx: int, bef
         'after': int(after),
         'gap': int(gap),
     })
+
+def set_class_conditional_readout_config_with_head(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int, head_idx: Optional[int]) -> None:
+    """
+    Like set_class_conditional_readout_config, but also binds this CC rule to an event head index.
+    """
+    model_cfg = cfg.setdefault('model', {})
+    ccr = model_cfg.setdefault('class_conditional_readouts', {})
+    ccr['enabled'] = True
+    entries = ccr.setdefault('entries', [])
+    e = {
+        'class': int(classidx),
+        'before': int(before),
+        'after': int(after),
+        'gap': int(gap),
+    }
+    if head_idx is not None:
+        e['head_idx'] = int(head_idx)
+    entries.append(e)

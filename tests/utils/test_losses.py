@@ -3,7 +3,7 @@
 import unittest
 import torch
 
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, adjusted_ce_entropy_loss
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, adjusted_ce_entropy_loss, event_head_bce_loss_factory
 from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P
 
@@ -198,6 +198,118 @@ class TestEventBasedCELoss(unittest.TestCase):
         self.assertEqual(comp2.get('event_count'), 4)  # GA span now included
         # Including the worse GA event should increase the mean loss
         self.assertGreater(float(v2.detach().cpu().item()), float(v1.detach().cpu().item()))
+
+    def test_event_head_bce_uses_event_logits(self):
+        dss_set = {'GT'}
+        motifs = build_event_motifs(dss_set)
+        ordered = {
+            0: motifs[int(P.START)],
+            1: motifs[int(P.STOP)],
+            2: motifs[int(P.DSS)],
+            3: motifs[int(P.ASS)],
+        }
+        loss_fn = event_head_bce_loss_factory(ordered)
+        B, L, C, H = 2, 12, len(P.idx_to_cls), 4
+        seq = torch.randint(0, 5, (B, L))
+        logits = torch.randn(B, L, C)
+        event_logits = torch.randn(B, L, H)
+        targets = torch.randint(0, C, (B, L))
+        loss = loss_fn(seq, targets, logits, event_logits, {})
+        self.assertTrue(torch.is_tensor(loss))
+        self.assertEqual(loss.ndim, 0)
+
+
+class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
+    def _ordered_motifs(self):
+        motifs = build_event_motifs({'GT'})
+        return {
+            0: motifs[int(P.START)],
+            1: motifs[int(P.STOP)],
+            2: motifs[int(P.DSS)],
+            3: motifs[int(P.ASS)],
+        }
+
+    def test_margin_excludes_edge_events(self):
+        loss_fn_nomargin = event_head_bce_loss_factory(self._ordered_motifs(), loss_window_margin_bp=0)
+        loss_fn_margin = event_head_bce_loss_factory(self._ordered_motifs(), loss_window_margin_bp=3)
+
+        B, L, C, H = 1, 16, len(P.idx_to_cls), 4
+        # Build sequence with ATG at positions 0..2 (left edge), only START event
+        A, T, G, Cb = 0, 1, 2, 3
+        seq = torch.full((L,), Cb, dtype=torch.long)
+        seq[0:3] = torch.tensor([A, T, G])
+        sequences = torch.stack([seq])
+
+        # Targets: mark START on 0..2
+        # For event-head tests, targets use head indices (0: START here)
+        targets = torch.full((B, L), 99, dtype=torch.long)
+        targets[0, 0:3] = 0
+
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        # event logits: class 0 (START) is wrong/confident negative => high loss without margin
+        event_logits = torch.zeros((B, L, H), dtype=torch.float32)
+        event_logits[0, 0:3, 0] = -5.0
+
+        v_nomargin = float(loss_fn_nomargin(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        v_margin = float(loss_fn_margin(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        # With margin excluding edges, loss should drop to ~0
+        self.assertGreater(v_nomargin, 0.0)
+        self.assertAlmostEqual(v_margin, 0.0, places=8)
+
+    def test_neg_weight_increases_loss_with_mixed_tokens(self):
+        loss_fn_low = event_head_bce_loss_factory(self._ordered_motifs(), pos_weights_by_head_idx={0: 1.0}, neg_weights_by_head_idx={0: 1.0}, loss_window_margin_bp=0)
+        loss_fn_high = event_head_bce_loss_factory(self._ordered_motifs(), pos_weights_by_head_idx={0: 1.0}, neg_weights_by_head_idx={0: 10.0}, loss_window_margin_bp=0)
+
+        B, L, C, H = 1, 20, len(P.idx_to_cls), 4
+        A, T, G, Cb = 0, 1, 2, 3
+        seq = torch.full((L,), Cb, dtype=torch.long)
+        # Two ATGs: one positive span at 4..6, one negative span at 10..12
+        seq[4:7] = torch.tensor([A, T, G])
+        seq[10:13] = torch.tensor([A, T, G])
+        sequences = torch.stack([seq])
+
+        targets = torch.full((B, L), 99, dtype=torch.long)
+        targets[0, 4:7] = 0  # head index 0 represents START
+        # 10..12 remain negatives for START
+
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        event_logits = torch.zeros((B, L, H), dtype=torch.float32)
+        # Positive span predicted somewhat correctly (non-zero loss so weights matter)
+        event_logits[0, 4:7, 0] = 1.0
+        # Negative span predicted as START at moderate confidence
+        event_logits[0, 10:13, 0] = 2.0
+
+        v_low = float(loss_fn_low(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        v_high = float(loss_fn_high(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        self.assertGreater(v_high, v_low)
+
+    def test_alpha_weights_rebalance_between_classes(self):
+        # Two classes contribute with different per-class losses; increasing alpha for the high-loss class should increase total
+        loss_fn_equal = event_head_bce_loss_factory(self._ordered_motifs(), alpha_weights_by_head_idx={0: 1.0, 1: 1.0}, loss_window_margin_bp=0)
+        loss_fn_skew = event_head_bce_loss_factory(self._ordered_motifs(), alpha_weights_by_head_idx={0: 3.0, 1: 1.0}, loss_window_margin_bp=0)
+
+        B, L, C, H = 1, 24, len(P.idx_to_cls), 4
+        A, T, G, Cb = 0, 1, 2, 3
+        seq = torch.full((L,), Cb, dtype=torch.long)
+        # START at 6..8, STOP at 14..16 (choose positions away from edges)
+        seq[6:9] = torch.tensor([A, T, G])
+        seq[14:17] = torch.tensor([T, A, A])  # one STOP codon
+        sequences = torch.stack([seq])
+
+        targets = torch.full((B, L), 99, dtype=torch.long)
+        targets[0, 6:9] = 0  # head index 0: START
+        targets[0, 14:17] = 1  # head index 1: STOP
+
+        logits = torch.zeros((B, L, C), dtype=torch.float32)
+        event_logits = torch.zeros((B, L, H), dtype=torch.float32)
+        # Class 0 (START): wrong/confident negative -> high loss
+        event_logits[0, 6:9, 0] = -5.0
+        # Class 1 (STOP): moderately correct -> mid loss; keep lower magnitude to ensure START dominates
+        event_logits[0, 14:17, 1] = 1.0
+
+        v_equal = float(loss_fn_equal(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        v_skew = float(loss_fn_skew(sequences, targets, logits, event_logits, {}).detach().cpu().item())
+        self.assertGreater(v_skew, v_equal)
 
 
 class TestEventBasedWeightedLosses(unittest.TestCase):

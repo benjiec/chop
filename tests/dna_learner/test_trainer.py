@@ -70,7 +70,7 @@ class TestTrainer(unittest.TestCase):
                 cb_gen,
                 monitor_metric='val_loss',
                 monitor_mode='min',
-                custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
+                custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
             )
             # Sanity checks
             self.assertIsNotNone(model)
@@ -124,7 +124,7 @@ class TestTrainerCustomLossIntegration(unittest.TestCase):
         phase = {'phase': None}
         counts = {'train': 0, 'val': 0}
 
-        def custom_loss(sequences, targets, logits, components_out):
+        def custom_loss(sequences, targets, logits, event_logits, components_out):
             # Count calls by phase set by the callback
             p = phase.get('phase')
             if p in counts:
@@ -171,7 +171,7 @@ class TestCustomLossHook(unittest.TestCase):
 
         call_counts = {"count": 0}
 
-        def custom_loss(sequences, targets, logits, components_out):
+        def custom_loss(sequences, targets, logits, event_logits, components_out):
             call_counts["count"] += 1
             components_out["custom_marker"] = 1.0
             return logits.sum() * 0.0 + torch.tensor(0.42, dtype=logits.dtype, device=logits.device)

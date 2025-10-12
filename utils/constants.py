@@ -41,3 +41,10 @@ class DNAEmbed:
         C: 'C',
         N: 'N'
     }
+
+
+class EventHeadIdx:
+    START = 0
+    STOP = 1
+    DSS = 2
+    ASS = 3

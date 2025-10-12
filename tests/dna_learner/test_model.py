@@ -10,8 +10,10 @@ from dna_learner.model import (
     GenePredictorModel,
     GenePredictorModule,
     create_base_config,
+    set_class_conditional_readout_config_with_head,
 )
 from utils.losses import adjusted_ce_entropy_loss
+from utils.constants import EventHeadIdx as H
 
 
 class TestGenePredictorModel(unittest.TestCase):
@@ -44,6 +46,88 @@ class TestGenePredictorModel(unittest.TestCase):
         self.assertIn('layer_0', attn)
         self.assertEqual(attn['layer_0'].shape, (2, 2, 30, 30))
 
+    def test_model_with_event_heads_outputs_event_logits(self):
+        model = GenePredictorModel(
+            max_seq_length=32,
+            num_classes=5,
+            vocab_size=5,
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            dropout=0.0,
+            attention_masks=None,
+            kmer_size=0,
+            num_event_heads=4,
+        )
+        x = torch.randint(0, 5, (2, 20))
+        logits = model(x)
+        self.assertEqual(logits.shape, (2, 20, 5))
+        ev = getattr(model, '_latest_computed_event_logits', None)
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev.shape, (2, 20, 4))
+
+    def test_cc_readouts_apply_to_event_head_when_head_idx_provided(self):
+        # 4 heads; add CC rule targeting START classifier and head 0
+        model = GenePredictorModel(
+            max_seq_length=20,
+            num_classes=6,
+            vocab_size=5,
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            dropout=0.0,
+            attention_masks=None,
+            kmer_size=0,
+            num_event_heads=4,
+            class_conditional_readouts={
+                'enabled': True,
+                'entries': [
+                    {'class': 2, 'before': 0, 'after': 0, 'gap': 0, 'head_idx': int(H.START)},
+                ]
+            }
+        )
+        x = torch.randint(0, 5, (1, 20))
+        # Zero CC projections, then add bias to enforce predictable delta
+        for proj in model.cc_proj:
+            torch.nn.init.zeros_(proj.weight)
+            torch.nn.init.zeros_(proj.bias)
+        baseline_logits = model(x).detach()
+        baseline_ev = model._latest_computed_event_logits.detach().clone()
+        # Apply bias
+        bias = 0.7
+        model.cc_proj[0].bias.data.fill_(bias)
+        out_logits = model(x).detach()
+        out_ev = model._latest_computed_event_logits.detach()
+        # Classifier class 2 increased by ~bias
+        self.assertTrue(torch.allclose(out_logits[0, :, 2] - baseline_logits[0, :, 2], torch.full((20,), bias), atol=1e-6))
+        # Event head 0 also increased by ~bias
+        self.assertTrue(torch.allclose(out_ev[0, :, int(H.START)] - baseline_ev[0, :, int(H.START)], torch.full((20,), bias), atol=1e-6))
+
+    def test_cc_readouts_require_head_idx_when_event_heads_enabled(self):
+        # Missing head_idx should assert when event heads exist
+        cfg = create_base_config(
+            max_seq_length=16,
+            num_classes=6,
+            class_names=[f'C{i}' for i in range(6)],
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            attention_masks=None,
+            kmer_size=0,
+            batch_size=1,
+        )
+        cfg['model']['num_event_heads'] = 4
+        cfg['model']['class_conditional_readouts'] = {
+            'enabled': True,
+            'entries': [
+                {'class': 2, 'before': 0, 'after': 0, 'gap': 0},  # missing head_idx
+            ]
+        }
+        with self.assertRaises(AssertionError):
+            mod = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,ev,c: l.sum()*0)
+            x = torch.randint(0, 5, (1, 10))
+            _ = mod.model(x)
+
     def test_module_training_step(self):
         config = create_base_config(
             max_seq_length=64,
@@ -59,7 +143,7 @@ class TestGenePredictorModel(unittest.TestCase):
             attention_masks={0: 2},
             kmer_size=0,
         )
-        module = GenePredictorModule(config, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
+        module = GenePredictorModule(config, custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c))
         # Verify d_model adjusted
         self.assertEqual(module.model.embedding.d_model % module.model.transformer_layers[0].n_heads, 0)
         x = torch.randint(0, 5, (2, 40))
@@ -181,12 +265,12 @@ class TestGenePredictorModel(unittest.TestCase):
         cfg['loss']['entropy_lambda'] = 0.0
         # First, set fp_beta=0
         cfg['loss']['fp_beta'] = 0.0
-        mod_no_fp = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=cfg.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg.get('loss',{}).get('fp_beta',0.0), components_out=c))
+        mod_no_fp = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=cfg.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg.get('loss',{}).get('fp_beta',0.0), components_out=c))
         # Now same with fp_beta>0
         cfg2 = dict(cfg)
         cfg2['loss'] = dict(cfg['loss'])
         cfg2['loss']['fp_beta'] = 0.5
-        mod_with_fp = GenePredictorModule(cfg2, custom_loss_fn=lambda s,t,l,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg2.get('loss',{}).get('class_weights'), entropy_lambda=cfg2.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg2.get('loss',{}).get('fp_beta',0.0), components_out=c))
+        mod_with_fp = GenePredictorModule(cfg2, custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg2.get('loss',{}).get('class_weights'), entropy_lambda=cfg2.get('loss',{}).get('entropy_lambda',0.0), fp_beta=cfg2.get('loss',{}).get('fp_beta',0.5), components_out=c))
 
         # Construct logits to create FP toward START on background tokens
         # batch=1, L=4, C=3

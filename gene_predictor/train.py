@@ -12,11 +12,12 @@ from typing import Optional, Dict, Callable
 import pytorch_lightning as pl
 
 from utils.constants import GenePredictionClass as P
+from utils.constants import EventHeadIdx as H
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
-from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory
+from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, event_head_bce_loss_factory
 from utils.events import build_event_motifs
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
-from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config
+from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config, set_class_conditional_readout_config_with_head
 from gene_predictor.metrics_callback import MetricsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
@@ -63,8 +64,8 @@ def main():
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
     # loss selection
-    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce'],
-                        help='Loss type: event-ce (masked cross-entropy) or event-bce (masked BCE per event class)')
+    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce', 'event-head-bce'],
+                        help='Loss type: event-ce (masked cross-entropy), event-bce (masked BCE per event class on main logits), or event-head-bce (masked BCE on separate event heads)')
 
     args = parser.parse_args()
     margin_bp = min(200, args.max_seq_length // 2)
@@ -124,7 +125,7 @@ def main():
             class_weights=ce_weight_map,
             loss_window_margin_bp=margin_bp,
         )
-    else:
+    elif args.loss_type == 'event-bce':
         if not args.disable_class_weights_for_loss:
             bce_pos_weight_map = {
                 int(P.START): float(args.start_weight),
@@ -144,6 +145,39 @@ def main():
             neg_weights=bce_neg_weight_map,
             loss_window_margin_bp=margin_bp,
         )
+    else:
+        # Build head-indexed mapping for clarity and explicitness
+        event_motifs_by_head_idx = {
+            int(H.START): event_motifs_by_class[int(P.START)],
+            int(H.STOP): event_motifs_by_class[int(P.STOP)],
+            int(H.DSS): event_motifs_by_class[int(P.DSS)],
+            int(H.ASS): event_motifs_by_class[int(P.ASS)],
+        }
+        # Defensive checks
+        assert set(event_motifs_by_head_idx.keys()) == {0,1,2,3}, "event_motifs_by_head_idx must have keys 0..3"
+        if not args.disable_class_weights_for_loss:
+            pos_weights_by_head_idx = {
+                int(H.START): float(args.start_weight),
+                int(H.STOP): float(args.stop_weight),
+                int(H.DSS): float(args.dss_weight),
+                int(H.ASS): float(args.ass_weight),
+            }
+            neg_weights_by_head_idx = {
+                int(H.START): float(args.start_neg_weight),
+                int(H.STOP): float(args.stop_neg_weight),
+                int(H.DSS): float(args.dss_neg_weight),
+                int(H.ASS): float(args.ass_neg_weight),
+            }
+        else:
+            pos_weights_by_head_idx = None
+            neg_weights_by_head_idx = None
+
+        custom_loss = event_head_bce_loss_factory(
+            event_motifs_by_head_idx,
+            pos_weights_by_head_idx=pos_weights_by_head_idx,
+            neg_weights_by_head_idx=neg_weights_by_head_idx,
+            loss_window_margin_bp=margin_bp,
+        )
 
     config = create_base_config(
         max_seq_length=args.max_seq_length,
@@ -159,11 +193,13 @@ def main():
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         accumulate_grad_batches=args.accumulate_grad_batches,
+        num_event_heads=(4 if args.loss_type == 'event-head-bce' else None),
     )
 
     if args.enable_cc:
-        set_class_conditional_readout_config(config, int(P.START), int(args.start_before), int(args.start_after), int(args.cc_gap))
-        set_class_conditional_readout_config(config, int(P.STOP), int(args.stop_before), int(args.stop_after), int(args.cc_gap))
+        # Bind CC readouts to both classifier classes and event head indices for START/STOP
+        set_class_conditional_readout_config_with_head(config, int(P.START), int(args.start_before), int(args.start_after), int(args.cc_gap), int(H.START))
+        set_class_conditional_readout_config_with_head(config, int(P.STOP), int(args.stop_before), int(args.stop_after), int(args.cc_gap), int(H.STOP))
 
     config.setdefault('custom', {})
     config['custom'].setdefault('loss', {})
