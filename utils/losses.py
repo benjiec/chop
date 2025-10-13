@@ -348,6 +348,9 @@ def _event_masked_bce_with_logits(
             m = m & center_mask
         if not m.any():
             continue
+        # Record number of included event tokens for this head
+        if components_out is not None:
+            components_out[f'events_head_{int(h)}'] = int(m.sum().detach().cpu().item())
         z = logits_like[:, :, h]
         y = (targets == int(h)).to(dtype=dtype)
         token_w = torch.where(y > 0.5, pos_vec[h], neg_vec[h])
@@ -361,7 +364,9 @@ def _event_masked_bce_with_logits(
             key = f"loss_head_{int(h)}"
             key_w = f"loss_head_{int(h)}_weighted"
             components_out[key] = float(head_loss.detach().cpu().item())
-            components_out[key_w] = float((alpha_weights[h] * head_loss).detach().cpu().item())
+            alpha_h = float(alpha_weights[h].detach().cpu().item())
+            if abs(alpha_h - 1.0) > 1e-12:
+                components_out[key_w] = float((alpha_h * float(components_out[key])))
         total = total + alpha_weights[h] * head_loss
         total_alpha = total_alpha + alpha_weights[h]
 

@@ -338,10 +338,15 @@ class TestEventHeadComponents(unittest.TestCase):
         self.assertTrue(torch.is_tensor(loss))
         # Verify component keys
         self.assertIn('loss_head_0', comps)
+        # head_0 alpha=0.5 -> weighted must be present and scaled
         self.assertIn('loss_head_0_weighted', comps)
         self.assertIn('loss_head_1', comps)
+        # head_1 alpha=1.5 -> weighted must be present and scaled
         self.assertIn('loss_head_1_weighted', comps)
         self.assertIn('loss_event_heads_total', comps)
+        # Event counts recorded per head
+        self.assertIn('events_head_0', comps)
+        self.assertIn('events_head_1', comps)
         # Weighted reflect alpha
         self.assertAlmostEqual(comps['loss_head_0_weighted'], 0.5 * comps['loss_head_0'], places=6)
         self.assertAlmostEqual(comps['loss_head_1_weighted'], 1.5 * comps['loss_head_1'], places=6)
