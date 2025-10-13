@@ -1,7 +1,6 @@
 PYTHONPATH=. python gene_predictor/predict_and_analyze.py \
   --fna-fn data/$1_round0_test_query.fna.gz --tsv-fn data/$1_round0_test_annotations.tsv  \
-  --dss-motifs $2 \
-  --num-contigs $3 \
-  --run-dir $4 \
-  --model-path $5 \
+  --num-contigs $2 \
+  --run-dir $3 \
+  --model-path $4 \
   --write-decoder-input-pkl
