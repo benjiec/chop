@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import json
 import argparse
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Set
 from datetime import datetime
 import hashlib
 import pickle
@@ -39,7 +39,8 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                              random_prefix_max: int = 400,
                              targets_b: Optional[torch.Tensor] = None,
                              sequence_index: Optional[int] = None,
-                             sequence_id: Optional[str] = None) -> Tuple[SequenceResult, Optional[Dict[str, np.ndarray]]]:
+                             sequence_id: Optional[str] = None,
+                             event_motifs_by_class: Optional[Dict[int, Set[str]]] = None) -> Tuple[SequenceResult, Optional[Dict[str, np.ndarray]]]:
     """Predict a single sequence (shape (1, L)) and return (SequenceResult, layer_attn).
 
     Handles windowed inference and blending when sequence length exceeds model max length.
@@ -73,6 +74,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
 
     window_logits_np = []
     _layer_attn_b = None
+    use_event_logits = bool(num_event_heads > 0)
 
     for (s, e) in slices:
         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
@@ -83,7 +85,9 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         else:
             logits_b = out
         wl = logits_b[0].detach().cpu().numpy()  # (win_len, C)
-        if num_event_heads > 0:
+
+        if use_event_logits:
+            print("converting event logits to class logits")
             ev = getattr(getattr(model, 'model', None), '_latest_computed_event_logits', None)
             if not (isinstance(ev, torch.Tensor) and ev.dim() == 3 and int(ev.size(0)) == 1):
                 raise AssertionError("Event-head mode enabled but event logits were not produced by the model")
@@ -113,7 +117,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         seq_tokens_b = seq_tokens_b[:, pad_len:]
 
     logits_trim_t = torch.from_numpy(blended_logits_np)
-    use_event_logits = bool(num_event_heads > 0)
+    # Build class->motifs map from head mapping for masking inside from_batch
     sr_list = SequenceResult.from_batch(
         sequence_tokens_batch=seq_tokens_b,
         targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
@@ -121,6 +125,8 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
         prob_activation=('sigmoid' if use_event_logits else 'softmax'),
         sequence_ids=([sequence_id] if sequence_id is not None else None),
+        event_motifs_by_class=(event_motifs_by_class if use_event_logits else None),
+        event_margin_bp=(int(blending_window_margin_bp) if use_event_logits else None),
     )
     sr = sr_list[0]
 
@@ -153,7 +159,8 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
 
 def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, log_every: Optional[int] = 10,
                     blending_window_margin_bp: int = 200, random_prefix_ns: bool = True,
-                    random_prefix_min: int = 100, random_prefix_max: int = 400) -> List[SequenceResult]:
+                    random_prefix_min: int = 100, random_prefix_max: int = 400,
+                    event_motifs_by_class: Optional[Dict[int, Set[str]]] = None) -> List[SequenceResult]:
     """Run predictions on test data. Returns list of SequenceResult. Optionally layer attention per layer (ignored here)."""
     
     print("Running predictions on test data...")
@@ -198,6 +205,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     targets_b=targets_b,
                     sequence_index=(batch_idx if B == 1 else 0),
                     sequence_id=sequence_id,
+                    event_motifs_by_class=event_motifs_by_class,
                 )
 
                 predicted_count += 1
@@ -609,6 +617,10 @@ def main():
 
     data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
     
+    # Build event motifs once, pass through
+    dss_set = DinoDonorDinucleotides if args.dss_motifs == 'dino' else StandardDonorDinucleotides
+    ev_motifs = build_event_motifs(dss_set)
+
     # Run predictions (with attention if requested)
     results = run_predictions(
         model,
@@ -619,16 +631,13 @@ def main():
         random_prefix_ns=bool(args.random_prefix_ns),
         random_prefix_min=int(args.random_prefix_min),
         random_prefix_max=int(args.random_prefix_max),
+        event_motifs_by_class=ev_motifs,
     )
     
     # Compute metrics and motif-span prediction events for visualization (single call)
     # Build event-driven metrics/brier honoring DSS motifs choice from CLI
-    if args.dss_motifs == 'dino':
-        dss_set = DinoDonorDinucleotides
-    else:
-        dss_set = StandardDonorDinucleotides
-    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(build_event_motifs(dss_set))
-    brier_fn = event_based_brier_factory(build_event_motifs(dss_set))
+    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(ev_motifs)
+    brier_fn = event_based_brier_factory(ev_motifs)
     generic, events = calc_metrics_with_windows(results, min_weight=1.0)
     
     # Brier score on final results

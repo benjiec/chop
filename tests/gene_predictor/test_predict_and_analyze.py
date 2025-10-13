@@ -129,8 +129,21 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         seq[0,14] = 2; seq[0,15] = 1
         seq[0, 2] = 0; seq[0, 3] = 2
 
-        sr, _ = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False,
-                                          blending_window_margin_bp=0)
+        event_motifs_by_class = {
+            int(P.START): {'ATG'},
+            int(P.STOP): {'TAA'},
+            int(P.DSS): {'GT'},
+            int(P.ASS): {'AG'},
+        }
+        sr, _ = predict_sequence_outputs(
+            model,
+            model.model.embedding.max_seq_length,
+            seq,
+            device='cpu',
+            return_attention=False,
+            blending_window_margin_bp=0,
+            event_motifs_by_class=event_motifs_by_class,
+        )
         # Verify event-only probabilities and predictions
         pr = sr.probabilities
         # START 5..7 should be >0.5; non-event positions NaN

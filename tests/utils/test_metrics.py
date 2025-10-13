@@ -376,19 +376,30 @@ class TestSequenceResult(unittest.TestCase):
 class TestSequenceResultSigmoidMasking(unittest.TestCase):
     def test_from_batch_sigmoid_and_nan_masking(self):
         import torch
-        tokens = torch.randint(0, 5, (1, 6))
+        # Build tokens for sequence: N N A T N N  => positions 2..3 form motif 'AT'
+        tokens = torch.tensor([[4, 4, 0, 1, 4, 4]], dtype=torch.long)
         logits = torch.zeros((1, 6, 3), dtype=torch.float32)
         logits[0, 2:4, 1] = 3.0  # only positions 2..3 have non-zero logits for class 1
         # Softmax: no NaNs
         rs_soft = SequenceResult.from_batch(tokens, None, logits, sequence_index_start=0, prob_activation='softmax')
         self.assertFalse(np.isnan(rs_soft[0].probabilities).any())
-        # Sigmoid: non-logit rows become NaN
-        rs_sig = SequenceResult.from_batch(tokens, None, logits, sequence_index_start=0, prob_activation='sigmoid')
+        # Sigmoid with event motifs for class 1 only: non-event positions for class 1 become NaN
+        event_motifs = {1: {'AT'}}
+        rs_sig = SequenceResult.from_batch(
+            tokens,
+            None,
+            logits,
+            sequence_index_start=0,
+            prob_activation='sigmoid',
+            event_motifs_by_class=event_motifs,
+            event_margin_bp=0,
+        )
         probs = rs_sig[0].probabilities
-        self.assertTrue(np.all(np.isnan(probs[0, :])))
-        self.assertTrue(np.all(np.isnan(probs[1, :])))
-        self.assertTrue(np.all(np.isnan(probs[4, :])))
-        self.assertTrue(np.all(np.isnan(probs[5, :])))
+        # Class 1: only positions 2 and 3 should be finite
+        self.assertTrue(np.isnan(probs[0, 1]))
+        self.assertTrue(np.isnan(probs[1, 1]))
         self.assertGreater(probs[2, 1], 0.9)
         self.assertGreater(probs[3, 1], 0.9)
+        self.assertTrue(np.isnan(probs[4, 1]))
+        self.assertTrue(np.isnan(probs[5, 1]))
 

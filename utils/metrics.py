@@ -10,6 +10,7 @@ from utils.constants import GenePredictionClass as P
 from utils.events import normalize_event_motifs_map
 from utils.events import group_motifs_by_length
 from utils.events import convert_tokens_to_sequence
+from utils.events import build_event_masks, build_center_mask
 import torch
 
 
@@ -31,6 +32,8 @@ class SequenceResult:
         sequence_index_start: int = 0,
         prob_activation: str = 'softmax',
         sequence_ids: Optional[Sequence[Optional[str]]] = None,
+        event_motifs_by_class: Optional[Dict[int, Set[str]]] = None,
+        event_margin_bp: Optional[int] = None,
     ) -> List["SequenceResult"]:
         """Build a list of SequenceResult from batched tensors/arrays.
 
@@ -39,24 +42,34 @@ class SequenceResult:
         """
         with torch.no_grad():
             predictions_t = logits_batch.argmax(dim=-1)
-            if str(prob_activation).lower() == 'sigmoid':
+            is_sigmoid = (str(prob_activation).lower() == 'sigmoid')
+            if is_sigmoid:
                 probabilities_t = torch.sigmoid(logits_batch)
-                # Set positions without any logits (all-zero across classes) to NaN
-                has_logit = (logits_batch != 0).any(dim=-1)  # (B, L)
-                probabilities_t = probabilities_t.masked_fill(~has_logit.unsqueeze(-1), float('nan'))
             else:
                 probabilities_t = torch.softmax(logits_batch, dim=-1)
 
         B = int(logits_batch.size(0))
         results: List[SequenceResult] = []
         for b in range(B):
+            probs_b = probabilities_t[b]
+            # Optional per-class NaN masking outside event spans when using sigmoid
+            if (str(prob_activation).lower() == 'sigmoid') and (event_motifs_by_class is not None):
+                tokens_b = sequence_tokens_batch[b:b+1]
+                L = int(tokens_b.size(1))
+                masks = build_event_masks(tokens_b, event_motifs_by_class)
+                center = build_center_mask(1, L, int(event_margin_bp) if event_margin_bp is not None else 0, device=tokens_b.device)[0]
+                for cls_id, mask in masks.items():
+                    mask1 = (mask[0] & center)  # (L,)
+                    inv = ~mask1
+                    # Set outside-event positions to NaN for this class
+                    probs_b[inv, int(cls_id)] = float('nan')
             results.append(SequenceResult(
                 sequence_index=sequence_index_start + b,
                 sequence_tokens=sequence_tokens_batch[b].detach().cpu().numpy(),
                 targets=(targets_batch[b].detach().cpu().numpy() if targets_batch is not None else None),
                 sequence_id=(sequence_ids[b] if (sequence_ids is not None and b < len(sequence_ids)) else None),
                 predictions=predictions_t[b].detach().cpu().numpy().astype(np.int64),
-                probabilities=probabilities_t[b].detach().cpu().numpy().astype(np.float32),
+                probabilities=probs_b.detach().cpu().numpy().astype(np.float32),
             ))
         return results
 
