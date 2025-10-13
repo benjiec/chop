@@ -202,13 +202,8 @@ class TestEventBasedCELoss(unittest.TestCase):
     def test_event_head_bce_uses_event_logits(self):
         dss_set = {'GT'}
         motifs = build_event_motifs(dss_set)
-        ordered = {
-            0: motifs[int(P.START)],
-            1: motifs[int(P.STOP)],
-            2: motifs[int(P.DSS)],
-            3: motifs[int(P.ASS)],
-        }
-        loss_fn = event_head_bce_loss_factory(ordered)
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
+        loss_fn = event_head_bce_loss_factory(motifs, head_class_ids=head_class_ids)
         B, L, C, H = 2, 12, len(P.idx_to_cls), 4
         seq = torch.randint(0, 5, (B, L))
         logits = torch.randn(B, L, C)
@@ -220,18 +215,13 @@ class TestEventBasedCELoss(unittest.TestCase):
 
 
 class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
-    def _ordered_motifs(self):
-        motifs = build_event_motifs({'GT'})
-        return {
-            0: motifs[int(P.START)],
-            1: motifs[int(P.STOP)],
-            2: motifs[int(P.DSS)],
-            3: motifs[int(P.ASS)],
-        }
+    def _motifs(self):
+        return build_event_motifs({'GT'})
 
     def test_margin_excludes_edge_events(self):
-        loss_fn_nomargin = event_head_bce_loss_factory(self._ordered_motifs(), loss_window_margin_bp=0)
-        loss_fn_margin = event_head_bce_loss_factory(self._ordered_motifs(), loss_window_margin_bp=3)
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
+        loss_fn_nomargin = event_head_bce_loss_factory(self._motifs(), head_class_ids=head_class_ids, loss_window_margin_bp=0)
+        loss_fn_margin = event_head_bce_loss_factory(self._motifs(), head_class_ids=head_class_ids, loss_window_margin_bp=3)
 
         B, L, C, H = 1, 16, len(P.idx_to_cls), 4
         # Build sequence with ATG at positions 0..2 (left edge), only START event
@@ -257,8 +247,9 @@ class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
         self.assertAlmostEqual(v_margin, 0.0, places=8)
 
     def test_neg_weight_increases_loss_with_mixed_tokens(self):
-        loss_fn_low = event_head_bce_loss_factory(self._ordered_motifs(), pos_weights_by_head_idx={0: 1.0}, neg_weights_by_head_idx={0: 1.0}, loss_window_margin_bp=0)
-        loss_fn_high = event_head_bce_loss_factory(self._ordered_motifs(), pos_weights_by_head_idx={0: 1.0}, neg_weights_by_head_idx={0: 10.0}, loss_window_margin_bp=0)
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
+        loss_fn_low = event_head_bce_loss_factory(self._motifs(), pos_weights_by_class={P.START: 1.0}, neg_weights_by_class={P.START: 1.0}, head_class_ids=head_class_ids, loss_window_margin_bp=0)
+        loss_fn_high = event_head_bce_loss_factory(self._motifs(), pos_weights_by_class={P.START: 1.0}, neg_weights_by_class={P.START: 10.0}, head_class_ids=head_class_ids, loss_window_margin_bp=0)
 
         B, L, C, H = 1, 20, len(P.idx_to_cls), 4
         A, T, G, Cb = 0, 1, 2, 3
@@ -269,7 +260,7 @@ class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
         sequences = torch.stack([seq])
 
         targets = torch.full((B, L), 99, dtype=torch.long)
-        targets[0, 4:7] = 0  # head index 0 represents START
+        targets[0, 4:7] = P.START  # class id for START
         # 10..12 remain negatives for START
 
         logits = torch.zeros((B, L, C), dtype=torch.float32)
@@ -285,8 +276,9 @@ class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
 
     def test_alpha_weights_rebalance_between_classes(self):
         # Two classes contribute with different per-class losses; increasing alpha for the high-loss class should increase total
-        loss_fn_equal = event_head_bce_loss_factory(self._ordered_motifs(), alpha_weights_by_head_idx={0: 1.0, 1: 1.0}, loss_window_margin_bp=0)
-        loss_fn_skew = event_head_bce_loss_factory(self._ordered_motifs(), alpha_weights_by_head_idx={0: 3.0, 1: 1.0}, loss_window_margin_bp=0)
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
+        loss_fn_equal = event_head_bce_loss_factory(self._motifs(), alpha_weights_by_class={P.START: 1.0, P.STOP: 1.0}, head_class_ids=head_class_ids, loss_window_margin_bp=0)
+        loss_fn_skew = event_head_bce_loss_factory(self._motifs(), alpha_weights_by_class={P.START: 3.0, P.STOP: 1.0}, head_class_ids=head_class_ids, loss_window_margin_bp=0)
 
         B, L, C, H = 1, 24, len(P.idx_to_cls), 4
         A, T, G, Cb = 0, 1, 2, 3
@@ -297,8 +289,8 @@ class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
         sequences = torch.stack([seq])
 
         targets = torch.full((B, L), 99, dtype=torch.long)
-        targets[0, 6:9] = 0  # head index 0: START
-        targets[0, 14:17] = 1  # head index 1: STOP
+        targets[0, 6:9] = P.START
+        targets[0, 14:17] = P.STOP
 
         logits = torch.zeros((B, L, C), dtype=torch.float32)
         event_logits = torch.zeros((B, L, H), dtype=torch.float32)
@@ -317,7 +309,8 @@ class TestEventHeadComponents(unittest.TestCase):
         import torch
         from utils.losses import event_head_bce_loss_factory
         # Simple batch: one sequence, length 6, two heads
-        tokens = torch.tensor([[0, 1, 2, 3, 0, 1]], dtype=torch.long)
+        # Sequence with START 'ATG' at 0..2 and STOP 'TAA' at 3..5
+        tokens = torch.tensor([[0, 1, 2, 1, 0, 0]], dtype=torch.long)
         targets = torch.tensor([[0, 0, 1, 1, 0, 1]], dtype=torch.long)
         # Event logits: head0 strong on first half, head1 strong on second half
         ev = torch.zeros((1, 6, 2), dtype=torch.float32)
@@ -326,10 +319,11 @@ class TestEventHeadComponents(unittest.TestCase):
         # Map head0 to class 0 (motif 'A'), head1 to class 1 (motif 'T')
         motifs_by_head = {0: {'A'}, 1: {'T'}}
         loss_fn = event_head_bce_loss_factory(
-            motifs_by_head,
-            pos_weights_by_head_idx={0: 1.0, 1: 1.0},
-            neg_weights_by_head_idx={0: 1.0, 1: 1.0},
-            alpha_weights_by_head_idx={0: 0.5, 1: 1.5},
+            {int(P.START): {'ATG'}, int(P.STOP): {'TAA'}},
+            pos_weights_by_class={P.START: 1.0, P.STOP: 1.0},
+            neg_weights_by_class={P.START: 1.0, P.STOP: 1.0},
+            alpha_weights_by_class={P.START: 0.5, P.STOP: 1.5},
+            head_class_ids=[int(P.START), int(P.STOP)],
             loss_window_margin_bp=0,
         )
         comps = {}
@@ -350,6 +344,56 @@ class TestEventHeadComponents(unittest.TestCase):
         # Weighted reflect alpha
         self.assertAlmostEqual(comps['loss_head_0_weighted'], 0.5 * comps['loss_head_0'], places=6)
         self.assertAlmostEqual(comps['loss_head_1_weighted'], 1.5 * comps['loss_head_1'], places=6)
+
+
+class TestEventHeadClassHeadMismatch(unittest.TestCase):
+    def test_event_head_bce_respects_head_to_class_mapping(self):
+        # This test asserts that when head indices differ from class ids,
+        # the event-head BCE should still treat START/STOP tokens as positives
+        # for the corresponding heads. With the current implementation (y = targets == h),
+        # this expectation will fail, causing the test to fail as intended.
+        import torch
+        from utils.losses import event_head_bce_loss_factory
+        from utils.constants import GenePredictionClass as P
+
+        # Build a simple sequence with one START (ATG) and one STOP (TAA)
+        A, T, G, C = 0, 1, 2, 3
+        seq = [C, C,  A, T, G,  C, C,  T, A, A,  C, C]  # ATG at 2..4, TAA at 7..9
+        sequences = torch.tensor([seq], dtype=torch.long)
+        L = len(seq)
+
+        # Targets labeled by CLASS IDS (START=2, STOP=4)
+        targets = torch.zeros((1, L), dtype=torch.long)
+        targets[0, 2:5] = P.START
+        targets[0, 7:10] = P.STOP
+
+        # Two heads: 0 -> START motifs, 1 -> STOP motifs (head indices do NOT match class ids)
+        motifs_by_head = {
+            0: {'ATG'},
+            1: {'TAA'},
+        }
+
+        # Event logits (B, L, H): make heads strongly correct on their spans
+        ev = torch.zeros((1, L, 2), dtype=torch.float32)
+        ev[0, 2:5, 0] = 5.0   # head 0 on START span
+        ev[0, 7:10, 1] = 5.0  # head 1 on STOP span
+
+        # Classifier logits are unused by this loss, but required by signature
+        Cn = len(P.idx_to_cls)
+        logits = torch.zeros((1, L, Cn), dtype=torch.float32)
+
+        head_class_ids = [int(P.START), int(P.STOP)]
+        # Provide class-keyed motifs and head_class_ids
+        motifs_by_class = {
+            int(P.START): {'ATG'},
+            int(P.STOP): {'TAA'},
+        }
+        loss_fn = event_head_bce_loss_factory(motifs_by_class, head_class_ids=head_class_ids, loss_window_margin_bp=0)
+        loss = loss_fn(sequences, targets, logits, ev, {})
+
+        # Expect low loss if mapping is done from head->class, but current code compares to head idx,
+        # so this assertion should fail.
+        self.assertLess(float(loss.detach().cpu().item()), 0.1)
 
 
 class TestEventBasedWeightedLosses(unittest.TestCase):

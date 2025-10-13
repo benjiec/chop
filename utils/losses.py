@@ -309,12 +309,13 @@ def _event_masked_bce_with_logits(
     *,
     sequences: torch.Tensor,
     targets: torch.Tensor,
-    per_head_event_masks: Dict[int, torch.Tensor],
     logits_like: torch.Tensor,  # shape (B, L, H)
-    pos_vec: Optional[torch.Tensor],
-    neg_vec: Optional[torch.Tensor],
-    center_mask: Optional[torch.Tensor] = None,
-    alpha_weights: Optional[torch.Tensor] = None,
+    event_motifs_by_class: Dict[int, Iterable[str]],
+    head_class_ids: Sequence[int],
+    pos_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    neg_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    alpha_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    loss_window_margin_bp: Optional[int] = None,
     components_out: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
     """Compute event-masked BCEWithLogits for per-head logits in logits_like.
@@ -328,19 +329,43 @@ def _event_masked_bce_with_logits(
     dtype = logits_like.dtype
     B, L, H = logits_like.shape
 
-    # Defaults
-    if pos_vec is None:
-        pos_vec = torch.ones(H, device=device, dtype=dtype)
-    if neg_vec is None:
-        neg_vec = torch.ones(H, device=device, dtype=dtype)
-    if alpha_weights is None:
-        alpha_weights = torch.ones(H, device=device, dtype=dtype)
+    # Normalize motifs and build masks per class
+    normalized_motifs: Dict[int, set[str]] = {}
+    for c, motifs in event_motifs_by_class.items():
+        normalized_motifs[int(c)] = set(str(mm).upper() for mm in motifs)
+    event_masks_by_class: Dict[int, torch.Tensor] = build_event_masks(sequences, normalized_motifs)
+
+    # Optional edge masking
+    center_mask = None
+    if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
+        center_mask = build_center_mask(B, L, int(loss_window_margin_bp), device=device)
+
+    # Helper to read class-indexed weight mapping with default 1.0
+    def get_weight_for_class(spec: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]], cls_id: int) -> float:
+        if spec is None:
+            return 1.0
+        if isinstance(spec, dict):
+            if int(cls_id) in spec and spec[int(cls_id)] is not None:
+                return float(spec[int(cls_id)])
+            # also allow string keys
+            key = str(int(cls_id))
+            if key in spec and spec[key] is not None:
+                return float(spec[key])
+            return 1.0
+        # sequence-like: index by class id if in range, else default
+        try:
+            v = spec[int(cls_id)]
+            return 1.0 if v is None else float(v)
+        except Exception:
+            return 1.0
 
     total = logits_like.sum() * 0.0
     total_alpha = torch.zeros((), device=device, dtype=dtype)
 
+    # Iterate heads, build mask and weights per head based on mapped class id
     for h in range(H):
-        mask = per_head_event_masks.get(h)
+        cls_for_head = int(head_class_ids[h]) if h < len(head_class_ids) else -1
+        mask = event_masks_by_class.get(int(cls_for_head))
         if mask is None:
             continue
         m = mask
@@ -352,8 +377,11 @@ def _event_masked_bce_with_logits(
         if components_out is not None:
             components_out[f'events_head_{int(h)}'] = int(m.sum().detach().cpu().item())
         z = logits_like[:, :, h]
-        y = (targets == int(h)).to(dtype=dtype)
-        token_w = torch.where(y > 0.5, pos_vec[h], neg_vec[h])
+        y = (targets == cls_for_head).to(dtype=dtype)
+        pos_w_h = get_weight_for_class(pos_weights_by_class, cls_for_head)
+        neg_w_h = get_weight_for_class(neg_weights_by_class, cls_for_head)
+        alpha_h = get_weight_for_class(alpha_weights_by_class, cls_for_head)
+        token_w = torch.where(y > 0.5, torch.tensor(pos_w_h, device=device, dtype=dtype), torch.tensor(neg_w_h, device=device, dtype=dtype))
         # Masked mean BCEWithLogits
         bce = torch.nn.functional.binary_cross_entropy_with_logits(z, y, reduction='none')
         w = token_w * m.to(dtype)
@@ -364,11 +392,10 @@ def _event_masked_bce_with_logits(
             key = f"loss_head_{int(h)}"
             key_w = f"loss_head_{int(h)}_weighted"
             components_out[key] = float(head_loss.detach().cpu().item())
-            alpha_h = float(alpha_weights[h].detach().cpu().item())
             if abs(alpha_h - 1.0) > 1e-12:
-                components_out[key_w] = float((alpha_h * float(components_out[key])))
-        total = total + alpha_weights[h] * head_loss
-        total_alpha = total_alpha + alpha_weights[h]
+                components_out[key_w] = float(alpha_h * components_out[key])
+        total = total + torch.tensor(alpha_h, device=device, dtype=dtype) * head_loss
+        total_alpha = total_alpha + torch.tensor(alpha_h, device=device, dtype=dtype)
 
     loss_total = total / torch.clamp(total_alpha, min=1.0)
     if components_out is not None:
@@ -377,11 +404,12 @@ def _event_masked_bce_with_logits(
 
 
 def event_head_bce_loss_factory(
-    event_motifs_by_head_idx: Dict[int, Iterable[str]],
+    event_motifs_by_class: Dict[int, Iterable[str]],
+    head_class_ids: Sequence[int],
     *,
-    pos_weights_by_head_idx: Optional[Union[Sequence[Optional[float]], Dict[int, Optional[float]]]] = None,
-    neg_weights_by_head_idx: Optional[Union[Sequence[Optional[float]], Dict[int, Optional[float]]]] = None,
-    alpha_weights_by_head_idx: Optional[Union[Sequence[Optional[float]], Dict[int, Optional[float]]]] = None,
+    pos_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    neg_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    alpha_weights_by_class: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     loss_window_margin_bp: Optional[int] = None,
 ):
     """
@@ -389,70 +417,22 @@ def event_head_bce_loss_factory(
 
     Returns a callable (sequences, targets, logits, event_logits, components_out) -> scalar loss.
     """
-    # Expect head-indexed motifs; normalize only motifs to uppercase
-    normalized_motifs: Dict[int, set[str]] = {}
-    for h, motifs in event_motifs_by_head_idx.items():
-        normalized_motifs[int(h)] = set(str(mm).upper() for mm in motifs)
-
-    # Note: event-head weights are indexed by head-id 0..H-1, not GenePredictionClass ids.
-    # We therefore normalize them inside loss_fn once H is known.
-
     def loss_fn(sequences, targets, logits, event_logits, components_out: Dict[str, Any]):
         if event_logits is None:
             # Connected zero with same device
             return logits.sum() * 0.0
-        device = event_logits.device
-        B, L, H = event_logits.shape
-
-        # Build class-specific event masks
-        event_masks: Dict[int, torch.Tensor] = build_event_masks(sequences, normalized_motifs)
-
-        # Optional edge masking
-        center_mask = None
-        if loss_window_margin_bp is not None and int(loss_window_margin_bp) > 0:
-            center_mask = build_center_mask(B, L, int(loss_window_margin_bp), device=device)
-
-        # Normalize per-head weight specifications to tensors length H
-        def normalize_head_weights(src: Optional[Union[Sequence[Optional[float]], Dict[int, Optional[float]]]], default_value: float = 1.0) -> torch.Tensor:
-            vec = torch.full((H,), float(default_value), device=device, dtype=event_logits.dtype)
-            if src is None:
-                return vec
-            if isinstance(src, dict):
-                for k, v in src.items():
-                    if v is None:
-                        continue
-                    try:
-                        idx = int(k)
-                    except Exception:
-                        continue
-                    if 0 <= idx < H:
-                        vec[idx] = float(v)
-            else:
-                # Sequence-like
-                for i, w in enumerate(list(src)[:H]):
-                    if w is None:
-                        continue
-                    vec[i] = float(w)
-            return vec
-
-        pos_v = normalize_head_weights(pos_weights_by_head_idx, 1.0)
-        neg_v = normalize_head_weights(neg_weights_by_head_idx, 1.0)
-        alp_v = normalize_head_weights(alpha_weights_by_head_idx, 1.0)
-
         loss = _event_masked_bce_with_logits(
             sequences=sequences,
             targets=targets,
-            per_head_event_masks=event_masks,
             logits_like=event_logits,
-            pos_vec=pos_v,
-            neg_vec=neg_v,
-            center_mask=center_mask,
-            alpha_weights=alp_v,
+            event_motifs_by_class=event_motifs_by_class,
+            head_class_ids=head_class_ids,
+            pos_weights_by_class=pos_weights_by_class,
+            neg_weights_by_class=neg_weights_by_class,
+            alpha_weights_by_class=alpha_weights_by_class,
+            loss_window_margin_bp=loss_window_margin_bp,
             components_out=components_out,
         )
-
-        if components_out is not None:
-            components_out['event_count_total'] = int(sum(int(m.sum().detach().cpu().item()) for m in event_masks.values()))
         return loss
 
     return loss_fn

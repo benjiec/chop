@@ -606,28 +606,14 @@ def create_base_config(
     return cfg
 
 
-def set_class_conditional_readout_config(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int) -> None:
+def set_class_conditional_readout_config_with_head(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int, head_idx: Optional[int]) -> None:
     """
     Enable and set a class-conditional readout entry on the config.
 
     - cfg: configuration dict produced by create_base_config
     - classidx: integer class index (use utils.constants.GenePredictionClass)
     - before/after/gap: integer window parameters
-    """
-    model_cfg = cfg.setdefault('model', {})
-    ccr = model_cfg.setdefault('class_conditional_readouts', {})
-    ccr['enabled'] = True
-    entries = ccr.setdefault('entries', [])
-    entries.append({
-        'class': int(classidx),
-        'before': int(before),
-        'after': int(after),
-        'gap': int(gap),
-    })
-
-def set_class_conditional_readout_config_with_head(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int, head_idx: Optional[int]) -> None:
-    """
-    Like set_class_conditional_readout_config, but also binds this CC rule to an event head index.
+    - also binds this CC rule to an event head index.
     """
     model_cfg = cfg.setdefault('model', {})
     ccr = model_cfg.setdefault('class_conditional_readouts', {})

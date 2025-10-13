@@ -20,8 +20,7 @@ from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from utils.metrics import SequenceResult
-from utils.events import build_event_motifs
-from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
+ 
 from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits, window_weights
@@ -62,19 +61,15 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         stride = max(max_seq_len // 3, 1) if L > max_seq_len else max_seq_len
     slices = compute_window_slices(L, window=max_seq_len, stride=stride)
 
-    # For event-head mode, build event-based logits per window to blend once
+    # For event-head mode, prefer passed-in mappings; fallback to model config for compatibility
+    head_class_ids = None
     cfg = getattr(model, 'config', {})
-    mcfg = cfg.get('model', {}) if isinstance(cfg, dict) else {}
     ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
-    num_event_heads = int(mcfg.get('num_event_heads') or 0)
-    motifs_by_head = ccfg.get('event_motifs_by_head_idx') if isinstance(ccfg, dict) else None
-    head_to_class = ccfg.get('head_to_class_id') if isinstance(ccfg, dict) else None
-    if num_event_heads > 0 and (motifs_by_head is None or head_to_class is None):
-        raise AssertionError("Event-head mode requires 'custom.event_motifs_by_head_idx' and 'custom.head_to_class_id' in config")
+    head_class_ids = ccfg.get('head_class_ids') if isinstance(ccfg, dict) else None
 
     window_logits_np = []
     _layer_attn_b = None
-    use_event_logits = bool(num_event_heads > 0)
+    use_event_logits = bool(head_class_ids)
 
     for (s, e) in slices:
         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
@@ -93,8 +88,8 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             el = build_event_window_logits(
                 seq_window_tokens=win_tokens,
                 event_logits_window=ev,
-                event_motifs_by_head_idx={int(k): set(v) for k, v in motifs_by_head.items()},
-                head_to_class_id={int(k): int(v) for k, v in head_to_class.items()},
+                event_motifs_by_class={int(k): set(v) for k, v in event_motifs_by_class.items()},
+                head_class_ids=[int(x) for x in head_class_ids],
                 num_classes=int(wl.shape[-1]),
                 margin_bp=int(blending_window_margin_bp),
             )
@@ -593,7 +588,7 @@ def main():
     parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
     parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
-    parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based analysis: standard or dino')
+    # Removed dss-motifs override; use motifs saved in model config
     
     args = parser.parse_args()
 
@@ -616,9 +611,10 @@ def main():
 
     data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
     
-    # Build event motifs once, pass through
-    dss_set = DinoDonorDinucleotides if args.dss_motifs == 'dino' else StandardDonorDinucleotides
-    ev_motifs = build_event_motifs(dss_set)
+    # Use motifs and head mapping saved with the trained model configuration
+    cfg = getattr(model, 'config', {})
+    ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
+    event_motifs_by_class = ccfg.get('event_motifs_by_class')
 
     # Run predictions (with attention if requested)
     results = run_predictions(
@@ -630,13 +626,13 @@ def main():
         random_prefix_ns=bool(args.random_prefix_ns),
         random_prefix_min=int(args.random_prefix_min),
         random_prefix_max=int(args.random_prefix_max),
-        event_motifs_by_class=ev_motifs,
+        event_motifs_by_class=event_motifs_by_class,
     )
     
     # Compute metrics and motif-span prediction events for visualization (single call)
     # Build event-driven metrics/brier honoring DSS motifs choice from CLI
-    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(ev_motifs)
-    brier_fn = event_based_brier_factory(ev_motifs)
+    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(event_motifs_by_class)
+    brier_fn = event_based_brier_factory(event_motifs_by_class)
     generic, events = calc_metrics_with_windows(results, min_weight=1.0)
     
     # Brier score on final results

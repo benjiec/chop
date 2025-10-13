@@ -121,8 +121,8 @@ def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
 def build_event_window_logits(
     seq_window_tokens: torch.Tensor,
     event_logits_window: torch.Tensor,
-    event_motifs_by_head_idx: Dict[int, Set[str]],
-    head_to_class_id: Dict[int, int],
+    event_motifs_by_class: Dict[int, Set[str]],
+    head_class_ids: Sequence[int],
     num_classes: int,
     margin_bp: Optional[int] = 0,
 ) -> np.ndarray:
@@ -136,8 +136,9 @@ def build_event_window_logits(
     B, L, H = int(event_logits_window.shape[0]), int(event_logits_window.shape[1]), int(event_logits_window.shape[2])
     device = seq_window_tokens.device
 
-    per_head_masks_t = build_event_masks(seq_window_tokens, {int(h): set(str(m).upper() for m in motifs)
-                                                             for h, motifs in event_motifs_by_head_idx.items()})
+    # Build class masks once
+    per_class_masks_t = build_event_masks(seq_window_tokens, {int(c): set(str(m).upper() for m in motifs)
+                                                             for c, motifs in event_motifs_by_class.items()})
     center_mask_t = build_center_mask(1, L, int(margin_bp) if margin_bp is not None else 0, device=device)
     center_mask_1d = center_mask_t[0]
 
@@ -145,13 +146,13 @@ def build_event_window_logits(
     ev_np = event_logits_window[0].detach().cpu().numpy()
 
     for h in range(H):
-        cls_id = int(head_to_class_id.get(int(h), -1))
+        cls_id = int(head_class_ids[h]) if h < len(head_class_ids) else -1
         if cls_id < 0 or cls_id >= int(num_classes):
             continue
-        mh_t = per_head_masks_t.get(int(h))
-        if mh_t is None:
+        mc_t = per_class_masks_t.get(int(cls_id))
+        if mc_t is None:
             continue
-        mask = (mh_t[0] & center_mask_1d).detach().cpu().numpy()
+        mask = (mc_t[0] & center_mask_1d).detach().cpu().numpy()
         if not mask.any():
             continue
         wl[mask, cls_id] = ev_np[mask, h].astype(np.float32)

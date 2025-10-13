@@ -91,18 +91,13 @@ class TestPredictSequenceOutputs(unittest.TestCase):
                 self.config = {
                     'model': {'num_event_heads': 4},
                     'custom': {
-                        'event_motifs_by_head_idx': {
-                            int(H.START): ['ATG'],
-                            int(H.STOP): ['TAA'],
-                            int(H.DSS): ['GT'],
-                            int(H.ASS): ['AG'],
+                        'event_motifs_by_class': {
+                            int(P.START): ['ATG'],
+                            int(P.STOP): ['TAA'],
+                            int(P.DSS): ['GT'],
+                            int(P.ASS): ['AG'],
                         },
-                        'head_to_class_id': {
-                            int(H.START): int(P.START),
-                            int(H.STOP): int(P.STOP),
-                            int(H.DSS): int(P.DSS),
-                            int(H.ASS): int(P.ASS),
-                        },
+                        'head_class_ids': [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)],
                     },
                 }
             def forward(self, x, return_attention: bool = False):

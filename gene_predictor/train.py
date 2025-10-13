@@ -17,7 +17,7 @@ from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, event_head_bce_loss_factory
 from utils.events import build_event_motifs
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
-from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config, set_class_conditional_readout_config_with_head
+from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config_with_head
 from gene_predictor.metrics_callback import MetricsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
@@ -154,37 +154,31 @@ def main():
         )
 
     else:
-        # Build head-indexed mapping for clarity and explicitness
-        event_motifs_by_head_idx = {
-            int(H.START): event_motifs_by_class[int(P.START)],
-            int(H.STOP): event_motifs_by_class[int(P.STOP)],
-            int(H.DSS): event_motifs_by_class[int(P.DSS)],
-            int(H.ASS): event_motifs_by_class[int(P.ASS)],
-        }
-        # Defensive checks
-        assert set(event_motifs_by_head_idx.keys()) == {0,1,2,3}, "event_motifs_by_head_idx must have keys 0..3"
+        # Event-head BCE using class-keyed maps and explicit head_class_ids order
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
         if not args.disable_class_weights_for_loss:
-            pos_weights_by_head_idx = {
-                int(H.START): float(args.start_weight),
-                int(H.STOP): float(args.stop_weight),
-                int(H.DSS): float(args.dss_weight),
-                int(H.ASS): float(args.ass_weight),
+            pos_weights_by_class = {
+                int(P.START): float(args.start_weight),
+                int(P.STOP): float(args.stop_weight),
+                int(P.DSS): float(args.dss_weight),
+                int(P.ASS): float(args.ass_weight),
             }
-            neg_weights_by_head_idx = {
-                int(H.START): float(args.start_neg_weight),
-                int(H.STOP): float(args.stop_neg_weight),
-                int(H.DSS): float(args.dss_neg_weight),
-                int(H.ASS): float(args.ass_neg_weight),
+            neg_weights_by_class = {
+                int(P.START): float(args.start_neg_weight),
+                int(P.STOP): float(args.stop_neg_weight),
+                int(P.DSS): float(args.dss_neg_weight),
+                int(P.ASS): float(args.ass_neg_weight),
             }
         else:
-            pos_weights_by_head_idx = None
-            neg_weights_by_head_idx = None
+            pos_weights_by_class = None
+            neg_weights_by_class = None
 
         print("using event_head_bce_loss")
         custom_loss = event_head_bce_loss_factory(
-            event_motifs_by_head_idx,
-            pos_weights_by_head_idx=pos_weights_by_head_idx,
-            neg_weights_by_head_idx=neg_weights_by_head_idx,
+            event_motifs_by_class,
+            head_class_ids,
+            pos_weights_by_class=pos_weights_by_class,
+            neg_weights_by_class=neg_weights_by_class,
             loss_window_margin_bp=margin_bp,
         )
 
@@ -215,19 +209,13 @@ def main():
     config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
     config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
     config['custom']['loss']['ce_class_weights'] = ce_weight_map
-    config['custom']['loss']['event_head_bce_pos_weights'] = pos_weights_by_head_idx
-    config['custom']['loss']['event_head_bce_neg_weights'] = neg_weights_by_head_idx
+    config['custom']['loss']['event_head_bce_pos_weights'] = pos_weights_by_class
+    config['custom']['loss']['event_head_bce_neg_weights'] = neg_weights_by_class
 
-    # Persist event-head mappings when enabled, for inference routing
+    # Persist motifs map always; head mapping only in event-head mode
+    config['custom']['event_motifs_by_class'] = {int(k): sorted(list(v)) for k, v in event_motifs_by_class.items()}
     if args.loss_type == 'event-head-bce':
-        config['custom']['event_motifs_by_head_idx'] = {int(k): sorted(list(v)) for k, v in event_motifs_by_head_idx.items()}
-        # Use EventHeadIdx constants to map to GenePredictionClass ids
-        config['custom']['head_to_class_id'] = {
-            int(H.START): int(P.START),
-            int(H.STOP): int(P.STOP),
-            int(H.DSS): int(P.DSS),
-            int(H.ASS): int(P.ASS),
-        }
+        config['custom']['head_class_ids'] = head_class_ids
 
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
