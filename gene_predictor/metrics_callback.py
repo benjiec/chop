@@ -120,7 +120,7 @@ class MetricsCallback(pl.Callback):
                 'f1': f1,
             }
 
-        macro_f1 = float(np.median(f1_values)) if f1_values else 0.0
+        macro_f1 = float(np.mean(f1_values)) if f1_values else 0.0
         pl_module.log('val_f1', macro_f1, prog_bar=True, on_epoch=True)
 
         # Brier score (overall + per-class)
