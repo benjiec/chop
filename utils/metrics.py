@@ -253,7 +253,11 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
                 idx = np.where(included_positions)[0]
                 if idx.size == 0:
                     continue
-                se_c = (probsL[idx, int(cls)] - one_hot[idx, int(cls)]) ** 2
+                pcls = probsL[idx, int(cls)]
+                valid = np.isfinite(pcls)
+                if not valid.any():
+                    continue
+                se_c = (pcls[valid] - one_hot[idx[valid], int(cls)]) ** 2
                 per_class_sq_error_sum[int(cls)] = per_class_sq_error_sum.get(int(cls), 0.0) + float(np.sum(se_c))
                 per_class_token_count[int(cls)] = per_class_token_count.get(int(cls), 0) + int(se_c.shape[0])
 

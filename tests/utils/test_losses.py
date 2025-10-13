@@ -312,6 +312,41 @@ class TestEventHeadBCEWeightsAndMargin(unittest.TestCase):
         self.assertGreater(v_skew, v_equal)
 
 
+class TestEventHeadComponents(unittest.TestCase):
+    def test_per_head_components_recorded(self):
+        import torch
+        from utils.losses import event_head_bce_loss_factory
+        # Simple batch: one sequence, length 6, two heads
+        tokens = torch.tensor([[0, 1, 2, 3, 0, 1]], dtype=torch.long)
+        targets = torch.tensor([[0, 0, 1, 1, 0, 1]], dtype=torch.long)
+        # Event logits: head0 strong on first half, head1 strong on second half
+        ev = torch.zeros((1, 6, 2), dtype=torch.float32)
+        ev[0, :3, 0] = 3.0
+        ev[0, 3:, 1] = 2.0
+        # Map head0 to class 0 (motif 'A'), head1 to class 1 (motif 'T')
+        motifs_by_head = {0: {'A'}, 1: {'T'}}
+        loss_fn = event_head_bce_loss_factory(
+            motifs_by_head,
+            pos_weights_by_head_idx={0: 1.0, 1: 1.0},
+            neg_weights_by_head_idx={0: 1.0, 1: 1.0},
+            alpha_weights_by_head_idx={0: 0.5, 1: 1.5},
+            loss_window_margin_bp=0,
+        )
+        comps = {}
+        # Factory signature: (sequences, targets, logits, event_logits, components_out)
+        loss = loss_fn(tokens, targets, torch.zeros((1,6,2)), ev, comps)
+        self.assertTrue(torch.is_tensor(loss))
+        # Verify component keys
+        self.assertIn('loss_head_0', comps)
+        self.assertIn('loss_head_0_weighted', comps)
+        self.assertIn('loss_head_1', comps)
+        self.assertIn('loss_head_1_weighted', comps)
+        self.assertIn('loss_event_heads_total', comps)
+        # Weighted reflect alpha
+        self.assertAlmostEqual(comps['loss_head_0_weighted'], 0.5 * comps['loss_head_0'], places=6)
+        self.assertAlmostEqual(comps['loss_head_1_weighted'], 1.5 * comps['loss_head_1'], places=6)
+
+
 class TestEventBasedWeightedLosses(unittest.TestCase):
     def test_weighted_ce_increases_when_high_ce_class_weight_is_higher(self):
         # Sequence with START at 0..2 and STOP at 5..7

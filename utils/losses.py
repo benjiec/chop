@@ -309,19 +309,20 @@ def _event_masked_bce_with_logits(
     *,
     sequences: torch.Tensor,
     targets: torch.Tensor,
-    per_class_event_masks: Dict[int, torch.Tensor],
+    per_head_event_masks: Dict[int, torch.Tensor],
     logits_like: torch.Tensor,  # shape (B, L, H)
     pos_vec: Optional[torch.Tensor],
     neg_vec: Optional[torch.Tensor],
     center_mask: Optional[torch.Tensor] = None,
     alpha_weights: Optional[torch.Tensor] = None,
+    components_out: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
-    """Compute event-masked BCEWithLogits for per-class logits in logits_like.
+    """Compute event-masked BCEWithLogits for per-head logits in logits_like.
 
-    - logits_like[..., h] is the raw logit for event class h
-    - per_class_event_masks[h] selects positions to include for class h
-    - pos_vec/neg_vec are per-class positive/negative weights (length H)
-    - alpha_weights weights each class term in the final average
+    - logits_like[..., h] is the raw logit for event head h
+    - per_head_event_masks[h] selects positions to include for head h
+    - pos_vec/neg_vec are per-head positive/negative weights (length H)
+    - alpha_weights weights each head term in the final average
     """
     device = logits_like.device
     dtype = logits_like.dtype
@@ -339,7 +340,7 @@ def _event_masked_bce_with_logits(
     total_alpha = torch.zeros((), device=device, dtype=dtype)
 
     for h in range(H):
-        mask = per_class_event_masks.get(h)
+        mask = per_head_event_masks.get(h)
         if mask is None:
             continue
         m = mask
@@ -354,11 +355,20 @@ def _event_masked_bce_with_logits(
         bce = torch.nn.functional.binary_cross_entropy_with_logits(z, y, reduction='none')
         w = token_w * m.to(dtype)
         denom = torch.clamp(w.sum(), min=1.0)
-        cls_loss = (bce * w).sum() / denom
-        total = total + alpha_weights[h] * cls_loss
+        head_loss = (bce * w).sum() / denom
+        # Record per-head loss components if requested
+        if components_out is not None:
+            key = f"loss_head_{int(h)}"
+            key_w = f"loss_head_{int(h)}_weighted"
+            components_out[key] = float(head_loss.detach().cpu().item())
+            components_out[key_w] = float((alpha_weights[h] * head_loss).detach().cpu().item())
+        total = total + alpha_weights[h] * head_loss
         total_alpha = total_alpha + alpha_weights[h]
 
-    return total / torch.clamp(total_alpha, min=1.0)
+    loss_total = total / torch.clamp(total_alpha, min=1.0)
+    if components_out is not None:
+        components_out['loss_event_heads_total'] = float(loss_total.detach().cpu().item())
+    return loss_total
 
 
 def event_head_bce_loss_factory(
@@ -427,12 +437,13 @@ def event_head_bce_loss_factory(
         loss = _event_masked_bce_with_logits(
             sequences=sequences,
             targets=targets,
-            per_class_event_masks=event_masks,
+            per_head_event_masks=event_masks,
             logits_like=event_logits,
             pos_vec=pos_v,
             neg_vec=neg_v,
             center_mask=center_mask,
             alpha_weights=alp_v,
+            components_out=components_out,
         )
 
         if components_out is not None:

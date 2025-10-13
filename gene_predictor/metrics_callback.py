@@ -10,7 +10,7 @@ from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
 
 
-def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None) -> None:
+def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None, components: dict | None = None) -> None:
     if run_dir is None:
         return
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -44,6 +44,17 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
             add('f1', name, vals.get('f1'))
         if 'brier' in vals:
             add('brier', name, vals.get('brier'))
+
+    # Include components (flat) if provided
+    if components:
+        for k, v in components.items():
+            rows.append([
+                int(trainer.current_epoch) if trainer is not None else 0,
+                'val',
+                str(k),
+                '',
+                _safe_float(v),
+            ])
 
     with csv_path.open('a', newline='') as f:
         writer = csv.writer(f)
@@ -153,8 +164,16 @@ class MetricsCallback(pl.Callback):
                 val_loss = float(trainer.callback_metrics.get('val_loss')) if 'val_loss' in trainer.callback_metrics else None
             except Exception:
                 val_loss = None
+        # Gather components from module if available
+        components = getattr(pl_module, '_last_val_components', None)
+        # Print selected components (per-head losses) if present
+        if components and self.print_per_class_every:
+            head_keys = [k for k in components.keys() if str(k).startswith('loss_head_')]
+            for k in sorted(head_keys):
+                print(k, '%.6f' % float(components[k]))
+
         if self.run_dir is not None:
-            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss)
+            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss, components)
 
 
 class DualMetricEarlyStopping(pl.Callback):

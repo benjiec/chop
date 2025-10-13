@@ -87,7 +87,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         wl = logits_b[0].detach().cpu().numpy()  # (win_len, C)
 
         if use_event_logits:
-            print("converting event logits to class logits")
             ev = getattr(getattr(model, 'model', None), '_latest_computed_event_logits', None)
             if not (isinstance(ev, torch.Tensor) and ev.dim() == 3 and int(ev.size(0)) == 1):
                 raise AssertionError("Event-head mode enabled but event logits were not produced by the model")
