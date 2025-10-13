@@ -90,8 +90,6 @@ class GeneAnnotation:
     exons: List[Tuple[int, int]]  # 0-based half-open [start, end)
 
 
-
-
 def _load_fasta(fasta_path: str) -> Dict[str, str]:
     records: Dict[str, str] = {}
     sid = None

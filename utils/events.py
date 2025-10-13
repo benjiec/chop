@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 from typing import Dict, Iterable, Optional, Sequence, Set, Union
+import numpy as np
+import torch
 
 import torch
 
@@ -114,6 +116,47 @@ def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
         int(P.DSS): set(m.upper() for m in dss_motifs),
         int(P.ASS): set(m.upper() for m in ConventionalAcceptorDinucleotides),
     }
+
+
+def build_event_window_logits(
+    seq_window_tokens: torch.Tensor,
+    event_logits_window: torch.Tensor,
+    event_motifs_by_head_idx: Dict[int, Set[str]],
+    head_to_class_id: Dict[int, int],
+    num_classes: int,
+    margin_bp: Optional[int] = 0,
+) -> np.ndarray:
+    """Build a (win_len, num_classes) array of per-class LOGITS for a single window.
+
+    For each head h mapped to class c, copy the event head logits into column c at
+    positions included by the event mask (and center mask). Other positions remain 0.
+    """
+    assert isinstance(seq_window_tokens, torch.Tensor) and seq_window_tokens.dim() == 2 and int(seq_window_tokens.size(0)) == 1
+    assert isinstance(event_logits_window, torch.Tensor) and event_logits_window.dim() == 3 and int(event_logits_window.size(0)) == 1
+    B, L, H = int(event_logits_window.shape[0]), int(event_logits_window.shape[1]), int(event_logits_window.shape[2])
+    device = seq_window_tokens.device
+
+    per_head_masks_t = build_event_masks(seq_window_tokens, {int(h): set(str(m).upper() for m in motifs)
+                                                             for h, motifs in event_motifs_by_head_idx.items()})
+    center_mask_t = build_center_mask(1, L, int(margin_bp) if margin_bp is not None else 0, device=device)
+    center_mask_1d = center_mask_t[0]
+
+    wl = np.zeros((L, int(num_classes)), dtype=np.float32)
+    ev_np = event_logits_window[0].detach().cpu().numpy()
+
+    for h in range(H):
+        cls_id = int(head_to_class_id.get(int(h), -1))
+        if cls_id < 0 or cls_id >= int(num_classes):
+            continue
+        mh_t = per_head_masks_t.get(int(h))
+        if mh_t is None:
+            continue
+        mask = (mh_t[0] & center_mask_1d).detach().cpu().numpy()
+        if not mask.any():
+            continue
+        wl[mask, cls_id] = ev_np[mask, h].astype(np.float32)
+
+    return wl
 
 
 def normalize_class_weight_mapping(

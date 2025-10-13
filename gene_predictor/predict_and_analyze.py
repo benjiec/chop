@@ -24,9 +24,9 @@ from utils.events import build_event_motifs
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
-from utils.windowing import compute_window_slices, blend_logits
-from utils.windowing import window_weights
+from utils.windowing import compute_window_slices, blend_logits, window_weights
 from utils.constants import DNAEmbed
+from utils.events import build_event_window_logits
 
 
 def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
@@ -34,7 +34,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                              device: str = 'cpu',
                              return_attention: bool = False,
                              blending_window_margin_bp: int = 200,
-                             aggregator: str = 'blend',  # 'blend' | 'max_weight' | 'max_prob'
                              random_prefix_ns: bool = True,
                              random_prefix_min: int = 100,
                              random_prefix_max: int = 400,
@@ -57,96 +56,75 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             seq_tokens_b = torch.cat([pad, seq_tokens_b], dim=1)
             L = int(seq_tokens_b.size(1))
 
-    # Normalize aggregator: default to 'blend' if unrecognized
-    if aggregator not in ('blend', 'max_weight', 'max_prob'):
-        aggregator = 'blend'
+    # Unified windowed inference and blending (single slice if short)
+    if stride is None:
+        stride = max(max_seq_len // 3, 1) if L > max_seq_len else max_seq_len
+    slices = compute_window_slices(L, window=max_seq_len, stride=stride)
 
-    if L <= max_seq_len:
-        _layer_attn_b = None
-        out = model(seq_tokens_b, return_attention=return_attention)
-        if return_attention and isinstance(out, tuple) and len(out) == 2:
+    # For event-head mode, build event-based logits per window to blend once
+    cfg = getattr(model, 'config', {})
+    mcfg = cfg.get('model', {}) if isinstance(cfg, dict) else {}
+    ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
+    num_event_heads = int(mcfg.get('num_event_heads') or 0)
+    motifs_by_head = ccfg.get('event_motifs_by_head_idx') if isinstance(ccfg, dict) else None
+    head_to_class = ccfg.get('head_to_class_id') if isinstance(ccfg, dict) else None
+    if num_event_heads > 0 and (motifs_by_head is None or head_to_class is None):
+        raise AssertionError("Event-head mode requires 'custom.event_motifs_by_head_idx' and 'custom.head_to_class_id' in config")
+
+    window_logits_np = []
+    _layer_attn_b = None
+
+    for (s, e) in slices:
+        win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
+        want_attn = bool(return_attention and len(slices) == 1)
+        out = model(win_tokens, return_attention=want_attn)
+        if want_attn and isinstance(out, tuple):
             logits_b, _layer_attn_b = out
         else:
             logits_b = out
-        logits_trim = logits_b[0].detach().cpu()
-        if pad_len > 0:
-            logits_trim = logits_trim[pad_len:]
-            seq_tokens_b = seq_tokens_b[:, pad_len:]
-        sr_list = SequenceResult.from_batch(
-            sequence_tokens_batch=seq_tokens_b,
-            targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
-            logits_batch=logits_trim.unsqueeze(0),
-            sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
-        )
-        sr = sr_list[0]
-        # Attach sequence_id
-        if sequence_id is not None:
-            object.__setattr__(sr, 'sequence_id', sequence_id)
-        return sr, _layer_attn_b
-
-    else:
-        # Windowed inference and blending
-        if stride is None:
-            # Default stride: one-third overlap windows
-            stride = max(max_seq_len // 3, 1)
-        slices = compute_window_slices(L, window=max_seq_len, stride=stride)
-        window_logits_np = []
-        for (s, e) in slices:
-            win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
-            out = model(win_tokens, return_attention=False)
-            if isinstance(out, tuple):
-                out = out[0]
-            wl = out[0].detach().cpu().numpy()  # (win_len, C) kept as numpy for blending
+        wl = logits_b[0].detach().cpu().numpy()  # (win_len, C)
+        if num_event_heads > 0:
+            ev = getattr(getattr(model, 'model', None), '_latest_computed_event_logits', None)
+            if not (isinstance(ev, torch.Tensor) and ev.dim() == 3 and int(ev.size(0)) == 1):
+                raise AssertionError("Event-head mode enabled but event logits were not produced by the model")
+            el = build_event_window_logits(
+                seq_window_tokens=win_tokens,
+                event_logits_window=ev,
+                event_motifs_by_head_idx={int(k): set(v) for k, v in motifs_by_head.items()},
+                head_to_class_id={int(k): int(v) for k, v in head_to_class.items()},
+                num_classes=int(wl.shape[-1]),
+                margin_bp=int(blending_window_margin_bp),
+            )
+            window_logits_np.append(el)
+        else:
             window_logits_np.append(wl)
-        # Cap margin to avoid leaving uncovered gaps when stride is small
-        eff_margin = int(blending_window_margin_bp)
+
+    # Cap margin to avoid leaving uncovered gaps when stride is small
+    # If only a single window, do not exclude edges
+    eff_margin = 0 if len(slices) == 1 else int(blending_window_margin_bp)
+    if eff_margin > 0:
         eff_margin = max(0, min(eff_margin, max(0, stride // 2 - 1)))
 
-        if aggregator in ('max_weight', 'max_prob'):
-            # Build per-position choices from overlapping windows
-            num_classes = int(window_logits_np[0].shape[-1])
-            logits_raw_np = np.zeros((L, num_classes), dtype=np.float32)
-            weight_sums = np.zeros((L,), dtype=np.float32)
-            for (s, e), wl in zip(slices, window_logits_np):
-                win_len = e - s
-                w = window_weights(win_len, mode='cosine', margin=eff_margin)
-                if aggregator == 'max_weight':
-                    # At each position, choose window with highest weight
-                    for i in range(win_len):
-                        pos = s + i
-                        if w[i] >= weight_sums[pos]:
-                            logits_raw_np[pos, :] = wl[i, :]
-                            weight_sums[pos] = w[i]
-                else:  # max_prob
-                    # Choose window with highest top-class logit
-                    top_vals = wl.max(axis=1)
-                    for i in range(win_len):
-                        pos = s + i
-                        if top_vals[i] >= weight_sums[pos]:
-                            logits_raw_np[pos, :] = wl[i, :]
-                            weight_sums[pos] = top_vals[i]
-        else:
-            blended_raw = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=eff_margin, exclude_edges=True)
-            logits_raw_np = blended_raw
+    blended_logits_np = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=eff_margin, exclude_edges=True)
 
-        blended = logits_raw_np
+    # Strip prefix if applied
+    if pad_len > 0:
+        blended_logits_np = blended_logits_np[pad_len:]
+        seq_tokens_b = seq_tokens_b[:, pad_len:]
 
-        # Strip prefix if applied
-        if pad_len > 0:
-            logits_raw_np = logits_raw_np[pad_len:]
-            seq_tokens_b = seq_tokens_b[:, pad_len:]
+    logits_trim_t = torch.from_numpy(blended_logits_np)
+    use_event_logits = bool(num_event_heads > 0)
+    sr_list = SequenceResult.from_batch(
+        sequence_tokens_batch=seq_tokens_b,
+        targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
+        logits_batch=logits_trim_t.unsqueeze(0),
+        sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
+        prob_activation=('sigmoid' if use_event_logits else 'softmax'),
+        sequence_ids=([sequence_id] if sequence_id is not None else None),
+    )
+    sr = sr_list[0]
 
-        logits_trim_t = torch.from_numpy(logits_raw_np)
-        sr_list = SequenceResult.from_batch(
-            sequence_tokens_batch=seq_tokens_b,
-            targets_batch=(targets_b.unsqueeze(0) if targets_b is not None else None),
-            logits_batch=logits_trim_t.unsqueeze(0),
-            sequence_index_start=int(sequence_index) if sequence_index is not None else 0,
-        )
-        sr = sr_list[0]
-        if sequence_id is not None:
-            object.__setattr__(sr, 'sequence_id', sequence_id)
-        return sr, None
+    return sr, _layer_attn_b
 
 
 def load_trained_model(model_path: Path, device='cpu'):
@@ -174,7 +152,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
 
 
 def run_predictions(model, data_loader, device='cpu', return_attention: bool = False, log_every: Optional[int] = 10,
-                    blending_window_margin_bp: int = 200, aggregator: str = 'blend', random_prefix_ns: bool = True,
+                    blending_window_margin_bp: int = 200, random_prefix_ns: bool = True,
                     random_prefix_min: int = 100, random_prefix_max: int = 400) -> List[SequenceResult]:
     """Run predictions on test data. Returns list of SequenceResult. Optionally layer attention per layer (ignored here)."""
     
@@ -214,7 +192,6 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     device=device,
                     return_attention=False,
                     blending_window_margin_bp=blending_window_margin_bp,
-                    aggregator=aggregator,
                     random_prefix_ns=random_prefix_ns,
                     random_prefix_min=random_prefix_min,
                     random_prefix_max=random_prefix_max,
@@ -602,8 +579,7 @@ def main():
     parser.add_argument('--line-width', type=int, default=100, help='Number of base pairs per line in the report (.txt)')
     parser.add_argument('--no-ansi-colors', dest='ansi_colors', action='store_false', help='Disable ANSI colors in the report')
     parser.set_defaults(ansi_colors=True)
-    # New options for blending/windowing behavior
-    parser.add_argument('--aggregator', type=str, default='blend', choices=['blend', 'max_weight', 'max_prob'], help='Window aggregation mode')
+    # Blending/windowing behavior uses cosine blending only
     parser.add_argument('--blending-window-margin-bp', type=int, default=200, help='Edge margin for blending/selection')
     parser.add_argument('--random-prefix-ns', action='store_true', default=True, help='Enable random N-prefix before windowing')
     parser.add_argument('--no-random-prefix-ns', dest='random_prefix_ns', action='store_false', help='Disable random N-prefix before windowing')
@@ -640,7 +616,6 @@ def main():
         args.device,
         return_attention=True,
         blending_window_margin_bp=int(args.blending_window_margin_bp),
-        aggregator=str(args.aggregator),
         random_prefix_ns=bool(args.random_prefix_ns),
         random_prefix_min=int(args.random_prefix_min),
         random_prefix_max=int(args.random_prefix_max),

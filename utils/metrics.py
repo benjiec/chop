@@ -29,6 +29,8 @@ class SequenceResult:
         targets_batch: Optional[torch.Tensor],
         logits_batch: torch.Tensor,
         sequence_index_start: int = 0,
+        prob_activation: str = 'softmax',
+        sequence_ids: Optional[Sequence[Optional[str]]] = None,
     ) -> List["SequenceResult"]:
         """Build a list of SequenceResult from batched tensors/arrays.
 
@@ -37,7 +39,13 @@ class SequenceResult:
         """
         with torch.no_grad():
             predictions_t = logits_batch.argmax(dim=-1)
-            probabilities_t = torch.softmax(logits_batch, dim=-1)
+            if str(prob_activation).lower() == 'sigmoid':
+                probabilities_t = torch.sigmoid(logits_batch)
+                # Set positions without any logits (all-zero across classes) to NaN
+                has_logit = (logits_batch != 0).any(dim=-1)  # (B, L)
+                probabilities_t = probabilities_t.masked_fill(~has_logit.unsqueeze(-1), float('nan'))
+            else:
+                probabilities_t = torch.softmax(logits_batch, dim=-1)
 
         B = int(logits_batch.size(0))
         results: List[SequenceResult] = []
@@ -46,6 +54,7 @@ class SequenceResult:
                 sequence_index=sequence_index_start + b,
                 sequence_tokens=sequence_tokens_batch[b].detach().cpu().numpy(),
                 targets=(targets_batch[b].detach().cpu().numpy() if targets_batch is not None else None),
+                sequence_id=(sequence_ids[b] if (sequence_ids is not None and b < len(sequence_ids)) else None),
                 predictions=predictions_t[b].detach().cpu().numpy().astype(np.int64),
                 probabilities=probabilities_t[b].detach().cpu().numpy().astype(np.float32),
             ))

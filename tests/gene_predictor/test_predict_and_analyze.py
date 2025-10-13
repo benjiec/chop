@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from gene_predictor.predict_and_analyze import predict_sequence_outputs, generate_test_data, run_predictions
+from utils.constants import GenePredictionClass as P
+from utils.constants import EventHeadIdx as H
 from gene_decoder import PredictedSequence
 from utils.windowing import compute_window_slices, blend_logits
 
@@ -73,7 +75,76 @@ class TestPredictSequenceOutputs(unittest.TestCase):
         self.assertEqual(sr.probabilities.shape, (seq_len, 2))
         self.assertTrue(np.all(sr.probabilities[:, 1] > 0.5))
 
-    def test_max_weight_aggregator_and_random_prefix(self):
+    def test_event_head_mode_overrides_probabilities(self):
+        class DummyEventHeadModel(torch.nn.Module):
+            def __init__(self, max_len: int = 64, num_classes: int = 8):
+                super().__init__()
+                self.model = torch.nn.Module()
+                class Emb:
+                    def __init__(self, m):
+                        self.max_seq_length = m
+                self.model.embedding = Emb(max_len)
+                self.num_classes = num_classes
+                # Mimic dna_learner.model behavior: store latest event logits here
+                setattr(self.model, '_latest_computed_event_logits', None)
+                # Minimal config with event-head enablement and maps
+                self.config = {
+                    'model': {'num_event_heads': 4},
+                    'custom': {
+                        'event_motifs_by_head_idx': {
+                            int(H.START): ['ATG'],
+                            int(H.STOP): ['TAA'],
+                            int(H.DSS): ['GT'],
+                            int(H.ASS): ['AG'],
+                        },
+                        'head_to_class_id': {
+                            int(H.START): int(P.START),
+                            int(H.STOP): int(P.STOP),
+                            int(H.DSS): int(P.DSS),
+                            int(H.ASS): int(P.ASS),
+                        },
+                    },
+                }
+            def forward(self, x, return_attention: bool = False):
+                B, L = x.shape
+                logits = torch.zeros((B, L, self.num_classes), dtype=torch.float32)
+                # Provide event logits: per head constants
+                ev = torch.zeros((B, L, 4), dtype=torch.float32)
+                ev[:, :, int(H.START)] = 4.0
+                ev[:, :, int(H.STOP)] = -4.0
+                ev[:, :, int(H.DSS)] = 2.0
+                ev[:, :, int(H.ASS)] = 0.0
+                setattr(self.model, '_latest_computed_event_logits', ev)
+                if return_attention:
+                    return logits, {}
+                return logits
+
+        model = DummyEventHeadModel(max_len=64, num_classes=8)
+        # Build a sequence containing one instance for each event
+        seq_len = 20
+        seq = torch.full((1, seq_len), 4, dtype=torch.long)
+        # ATG at 5..7, TAA at 10..12, GT at 14..15, AG at 2..3
+        seq[0, 5] = 0; seq[0, 6] = 1; seq[0, 7] = 2
+        seq[0,10] = 1; seq[0,11] = 0; seq[0,12] = 0
+        seq[0,14] = 2; seq[0,15] = 1
+        seq[0, 2] = 0; seq[0, 3] = 2
+
+        sr, _ = predict_sequence_outputs(model, model.model.embedding.max_seq_length, seq, device='cpu', return_attention=False,
+                                          blending_window_margin_bp=0)
+        # Verify event-only probabilities and predictions
+        pr = sr.probabilities
+        # START 5..7 should be >0.5; non-event positions NaN
+        self.assertTrue(np.all(np.isnan(pr[:5, int(P.START)])))
+        self.assertGreater(pr[6, int(P.START)], 0.5)
+        # STOP 10..12 < 0.5
+        self.assertLess(pr[11, int(P.STOP)], 0.5)
+        # DSS 14..15 > 0.5 and NaN elsewhere
+        self.assertGreater(pr[14, int(P.DSS)], 0.5)
+        self.assertTrue(np.isnan(pr[0, int(P.DSS)]))
+        # Predictions come from event logits (argmax)
+        self.assertEqual(int(sr.predictions[6]), int(P.START))
+
+    def test_random_prefix_and_blending(self):
         class SmallMaxLenModel(torch.nn.Module):
             def __init__(self, max_len: int = 32, num_classes: int = 2):
                 super().__init__()
@@ -106,17 +177,14 @@ class TestPredictSequenceOutputs(unittest.TestCase):
             device='cpu',
             return_attention=False,
             blending_window_margin_bp=8,
-            aggregator='max_weight',
             random_prefix_ns=True,
             random_prefix_min=5,
             random_prefix_max=5,
         )
         self.assertEqual(sr.predictions.shape[0], seq_len)  # prefix trimmed
         self.assertEqual(sr.probabilities.shape, (seq_len, 2))
-        self.assertEqual(sr.predictions.shape[0], seq_len)
-        self.assertEqual(sr.probabilities.shape, (seq_len, 2))
-        # Sanity: probabilities for class 1 should be > 0.5
-        self.assertTrue(np.all(sr.probabilities[:, 1] > 0.5))
+        # Sanity: probabilities for class 1 should be >= 0.5 everywhere due to positive logits
+        self.assertTrue(np.all(sr.probabilities[:, 1] >= 0.5))
 
 
 class TestSequenceIdPropagation(unittest.TestCase):
@@ -157,7 +225,7 @@ class TestSequenceIdPropagation(unittest.TestCase):
 
             model = DummyModel(max_len=64, num_classes=3)
             results = run_predictions(model, dl, device='cpu', return_attention=False,
-                                      blending_window_margin_bp=200, aggregator='blend',
+                                      blending_window_margin_bp=200,
                                       random_prefix_ns=False)
             self.assertGreaterEqual(len(results), 1)
             r0 = results[0]

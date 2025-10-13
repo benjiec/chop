@@ -218,6 +218,17 @@ def main():
     config['custom']['loss']['event_head_bce_pos_weights'] = pos_weights_by_head_idx
     config['custom']['loss']['event_head_bce_neg_weights'] = neg_weights_by_head_idx
 
+    # Persist event-head mappings when enabled, for inference routing
+    if args.loss_type == 'event-head-bce':
+        config['custom']['event_motifs_by_head_idx'] = {int(k): sorted(list(v)) for k, v in event_motifs_by_head_idx.items()}
+        # Use EventHeadIdx constants to map to GenePredictionClass ids
+        config['custom']['head_to_class_id'] = {
+            int(H.START): int(P.START),
+            int(H.STOP): int(P.STOP),
+            int(H.DSS): int(P.DSS),
+            int(H.ASS): int(P.ASS),
+        }
+
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,

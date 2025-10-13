@@ -372,3 +372,23 @@ class TestSequenceResult(unittest.TestCase):
         np.testing.assert_array_equal(rs[0].predictions, np.array([1,1,1], dtype=np.int64))
         np.testing.assert_array_equal(rs[1].predictions, np.array([0,0,0], dtype=np.int64))
 
+
+class TestSequenceResultSigmoidMasking(unittest.TestCase):
+    def test_from_batch_sigmoid_and_nan_masking(self):
+        import torch
+        tokens = torch.randint(0, 5, (1, 6))
+        logits = torch.zeros((1, 6, 3), dtype=torch.float32)
+        logits[0, 2:4, 1] = 3.0  # only positions 2..3 have non-zero logits for class 1
+        # Softmax: no NaNs
+        rs_soft = SequenceResult.from_batch(tokens, None, logits, sequence_index_start=0, prob_activation='softmax')
+        self.assertFalse(np.isnan(rs_soft[0].probabilities).any())
+        # Sigmoid: non-logit rows become NaN
+        rs_sig = SequenceResult.from_batch(tokens, None, logits, sequence_index_start=0, prob_activation='sigmoid')
+        probs = rs_sig[0].probabilities
+        self.assertTrue(np.all(np.isnan(probs[0, :])))
+        self.assertTrue(np.all(np.isnan(probs[1, :])))
+        self.assertTrue(np.all(np.isnan(probs[4, :])))
+        self.assertTrue(np.all(np.isnan(probs[5, :])))
+        self.assertGreater(probs[2, 1], 0.9)
+        self.assertGreater(probs[3, 1], 0.9)
+
