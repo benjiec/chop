@@ -257,6 +257,14 @@ def main():
     calc_brier = event_based_brier_factory(event_motifs_by_class)
 
     def mk_training_cb(val_loader):
+        # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
+        num_event_heads = int(config.get('model', {}).get('num_event_heads') or 0)
+        if num_event_heads > 0:
+            return [
+                MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir),
+                pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
+            ]
+        # Default: include F1 checkpoint and dual-metric early stopping
         f1_ckpt = pl.callbacks.ModelCheckpoint(
             dirpath=output_dir / "checkpoints",
             filename="model_epoch={epoch:02d}_val_f1={val_f1:.3f}",
@@ -266,9 +274,11 @@ def main():
             save_last=False,
             auto_insert_metric_name=False,
         )
-        return [ MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir),
-                 DualMetricEarlyStopping(patience=8),
-                 f1_ckpt ]
+        return [
+            MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir),
+            DualMetricEarlyStopping(patience=8),
+            f1_ckpt,
+        ]
 
     model, val_loader = run_trainer(
         dataset,
