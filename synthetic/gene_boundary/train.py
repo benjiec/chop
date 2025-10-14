@@ -24,10 +24,7 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
                            dss_weight: float = 10.0, ass_weight: float = 10.0,
                            attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 0,
                            max_seq_length: int = 1000,
-                           cc_enabled: bool = True,
-                           start_before: int = 300, start_after: int = 0,
-                           stop_before: int = 0, stop_after: int = 300,
-                           cc_gap: int = 0) -> dict:
+                           ) -> dict:
 
     # Class weights for START/STOP detection
     # START/STOP codons are rare and important, UTR5 regions provide context
@@ -63,14 +60,7 @@ def create_boundary_config(d_model: int = 512, n_layers: int = 4, n_heads: int =
         kmer_size=kmer_size,
     )
 
-    if cc_enabled:
-        cfg['model']['class_conditional_readouts'] = {
-            'enabled': True,
-            'entries': [
-                {'class': int(P.START), 'before': int(start_before), 'after': int(start_after), 'gap': int(cc_gap)},
-                {'class': int(P.STOP), 'before': int(stop_before), 'after': int(stop_after), 'gap': int(cc_gap)},
-            ]
-        }
+    # CC readouts removed; use attention_masks allocation instead
 
     return cfg
 
@@ -82,10 +72,7 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
                     dss_weight: float = 10.0, ass_weight: float = 10.0,
                     attention_masks: Optional[Dict[int, int]] = None, kmer_size: int = 3,
                     max_seq_length: int = 1000,
-                    cc_enabled: bool = True,
-                    start_before: int = 300, start_after: int = 0,
-                    stop_before: int = 0, stop_after: int = 300,
-                    cc_gap: int = 0, incl_start: bool = True, incl_stop: bool = True):
+                    incl_start: bool = True, incl_stop: bool = True):
 
     # Create config
     config = create_boundary_config(
@@ -94,10 +81,6 @@ def train_boundaries(d_model: int = 512, n_layers: int = 4, n_heads: int = 8,
         use_class_weights=use_class_weights, start_weight=start_weight, stop_weight=stop_weight, utr_weight=utr_weight,
         dss_weight=dss_weight, ass_weight=ass_weight,
         attention_masks=attention_masks, kmer_size=kmer_size, max_seq_length=max_seq_length,
-        cc_enabled=cc_enabled,
-        start_before=start_before, start_after=start_after,
-        stop_before=stop_before, stop_after=stop_after,
-        cc_gap=cc_gap,
     )
     
     dataset = generate_dataset(num_contigs, max_seq_length, layouts_per_contig, incl_start=incl_start, incl_stop=incl_stop)
@@ -143,13 +126,7 @@ def main():
     parser.add_argument('--kmer', type=int, default=0, help='K-mer size for convolution (0=disabled, 3=codon sensitive)')
     parser.add_argument('--max-seq-length', type=int, default=1000, help='Maximum sequence length (also used as dataset window size; stride=max_seq_length/2)')
     # (focal loss removed)
-    # Class-conditional readouts
-    parser.add_argument('--disable-cc', action='store_true', help='Disable class-conditional readouts for START/STOP (enabled by default)')
-    parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
-    parser.add_argument('--start-after', type=int, default=0, help='CC downstream window for START')
-    parser.add_argument('--stop-before', type=int, default=0, help='CC upstream window for STOP')
-    parser.add_argument('--stop-after', type=int, default=300, help='CC downstream window for STOP')
-    parser.add_argument('--cc-gap', type=int, default=0, help='Relative donut gap for CC masks')
+    # CC readouts removed
     parser.add_argument('--excl-start', action='store_true', help='Disable UTR5-START dataset (enabled by default)')
     parser.add_argument('--excl-stop', action='store_true', help='Disable STOP-UTR3 dataset (enabled by default)')
     
@@ -198,12 +175,6 @@ def main():
         attention_masks=attention_masks,
         kmer_size=args.kmer,
         max_seq_length=args.max_seq_length,
-        cc_enabled=not args.disable_cc,
-        start_before=args.start_before,
-        start_after=args.start_after,
-        stop_before=args.stop_before,
-        stop_after=args.stop_after,
-        cc_gap=args.cc_gap,
         incl_start=not args.excl_start,
         incl_stop=not args.excl_stop
     )

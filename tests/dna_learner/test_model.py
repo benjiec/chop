@@ -10,7 +10,6 @@ from dna_learner.model import (
     GenePredictorModel,
     GenePredictorModule,
     create_base_config,
-    set_class_conditional_readout_config_with_head,
 )
 from utils.losses import adjusted_ce_entropy_loss
 from utils.constants import EventHeadIdx as H
@@ -66,67 +65,6 @@ class TestGenePredictorModel(unittest.TestCase):
         self.assertIsNotNone(ev)
         self.assertEqual(ev.shape, (2, 20, 4))
 
-    def test_cc_readouts_apply_to_event_head_when_head_idx_provided(self):
-        # 4 heads; add CC rule targeting START classifier and head 0
-        model = GenePredictorModel(
-            max_seq_length=20,
-            num_classes=6,
-            vocab_size=5,
-            d_model=16,
-            n_layers=1,
-            n_heads=2,
-            dropout=0.0,
-            attention_masks=None,
-            kmer_size=0,
-            num_event_heads=4,
-            class_conditional_readouts={
-                'enabled': True,
-                'entries': [
-                    {'class': 2, 'before': 0, 'after': 0, 'gap': 0, 'head_idx': int(H.START)},
-                ]
-            }
-        )
-        x = torch.randint(0, 5, (1, 20))
-        # Zero CC projections, then add bias to enforce predictable delta
-        for proj in model.cc_proj:
-            torch.nn.init.zeros_(proj.weight)
-            torch.nn.init.zeros_(proj.bias)
-        baseline_logits = model(x).detach()
-        baseline_ev = model._latest_computed_event_logits.detach().clone()
-        # Apply bias
-        bias = 0.7
-        model.cc_proj[0].bias.data.fill_(bias)
-        out_logits = model(x).detach()
-        out_ev = model._latest_computed_event_logits.detach()
-        # Classifier class 2 increased by ~bias
-        self.assertTrue(torch.allclose(out_logits[0, :, 2] - baseline_logits[0, :, 2], torch.full((20,), bias), atol=1e-6))
-        # Event head 0 also increased by ~bias
-        self.assertTrue(torch.allclose(out_ev[0, :, int(H.START)] - baseline_ev[0, :, int(H.START)], torch.full((20,), bias), atol=1e-6))
-
-    def test_cc_readouts_require_head_idx_when_event_heads_enabled(self):
-        # Missing head_idx should assert when event heads exist
-        cfg = create_base_config(
-            max_seq_length=16,
-            num_classes=6,
-            class_names=[f'C{i}' for i in range(6)],
-            d_model=16,
-            n_layers=1,
-            n_heads=2,
-            attention_masks=None,
-            kmer_size=0,
-            batch_size=1,
-        )
-        cfg['model']['num_event_heads'] = 4
-        cfg['model']['class_conditional_readouts'] = {
-            'enabled': True,
-            'entries': [
-                {'class': 2, 'before': 0, 'after': 0, 'gap': 0},  # missing head_idx
-            ]
-        }
-        with self.assertRaises(AssertionError):
-            mod = GenePredictorModule(cfg, custom_loss_fn=lambda s,t,l,ev,c: l.sum()*0)
-            x = torch.randint(0, 5, (1, 10))
-            _ = mod.model(x)
 
     def test_module_training_step(self):
         config = create_base_config(
@@ -153,98 +91,6 @@ class TestGenePredictorModel(unittest.TestCase):
 
     # focal loss tests removed as feature is no longer present
 
-    def test_cc_readouts_disabled_no_attrs(self):
-        model = GenePredictorModel(
-            max_seq_length=32,
-            num_classes=3,
-            vocab_size=5,
-            d_model=16,
-            n_layers=1,
-            n_heads=2,
-            dropout=0.0,
-            attention_masks={0: 2},
-            kmer_size=0,
-            class_conditional_readouts={'enabled': False}
-        )
-        self.assertFalse(model.use_cc_readouts)
-        self.assertEqual(model.class_conditional_readouts.get('enabled', False), False)
-
-    def test_cc_readouts_bias_injection_changes_only_target_class(self):
-        # Use 6 classes to include START (2) and STOP (4)
-        model = GenePredictorModel(
-            max_seq_length=20,
-            num_classes=6,
-            vocab_size=5,
-            d_model=24,
-            n_layers=1,
-            n_heads=3,
-            dropout=0.0,
-            attention_masks={0: 2},
-            kmer_size=0,
-            class_conditional_readouts={
-                'enabled': True,
-                'entries': [
-                    {'class': 2, 'before': 10, 'after': 0},  # START upstream-only
-                    {'class': 4, 'before': 0, 'after': 10},  # STOP downstream-only
-                ]
-            }
-        )
-        x = torch.randint(0, 5, (1, 20))
-        # Zero cc projections to establish a baseline equal to classifier-only
-        for proj in model.cc_proj:
-            torch.nn.init.zeros_(proj.weight)
-            torch.nn.init.zeros_(proj.bias)
-        baseline = model(x).detach()
-        # Inject bias into first entry (class 2)
-        bias = 0.5
-        model.cc_proj[0].bias.data.fill_(bias)
-        out1 = model(x).detach()
-        # Class 2 column should increase by ~bias; others unchanged
-        delta = out1 - baseline
-        self.assertTrue(torch.allclose(delta[0, :, 2], torch.full((20,), bias), atol=1e-6))
-        # Other class columns ~0
-        other_cols = [c for c in range(6) if c != 2]
-        self.assertLess(torch.abs(delta[0, :, other_cols]).max().item(), 1e-6)
-        # Reset, now inject into second entry (class 4)
-        model.cc_proj[0].bias.data.zero_()
-        model.cc_proj[1].bias.data.fill_(0.3)
-        out2 = model(x).detach()
-        delta2 = out2 - baseline
-        self.assertTrue(torch.allclose(delta2[0, :, 4], torch.full((20,), 0.3), atol=1e-6))
-        other_cols2 = [c for c in range(6) if c != 4]
-        self.assertLess(torch.abs(delta2[0, :, other_cols2]).max().item(), 1e-6)
-
-    def test_cc_readouts_string_class_resolution(self):
-        # Same as above but specify class by name
-        model = GenePredictorModel(
-            max_seq_length=16,
-            num_classes=6,
-            vocab_size=5,
-            d_model=16,
-            n_layers=1,
-            n_heads=2,
-            dropout=0.0,
-            attention_masks={0: 2},
-            kmer_size=0,
-            class_conditional_readouts={
-                'enabled': True,
-                'entries': [
-                    {'class': 2, 'before': 8, 'after': 0},
-                ]
-            }
-        )
-        x = torch.randint(0, 5, (1, 16))
-        # Zero proj then add bias for the single entry
-        torch.nn.init.zeros_(model.cc_proj[0].weight)
-        torch.nn.init.zeros_(model.cc_proj[0].bias)
-        baseline = model(x).detach()
-        model.cc_proj[0].bias.data.fill_(0.2)
-        out = model(x).detach()
-        delta = out - baseline
-        # START index is 2 per utils.constants
-        self.assertTrue(torch.allclose(delta[0, :, 2], torch.full((16,), 0.2), atol=1e-6))
-        other_cols = [c for c in range(6) if c != 2]
-        self.assertLess(torch.abs(delta[0, :, other_cols]).max().item(), 1e-6)
 
     def test_fp_beta_penalty_increases_loss_on_background_fps(self):
         # Config with 3 classes, class 1 weighted > 1

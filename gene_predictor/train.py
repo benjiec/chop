@@ -17,7 +17,7 @@ from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, event_head_bce_loss_factory
 from utils.events import build_event_motifs
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
-from dna_learner.model import GenePredictorModule, create_base_config, set_class_conditional_readout_config_with_head
+from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
@@ -53,13 +53,7 @@ def main():
     parser.add_argument('--dss-neg-weight', type=float, default=4.0, help='Negative class weight for DSS (BCE)')
     parser.add_argument('--ass-neg-weight', type=float, default=3.0, help='Negative class weight for ASS (BCE)')
 
-    # class conditional readout
-    parser.add_argument('--enable-cc', action='store_true', help='Enable class-conditional readouts for START/STOP (disabled by default)')
-    parser.add_argument('--start-before', type=int, default=300, help='CC upstream window for START')
-    parser.add_argument('--start-after', type=int, default=0, help='CC downstream window for START')
-    parser.add_argument('--stop-before', type=int, default=0, help='CC upstream window for STOP')
-    parser.add_argument('--stop-after', type=int, default=300, help='CC downstream window for STOP')
-    parser.add_argument('--cc-gap', type=int, default=0, help='Relative donut gap for CC masks')
+    # (removed) class conditional readout args
 
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
@@ -111,77 +105,6 @@ def main():
     }
     class_weights = [class_weights_map.get(i, 1.0) for i in sorted(P.idx_to_cls.keys())]
 
-    ce_weight_map = None
-    bce_pos_weight_map = None
-    bce_neg_weight_map = None
-    pos_weights_by_head_idx = None
-    neg_weights_by_head_idx = None
-    event_motifs_by_class = build_event_motifs(dss_set)
-
-    # Build event motifs map and custom loss
-    if args.loss_type == 'event-ce':
-        if not args.disable_class_weights_for_loss:
-            ce_weight_map = class_weights_map
-
-        print("using event_based_ce_loss")
-        custom_loss = event_based_ce_loss_factory(
-            event_motifs_by_class,
-            class_weights=ce_weight_map,
-            loss_window_margin_bp=margin_bp,
-        )
-
-    elif args.loss_type == 'event-bce':
-        if not args.disable_class_weights_for_loss:
-            bce_pos_weight_map = {
-                int(P.START): float(args.start_weight),
-                int(P.STOP): float(args.stop_weight),
-                int(P.DSS): float(args.dss_weight),
-                int(P.ASS): float(args.ass_weight),
-            }
-            bce_neg_weight_map = {
-                int(P.START): float(args.start_neg_weight),
-                int(P.STOP): float(args.stop_neg_weight),
-                int(P.DSS): float(args.dss_neg_weight),
-                int(P.ASS): float(args.ass_neg_weight),
-            }
-
-        print("using event_based_bce_loss")
-        custom_loss = event_based_bce_loss_factory(
-            event_motifs_by_class,
-            pos_weights=bce_pos_weight_map,
-            neg_weights=bce_neg_weight_map,
-            loss_window_margin_bp=margin_bp,
-        )
-
-    else:
-        # Event-head BCE using class-keyed maps and explicit head_class_ids order
-        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
-        if not args.disable_class_weights_for_loss:
-            pos_weights_by_class = {
-                int(P.START): float(args.start_weight),
-                int(P.STOP): float(args.stop_weight),
-                int(P.DSS): float(args.dss_weight),
-                int(P.ASS): float(args.ass_weight),
-            }
-            neg_weights_by_class = {
-                int(P.START): float(args.start_neg_weight),
-                int(P.STOP): float(args.stop_neg_weight),
-                int(P.DSS): float(args.dss_neg_weight),
-                int(P.ASS): float(args.ass_neg_weight),
-            }
-        else:
-            pos_weights_by_class = None
-            neg_weights_by_class = None
-
-        print("using event_head_bce_loss")
-        custom_loss = event_head_bce_loss_factory(
-            event_motifs_by_class,
-            head_class_ids,
-            pos_weights_by_class=pos_weights_by_class,
-            neg_weights_by_class=neg_weights_by_class,
-            loss_window_margin_bp=margin_bp,
-        )
-
     config = create_base_config(
         max_seq_length=args.max_seq_length,
         num_classes=len(P.idx_to_cls),
@@ -199,23 +122,71 @@ def main():
         num_event_heads=(4 if args.loss_type == 'event-head-bce' else None),
     )
 
-    if args.enable_cc:
-        # Bind CC readouts to both classifier classes and event head indices for START/STOP
-        set_class_conditional_readout_config_with_head(config, int(P.START), int(args.start_before), int(args.start_after), int(args.cc_gap), int(H.START))
-        set_class_conditional_readout_config_with_head(config, int(P.STOP), int(args.stop_before), int(args.stop_after), int(args.cc_gap), int(H.STOP))
+    # CC readouts removed: configure directional attention via attention_masks and heads
 
     config.setdefault('custom', {})
     config['custom'].setdefault('loss', {})
-    config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
-    config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
-    config['custom']['loss']['ce_class_weights'] = ce_weight_map
-    config['custom']['loss']['event_head_bce_pos_weights'] = pos_weights_by_class
-    config['custom']['loss']['event_head_bce_neg_weights'] = neg_weights_by_class
 
+    ce_weight_map = None
+    bce_pos_weight_map = None
+    bce_neg_weight_map = None
+
+    event_motifs_by_class = build_event_motifs(dss_set)
     # Persist motifs map always; head mapping only in event-head mode
     config['custom']['event_motifs_by_class'] = {int(k): sorted(list(v)) for k, v in event_motifs_by_class.items()}
-    if args.loss_type == 'event-head-bce':
+
+    # Set weights in one place
+    if not args.disable_class_weights_for_loss:
+        if args.loss_type == 'event-ce':
+            ce_weight_map = class_weights_map
+            config['custom']['loss']['ce_class_weights'] = ce_weight_map
+        else:
+            bce_pos_weight_map = {
+                int(P.START): float(args.start_weight),
+                int(P.STOP): float(args.stop_weight),
+                int(P.DSS): float(args.dss_weight),
+                int(P.ASS): float(args.ass_weight),
+            }
+            bce_neg_weight_map = {
+                int(P.START): float(args.start_neg_weight),
+                int(P.STOP): float(args.stop_neg_weight),
+                int(P.DSS): float(args.dss_neg_weight),
+                int(P.ASS): float(args.ass_neg_weight),
+            }
+            config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
+            config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
+
+    # Build event motifs map and custom loss
+    if args.loss_type == 'event-ce':
+        print("using event_based_ce_loss")
+        custom_loss = event_based_ce_loss_factory(
+            event_motifs_by_class,
+            class_weights=ce_weight_map,
+            loss_window_margin_bp=margin_bp,
+        )
+
+    elif args.loss_type == 'event-bce':
+        print("using event_based_bce_loss")
+        custom_loss = event_based_bce_loss_factory(
+            event_motifs_by_class,
+            pos_weights=bce_pos_weight_map,
+            neg_weights=bce_neg_weight_map,
+            loss_window_margin_bp=margin_bp,
+        )
+
+    else:
+        # Event-head BCE using class-keyed maps and explicit head_class_ids order
+        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
         config['custom']['head_class_ids'] = head_class_ids
+
+        print("using event_head_bce_loss")
+        custom_loss = event_head_bce_loss_factory(
+            event_motifs_by_class,
+            head_class_ids,
+            pos_weights_by_class=bce_pos_weight_map,
+            neg_weights_by_class=bce_neg_weight_map,
+            loss_window_margin_bp=margin_bp,
+        )
 
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(

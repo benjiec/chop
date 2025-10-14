@@ -259,8 +259,7 @@ class GenePredictorModel(nn.Module):
                  dropout: float = 0.1, 
                  attention_masks: Optional[Dict[int, int]] = None,
                  kmer_size: int = 0,
-                 num_event_heads: int = 0,
-                 class_conditional_readouts: Optional[Dict[str, Any]] = None):
+                 num_event_heads: int = 0):
 
         super().__init__()
 
@@ -272,7 +271,6 @@ class GenePredictorModel(nn.Module):
         self.attention_masks = attention_masks or {}
         self.n_heads = n_heads
         self.max_seq_length = max_seq_length
-        self.class_conditional_readouts = class_conditional_readouts or {'enabled': False}
         self.num_event_heads = int(num_event_heads) if num_event_heads is not None else 0
         
         # DNA embedding
@@ -304,42 +302,6 @@ class GenePredictorModel(nn.Module):
 
         # Cache for latest event logits computed in forward
         self._latest_computed_event_logits: Optional[torch.Tensor] = None
-
-        # Optional generic class-conditional readouts
-        self.use_cc_readouts: bool = bool(self.class_conditional_readouts.get('enabled', False))
-        self.cc_entries: List[Dict[str, Any]] = []
-        if self.use_cc_readouts:
-            entries = self.class_conditional_readouts.get('entries')
-            # Require explicit entries; if missing or empty, no readouts are created
-            if not isinstance(entries, list):
-                entries = []
-            # Build modules per entry
-            self.cc_q = nn.ModuleList()
-            self.cc_k = nn.ModuleList()
-            self.cc_v = nn.ModuleList()
-            self.cc_proj = nn.ModuleList()
-            for e in entries or []:
-                self.cc_q.append(nn.Linear(d_model, d_model))
-                self.cc_k.append(nn.Linear(d_model, d_model))
-                self.cc_v.append(nn.Linear(d_model, d_model))
-                self.cc_proj.append(nn.Linear(2 * d_model, 1))
-                # Store params per entry
-                self.cc_entries.append({
-                    'class': e.get('class'),
-                    'before': int(e.get('before', 0)),
-                    'after': int(e.get('after', 0)),
-                    'gap': int(e.get('gap', 0)),
-                    'head_idx': (int(e.get('head_idx')) if e.get('head_idx') is not None else None),
-                })
-
-        # Constructor-time validation: if CC enabled and event heads enabled, require head_idx per CC entry
-        if self.use_cc_readouts and self.cc_entries and self.event_heads is not None:
-            for e in self.cc_entries:
-                if e.get('head_idx', None) is None:
-                    raise AssertionError("CC readouts enabled with event heads: each CC entry must include head_idx")
-                h = int(e['head_idx'])
-                if h < 0 or h >= self.num_event_heads:
-                    raise AssertionError(f"CC entry head_idx {h} out of range for num_event_heads={self.num_event_heads}")
         
     def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
         # Embed DNA sequence
@@ -370,72 +332,6 @@ class GenePredictorModel(nn.Module):
         # Classify each position (base logits)
         logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
 
-        # If enabled, compute class-conditional readout logits and add to respective class columns
-        if self.use_cc_readouts and self.cc_entries:
-            B, L, D = x.shape
-            scale = math.sqrt(D)
-
-            # Helper: build relative donut/asymmetric mask [L, L]
-            def build_rel_mask(before: int, gap: int, after: int) -> torch.Tensor:
-                m = torch.zeros(L, L, dtype=torch.bool, device=x.device)
-                for i in range(L):
-                    # upstream
-                    if before > 0:
-                        s1 = max(0, i - before)
-                        e1 = max(0, i - max(0, gap))
-                        if e1 > s1:
-                            m[i, s1:e1] = True
-                    # downstream
-                    if after > 0:
-                        s2 = min(L, i + max(1, gap))
-                        e2 = min(L, i + after + 1)
-                        if e2 > s2:
-                            m[i, s2:e2] = True
-                    # pure local (no before/after)
-                    if before == 0 and after == 0:
-                        m[i, i] = True
-                return m
-
-            # Resolve class indices map if provided via config
-            name_to_idx = {}
-            # Prefer config class_names if present
-            # self.class_names is available only in LightningModule, not here. So use constants if available.
-            from utils.constants import GenePredictionClass as P
-            name_to_idx = {v: k for k, v in P.idx_to_cls.items()}
-
-            for idx, entry in enumerate(self.cc_entries):
-                cls_spec = entry.get('class')
-                if isinstance(cls_spec, str):
-                    cls_idx = name_to_idx.get(cls_spec.upper(), None)
-                else:
-                    cls_idx = int(cls_spec)
-                if cls_idx is None or cls_idx >= logits.size(-1):
-                    continue
-                before = int(entry.get('before', 0))
-                after = int(entry.get('after', 0))
-                gap = int(entry.get('gap', 0))
-                mask = build_rel_mask(before, gap, after)
-
-                q = self.cc_q[idx](x)
-                k = self.cc_k[idx](x)
-                v = self.cc_v[idx](x)
-                scores = torch.matmul(q, k.transpose(1, 2)) / scale
-                scores = scores.masked_fill(~mask.unsqueeze(0), float('-inf'))
-                attn = F.softmax(scores, dim=-1)
-                # Replace NaNs (can happen if mask row has no allowed positions)
-                attn = torch.where(torch.isnan(attn), torch.zeros_like(attn), attn)
-                c = torch.matmul(attn, v)
-                logit_delta = self.cc_proj[idx](torch.cat([x, c], dim=-1)).squeeze(-1)  # (B,L)
-                # Always apply to classifier logits
-                logits[..., cls_idx] = logits[..., cls_idx] + logit_delta
-
-                # Optionally also apply to event head by head_idx if provided
-                head_idx = entry.get('head_idx', None)
-                if head_idx is not None and self._latest_computed_event_logits is not None:
-                    h = int(head_idx)
-                    if 0 <= h < self._latest_computed_event_logits.size(-1):
-                        self._latest_computed_event_logits[..., h] = self._latest_computed_event_logits[..., h] + logit_delta
-        
         if return_attention:
             return logits, layer_attention_weights
         else:
@@ -466,7 +362,6 @@ class GenePredictorModule(pl.LightningModule):
             attention_masks=model_config.get('attention_masks'),
             kmer_size=model_config.get('kmer_size', 0),
             num_event_heads=model_config.get('num_event_heads', 0),
-            class_conditional_readouts=model_config.get('class_conditional_readouts')
         )
 
         # Loss function configuration (class weights remain in config for datasets/metrics)
@@ -606,25 +501,5 @@ def create_base_config(
     return cfg
 
 
-def set_class_conditional_readout_config_with_head(cfg: Dict[str, Any], classidx: int, before: int, after: int, gap: int, head_idx: Optional[int]) -> None:
-    """
-    Enable and set a class-conditional readout entry on the config.
-
-    - cfg: configuration dict produced by create_base_config
-    - classidx: integer class index (use utils.constants.GenePredictionClass)
-    - before/after/gap: integer window parameters
-    - also binds this CC rule to an event head index.
-    """
-    model_cfg = cfg.setdefault('model', {})
-    ccr = model_cfg.setdefault('class_conditional_readouts', {})
-    ccr['enabled'] = True
-    entries = ccr.setdefault('entries', [])
-    e = {
-        'class': int(classidx),
-        'before': int(before),
-        'after': int(after),
-        'gap': int(gap),
-    }
-    if head_idx is not None:
-        e['head_idx'] = int(head_idx)
-    entries.append(e)
+def set_class_conditional_readout_config_with_head(*args, **kwargs) -> None:
+    raise RuntimeError("class_conditional_readouts have been removed; configure directional attention via attention_masks instead")
