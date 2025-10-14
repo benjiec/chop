@@ -40,6 +40,7 @@ def main():
     parser.add_argument('--attention-masks', type=str,
                         help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
+    parser.add_argument('--train-start-stop-only', action='store_true')
 
     # class weights
     parser.add_argument('--disable-class-weights-for-loss', action='store_true', help='Disable class weights in loss function (still used for dataset)')
@@ -189,13 +190,20 @@ def main():
         )
 
     if args.num_windows:
+        if args.train_start_stop_only:
+            print("include START and STOP windows only")
+            window_incl_classes = [P.START, P.STOP]
+        else:
+            window_incl_classes = None
+
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
             args.tsv_fn,
             window=args.max_seq_length,
             stride=args.stride,
             num_windows=args.num_windows,
-            class_weights=class_weights
+            class_weights=class_weights,
+            window_incl_classes=window_incl_classes
         )
     else:
         dataset = AnnotatedGenomeDataset(
