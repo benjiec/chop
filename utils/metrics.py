@@ -34,6 +34,7 @@ class SequenceResult:
         sequence_ids: Optional[Sequence[Optional[str]]] = None,
         event_motifs_by_class: Optional[Dict[int, Set[str]]] = None,
         event_margin_bp: Optional[int] = None,
+        mask_non_event_probs: bool = True,
     ) -> List["SequenceResult"]:
         """Build a list of SequenceResult from batched tensors/arrays.
 
@@ -53,7 +54,7 @@ class SequenceResult:
         for b in range(B):
             probs_b = probabilities_t[b]
             # Optional per-class NaN masking outside event spans when using sigmoid
-            if (str(prob_activation).lower() == 'sigmoid') and (event_motifs_by_class is not None):
+            if mask_non_event_probs and (str(prob_activation).lower() == 'sigmoid') and (event_motifs_by_class is not None):
                 tokens_b = sequence_tokens_batch[b:b+1]
                 L = int(tokens_b.size(1))
                 masks = build_event_masks(tokens_b, event_motifs_by_class)

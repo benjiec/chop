@@ -417,6 +417,7 @@ class GenePredictorModule(pl.LightningModule):
             targets_batch=targets,
             logits_batch=logits,
             sequence_index_start=start_idx,
+            mask_non_event_probs=False,
         ))
         
         return loss

@@ -64,6 +64,7 @@ def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
                 targets_batch=targets,
                 logits_batch=logits,
                 sequence_index_start=len(seq_results),
+                mask_non_event_probs=False,
             ))
 
         # Set up metrics callback (no CSV) and invoke epoch end
