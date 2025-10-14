@@ -706,33 +706,42 @@ def main():
             print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
                   f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}")
 
-    # Event-only TP/TN Beta fits (decoder-span mean probabilities)
-    print("\nEvent-only probability Beta fits (decoder span-mean):")
+    # Event-only TP/TN Beta fits (decoder-span mean probabilities), aggregated across sequences
+    print("\nEvent-only probability Beta fits (decoder span-mean, aggregated):")
+    classes = (GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS)
+    samples_tp: Dict[int, list] = {int(c): [] for c in classes}
+    samples_tn: Dict[int, list] = {int(c): [] for c in classes}
+
     for r in results:
         probs = r.probabilities
         labels = r.targets
-        spans_map = compute_event_spans_vectorized(r.sequence_tokens, event_motifs_by_class)
+        tokens_t = torch.as_tensor(r.sequence_tokens, dtype=torch.long)
+        spans_map = compute_event_spans_vectorized(tokens_t, event_motifs_by_class)
 
-        for cls_idx in (GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS):
-            tp_vals: list = []
-            tn_vals: list = []
+        for cls_idx in classes:
             for (s, e) in spans_map.get(int(cls_idx), []):
                 if e <= s:
                     continue
-                window = probs[s:e, int(cls_idx)]
-                mean_p = float(np.clip(np.mean(window.astype(float)), 1e-8, 1.0 - 1e-8))
-                is_tp = bool(np.all(labels[s:e].astype(int) == int(cls_idx)))
-                if is_tp:
-                    tp_vals.append(mean_p)
+                window = probs[s:e, int(cls_idx)].astype(float)
+                # Skip spans with all-NaN values
+                finite_mask = np.isfinite(window)
+                if not finite_mask.any():
+                    continue
+                mean_p = float(np.mean(window[finite_mask]))
+                mean_p = float(np.clip(mean_p, 1e-8, 1.0 - 1e-8))
+                # Expected positives from labels only: any-token-in-window semantics
+                is_pos = bool(np.any(labels[s:e].astype(int) == int(cls_idx)))
+                if is_pos:
+                    samples_tp[int(cls_idx)].append(mean_p)
                 else:
-                    tn_vals.append(mean_p)
+                    samples_tn[int(cls_idx)].append(mean_p)
 
-            # Fit and print
-            cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            n, m, s, a, b = _fit_beta_moments(tp_vals)
-            print(f"  {cname:>5s} TP: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
-            n, m, s, a, b = _fit_beta_moments(tn_vals)
-            print(f"  {cname:>5s} TN: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
+    for cls_idx in classes:
+        cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+        n, m, s, a, b = _fit_beta_moments(samples_tp[int(cls_idx)])
+        print(f"  {cname:>5s} TP: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
+        n, m, s, a, b = _fit_beta_moments(samples_tn[int(cls_idx)])
+        print(f"  {cname:>5s} TN: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
 
 
 if __name__ == "__main__":
