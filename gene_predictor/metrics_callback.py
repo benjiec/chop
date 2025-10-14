@@ -143,37 +143,33 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)] = {}
             per_class[int(cls_idx)]['brier'] = float(val)
 
-        # Log per-class metrics
-        should_print = self.print_per_class_every and (
-            (trainer is None) or (((trainer.current_epoch + 1) % self.print_per_class_every) == 0)
-        )
+        """
         for cls_idx, vals in per_class.items():
             name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            if should_print:
-                print(name,
-                      'sen', "%.4f" % vals.get('sensitivity', 0.0),
-                      'pre', "%.4f" % vals.get('precision', 0.0),
-                      'f1',  "%.4f" % vals.get('f1', 0.0),
-                      'brier', "%.4f" % vals.get('brier', 0.0)
-                )
+            print(name,
+                  'sen', "%.4f" % vals.get('sensitivity', 0.0),
+                  'pre', "%.4f" % vals.get('precision', 0.0),
+                  'f1',  "%.4f" % vals.get('f1', 0.0),
+                  'brier', "%.4f" % vals.get('brier', 0.0)
+            )
+        """
 
         # Optionally write tall TSV of metrics (aggregate loss via trainer metrics)
         val_loss = None
+        aggregated_head_components = {}
         if trainer is not None and hasattr(trainer, 'callback_metrics'):
-            try:
-                val_loss = float(trainer.callback_metrics.get('val_loss')) if 'val_loss' in trainer.callback_metrics else None
-            except Exception:
-                val_loss = None
-        # Gather components from module if available
-        components = getattr(pl_module, '_last_val_components', None)
-        # Print selected components (per-head losses) if present
-        if components and self.print_per_class_every:
-            head_keys = [k for k in components.keys() if str(k).startswith('loss_head_')]
-            for k in sorted(head_keys):
-                print(k, '%.6f' % float(components[k]))
+            cbm = trainer.callback_metrics
+            val_loss = float(cbm.get('val_loss')) if 'val_loss' in cbm else None
+            # Collect aggregated per-head validation losses logged as val_loss_head_{i}
+            for mk, mv in cbm.items():
+                if isinstance(mk, str) and mk.startswith('val_loss_head_'):
+                    # map to components key name used elsewhere
+                    suffix = mk[len('val_'):]
+                    aggregated_head_components[suffix] = float(mv)
+                    print(suffix, float(mv))
 
         if self.run_dir is not None:
-            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss, components)
+            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss, aggregated_head_components)
 
 
 class DualMetricEarlyStopping(pl.Callback):

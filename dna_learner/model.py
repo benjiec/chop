@@ -408,6 +408,12 @@ class GenePredictorModule(pl.LightningModule):
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
+
+        # Also log per-head validation losses for epoch aggregation
+        for k, v in (comp.items() if isinstance(comp, dict) else []):
+            key = str(k)
+            if key.startswith('loss_head_') and not key.endswith('_weighted'):
+                self.log(f"val_{key}", float(v), prog_bar=False, on_step=False, on_epoch=True)
         
         # Provide per-batch predictions to callbacks via module attribute to avoid a second pass
         coll = self._cb_results_data
