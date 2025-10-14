@@ -13,7 +13,8 @@ import pickle
 import random
 import re
 
-from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_codons
+from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_codons, StandardDonorDinucleotides, ConventionalAcceptorDinucleotides
+from utils.events import compute_event_spans_vectorized
 from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
@@ -26,6 +27,29 @@ from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits, window_weights
 from utils.constants import DNAEmbed
 from utils.events import build_event_window_logits
+
+
+def _fit_beta_moments(samples: list) -> Tuple[float, float, float, float, float]:
+    if not samples:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+    arr = np.asarray(samples, dtype=float)
+    arr = np.clip(arr, 1e-8, 1.0 - 1e-8)
+    m = float(np.mean(arr))
+    v = float(np.var(arr))
+    n = int(arr.size)
+    if v <= 1e-12 or m <= 1e-8 or m >= 1.0 - 1e-8:
+        k = 100.0
+        alpha = m * k
+        beta = (1.0 - m) * k
+        s = float(np.std(arr))
+        return n, m, s, alpha, beta
+    k = m * (1.0 - m) / v - 1.0
+    if k <= 0.0:
+        k = 100.0
+    alpha = m * k
+    beta = (1.0 - m) * k
+    s = float(np.sqrt(v))
+    return n, m, s, float(alpha), float(beta)
 
 
 def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
@@ -681,6 +705,34 @@ def main():
             m = generic[cls_idx]
             print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
                   f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}")
+
+    # Event-only TP/TN Beta fits (decoder-span mean probabilities)
+    print("\nEvent-only probability Beta fits (decoder span-mean):")
+    for r in results:
+        probs = r.probabilities
+        labels = r.targets
+        spans_map = compute_event_spans_vectorized(r.sequence_tokens, event_motifs_by_class)
+
+        for cls_idx in (GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS):
+            tp_vals: list = []
+            tn_vals: list = []
+            for (s, e) in spans_map.get(int(cls_idx), []):
+                if e <= s:
+                    continue
+                window = probs[s:e, int(cls_idx)]
+                mean_p = float(np.clip(np.mean(window.astype(float)), 1e-8, 1.0 - 1e-8))
+                is_tp = bool(np.all(labels[s:e].astype(int) == int(cls_idx)))
+                if is_tp:
+                    tp_vals.append(mean_p)
+                else:
+                    tn_vals.append(mean_p)
+
+            # Fit and print
+            cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+            n, m, s, a, b = _fit_beta_moments(tp_vals)
+            print(f"  {cname:>5s} TP: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
+            n, m, s, a, b = _fit_beta_moments(tn_vals)
+            print(f"  {cname:>5s} TN: n={n} mean={m:.4f} std={s:.4f} beta(alpha={a:.2f}, beta={b:.2f})")
 
 
 if __name__ == "__main__":

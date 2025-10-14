@@ -301,3 +301,67 @@ def build_event_masks_vectorized(
 
     return masks
 
+
+def compute_event_spans_vectorized(
+    sequence_tokens: torch.Tensor,
+    normalized_motifs: Dict[int, Set[str]],
+) -> Dict[int, List[Tuple[int, int]]]:
+    """Compute motif spans (start, end_exclusive) per class using vectorized matching.
+
+    Args:
+        sequence_tokens: (L,) or (1, L) token ids (A/T/G/C/N indices per DNAEmbed)
+        normalized_motifs: dict[class_id] -> set of uppercase motif strings
+
+    Returns:
+        dict[class_id] -> list[(start, end_exclusive)] for all motif occurrences, allowing
+        multiple motif lengths per class and overlapping matches.
+
+    Notes:
+        - Assumes normalized_motifs is provided for all classes the caller expects.
+        - This implementation reuses cached motif encodings and the same unfold/compare
+          logic as build_event_masks_vectorized, but returns explicit spans instead of masks.
+    """
+    assert isinstance(sequence_tokens, torch.Tensor)
+    if sequence_tokens.dim() == 1:
+        seq = sequence_tokens.unsqueeze(0)
+    elif sequence_tokens.dim() == 2 and int(sequence_tokens.size(0)) == 1:
+        seq = sequence_tokens
+    else:
+        raise AssertionError("compute_event_spans_vectorized expects (L,) or (1,L) tokens")
+
+    B, L = int(seq.size(0)), int(seq.size(1))
+    assert B == 1, "Only batch size 1 is supported for span extraction"
+    if L <= 0:
+        return {int(k): [] for k in normalized_motifs.keys()}
+
+    # Cache encoded motifs grouped by length
+    key = _motif_cache_key(normalized_motifs)
+    by_len_cached = _cached_motif_tensors(key)
+
+    spans: Dict[int, List[Tuple[int, int]]] = {int(k): [] for k in normalized_motifs.keys()}
+    device = seq.device
+
+    for k, (motifs_k_cpu, class_to_idx) in by_len_cached.items():
+        if int(k) <= 0 or int(k) > L:
+            continue
+        # Windows: (B, L-k+1, k)
+        win = seq.unfold(dimension=1, size=int(k), step=1)
+        motifs_k = motifs_k_cpu.to(device=device, dtype=torch.long)
+        if motifs_k.numel() == 0:
+            continue
+        # Compare windows to all motifs: (B, L-k+1, M)
+        eq = (win.unsqueeze(2) == motifs_k.view(1, 1, motifs_k.shape[0], int(k)))
+        starts_per_motif = eq.all(dim=-1)
+
+        # For each class, OR motifs and collect (s, s+k) where start True
+        for cls_id, idxs in class_to_idx.items():
+            if not idxs:
+                continue
+            # (B, L-k+1)
+            starts = starts_per_motif.index_select(dim=2, index=torch.tensor(idxs, device=device)).any(dim=2)
+            starts_1d = starts[0].detach().cpu().nonzero(as_tuple=False).flatten().tolist()
+            for s in starts_1d:
+                spans[int(cls_id)].append((int(s), int(s) + int(k)))
+
+    return spans
+

@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import torch
 
-from utils.events import build_event_window_logits, build_event_masks, build_event_masks_vectorized, build_center_mask
+from utils.events import build_event_window_logits, build_event_masks, build_event_masks_vectorized, build_center_mask, compute_event_spans_vectorized
 from utils.constants import GenePredictionClass as P
 from utils.constants import EventHeadIdx as H
 
@@ -148,6 +148,38 @@ class TestEventMasks(unittest.TestCase):
         # ASS: AG at 11..12 (True at 11..12) and single 'C' at last position 13
         self.assertTrue(m_ref[int(P.ASS)][0, 11:13].all())
         self.assertTrue(bool(m_ref[int(P.ASS)][0, 13].item()))
+
+
+class TestComputeEventSpansVectorized(unittest.TestCase):
+    def _tokens_from_str(self, s: str) -> torch.Tensor:
+        mp = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+        return torch.tensor([mp[ch] for ch in s], dtype=torch.long)
+
+    def test_single_length_motifs(self):
+        # Sequence contains ATG at 3..5 and TAG at 8..10
+        seq = 'AAATGAAATAGAA'
+        tokens = self._tokens_from_str(seq)
+        motifs = {
+            int(P.START): {'ATG'},
+            int(P.STOP): {'TAG'},
+        }
+        spans = compute_event_spans_vectorized(tokens, motifs)
+        self.assertIn((2, 5), spans[int(P.START)])
+        self.assertIn((8, 11), spans[int(P.STOP)])
+
+    def test_mixed_lengths_per_class(self):
+        # Class DSS: {'AC', 'ACG'} present at (0,3) and (5,7); ASS: {'TT'} at (3,5) and (8,10)
+        seq = 'ACGTTACGTTA'
+        tokens = self._tokens_from_str(seq)
+        motifs = {
+            int(P.DSS): {'AC', 'ACG'},
+            int(P.ASS): {'TT'},
+        }
+        spans = compute_event_spans_vectorized(tokens, motifs)
+        self.assertIn((0, 3), spans[int(P.DSS)])
+        self.assertIn((5, 7), spans[int(P.DSS)])
+        self.assertIn((3, 5), spans[int(P.ASS)])
+        self.assertIn((8, 10), spans[int(P.ASS)])
 
 if __name__ == '__main__':
     unittest.main()
