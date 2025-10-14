@@ -131,7 +131,7 @@ def load_trained_model(model_path: Path, device='cpu'):
     """Load the trained model from checkpoint, restoring exact architecture."""
     print(f"Loading model from: {model_path}")
 
-    model = ModelModule.load_from_checkpoint(model_path, map_location=device, custom_loss_fn=None)
+    model = ModelModule.load_from_checkpoint(model_path, map_location=device, custom_loss_fn=None, strict=False)
     model.eval()
     model = model.to(device)
     cfg = getattr(model, 'config', None)
