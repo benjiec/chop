@@ -434,8 +434,6 @@ class GenePredictorModule(pl.LightningModule):
         
         comp = {}
         loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
-        # Expose components for callback aggregation
-        self._last_val_components = comp
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
