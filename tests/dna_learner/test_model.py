@@ -40,8 +40,11 @@ class TestGenePredictorModel(unittest.TestCase):
         x = torch.randint(0, 5, (2, 30))
         logits = model(x)
         self.assertEqual(logits.shape, (2, 30, 3))
-        logits2, attn = model(x, return_attention=True)
+        extras = {}
+        logits2 = model(x, extras=extras, return_attention='attention')
         self.assertEqual(logits2.shape, (2, 30, 3))
+        self.assertIn('attention', extras)
+        attn = extras['attention']
         self.assertIn('layer_0', attn)
         self.assertEqual(attn['layer_0'].shape, (2, 2, 30, 30))
 
@@ -59,9 +62,11 @@ class TestGenePredictorModel(unittest.TestCase):
             num_event_heads=4,
         )
         x = torch.randint(0, 5, (2, 20))
-        logits = model(x)
+        extras = {}
+        logits = model(x, extras=extras, return_event_logits='event_logits')
         self.assertEqual(logits.shape, (2, 20, 5))
-        ev = getattr(model, '_latest_computed_event_logits', None)
+        self.assertIn('event_logits', extras)
+        ev = extras['event_logits']
         self.assertIsNotNone(ev)
         self.assertEqual(ev.shape, (2, 20, 4))
 
@@ -132,8 +137,8 @@ class TestGenePredictorModel(unittest.TestCase):
         ], dtype=torch.float32)
 
         # Monkeypatch model forward for both modules
-        mod_no_fp.model.forward = lambda x: logits
-        mod_with_fp.model.forward = lambda x: logits
+        mod_no_fp.model.forward = lambda x, **kwargs: logits
+        mod_with_fp.model.forward = lambda x, **kwargs: logits
 
         loss_no_fp = mod_no_fp.validation_step((torch.zeros_like(targets), targets), 0)
         loss_with_fp = mod_with_fp.validation_step((torch.zeros_like(targets), targets), 0)
@@ -516,3 +521,109 @@ class TestEntropyPenalty(unittest.TestCase):
         )
         self.assertLessEqual(float(loss_with_entropy), float(ce_only) + 1e-6)
 
+
+class TestValidationBatchCollection(unittest.TestCase):
+    def test_validation_epoch_results_collects_per_batch(self):
+        # Create a minimal config and module
+        num_classes = 3
+        cfg = create_base_config(
+            max_seq_length=16,
+            num_classes=num_classes,
+            class_names=[f'C{i}' for i in range(num_classes)],
+            d_model=24,
+            n_layers=1,
+            n_heads=3,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=2,
+            class_weights=[1.0] * num_classes,
+            attention_masks=None,
+            kmer_size=0,
+        )
+
+        # Simple loss: mean CE on provided logits/targets
+        def dummy_loss(seqs, targets, logits, event_logits, components):
+            return torch.nn.functional.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), reduction='mean'
+            )
+
+        mod = GenePredictorModule(cfg, custom_loss_fn=dummy_loss)
+
+        # Prepare 5 validation items total, processed in batches of 2,2,1
+        L = 10
+        x1 = torch.randint(0, 5, (2, L), dtype=torch.long)
+        y1 = torch.randint(0, num_classes, (2, L), dtype=torch.long)
+        x2 = torch.randint(0, 5, (2, L), dtype=torch.long)
+        y2 = torch.randint(0, num_classes, (2, L), dtype=torch.long)
+        x3 = torch.randint(0, 5, (1, L), dtype=torch.long)
+        y3 = torch.randint(0, num_classes, (1, L), dtype=torch.long)
+
+        # Begin validation epoch and run three batches
+        mod.on_validation_epoch_start()
+        mod.validation_step((x1, y1), 0)
+        mod.validation_step((x2, y2), 1)
+        mod.validation_step((x3, y3), 2)
+
+        # Expect 3 BatchResult entries (one per batch)
+        brs = getattr(mod, 'validation_epoch_results')
+        self.assertEqual(len(brs), 3)
+
+        # Total items across batches should equal 5
+        total_items = sum(int(br.logits_batch.size(0)) for br in brs)
+        self.assertEqual(total_items, 5)
+
+
+class TestModuleForwardAPI(unittest.TestCase):
+    def test_module_forward_returns_logits_and_event_logits_in_extras(self):
+        num_classes = 4
+        num_event_heads = 3
+        cfg = create_base_config(
+            max_seq_length=32,
+            num_classes=num_classes,
+            class_names=[f'C{i}' for i in range(num_classes)],
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=2,
+            class_weights=[1.0] * num_classes,
+            attention_masks=None,
+            kmer_size=0,
+            num_event_heads=num_event_heads,
+        )
+
+        # Custom loss not used here but match signature
+        dummy_loss = lambda s, t, l, ev, c: torch.tensor(0.0)
+        mod = GenePredictorModule(cfg, custom_loss_fn=dummy_loss)
+
+        x = torch.randint(0, 5, (2, 20), dtype=torch.long)
+        extras = {}
+        logits = mod.forward(x, extras=extras, return_event_logits='event_logits')
+
+        self.assertEqual(logits.shape, (2, 20, num_classes))
+        self.assertIn('event_logits', extras)
+        ev = extras['event_logits']
+        self.assertIsInstance(ev, torch.Tensor)
+        self.assertEqual(ev.shape, (2, 20, num_event_heads))
+
+    def test_module_forward_requires_extras_when_requesting_event_logits(self):
+        cfg = create_base_config(
+            max_seq_length=16,
+            num_classes=3,
+            class_names=['A', 'B', 'C'],
+            d_model=12,
+            n_layers=1,
+            n_heads=3,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=1,
+            class_weights=[1.0, 1.0, 1.0],
+            attention_masks=None,
+            kmer_size=0,
+            num_event_heads=2,
+        )
+        mod = GenePredictorModule(cfg, custom_loss_fn=lambda s, t, l, ev, c: torch.tensor(0.0))
+        x = torch.randint(0, 5, (1, 10), dtype=torch.long)
+        with self.assertRaises(AssertionError):
+            _ = mod.forward(x, return_event_logits='event_logits')

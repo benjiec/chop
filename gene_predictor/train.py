@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from dna_learner.trainer import train as run_trainer
+import torch
 import argparse
 from datetime import datetime
 from typing import Optional, Dict, Callable
@@ -15,7 +16,7 @@ from utils.constants import GenePredictionClass as P
 from utils.constants import EventHeadIdx as H
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, event_head_bce_loss_factory
-from utils.events import build_event_motifs
+from utils.events import build_event_motifs, build_event_window_logits
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
@@ -241,13 +242,31 @@ def main():
     calc_brier = event_based_brier_factory(event_motifs_by_class)
 
     def mk_training_cb(val_loader):
-        # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
+        # Build logits conversion fn for event-head mode if active
         num_event_heads = int(config.get('model', {}).get('num_event_heads') or 0)
+        event_logits_conversion_fn = None
+        if num_event_heads > 0:
+            def _convert(seq_tokens_batch, event_logits_batch):
+                if not (isinstance(event_logits_batch, torch.Tensor) and event_logits_batch.dim() == 3 and int(event_logits_batch.size(0)) >= 1):
+                    raise RuntimeError('Event-head mode active but event logits are missing for conversion')
+                wl = build_event_window_logits(
+                    seq_window_tokens=seq_tokens_batch[0:1, :],
+                    event_logits_window=event_logits_batch[0:1, :, :],
+                    event_motifs_by_class=event_motifs_by_class,
+                    head_class_ids=head_class_ids,
+                    num_classes=len(P.idx_to_cls),
+                )
+                return torch.from_numpy(wl).unsqueeze(0)
+            event_logits_conversion_fn = _convert
+
+        # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
         if num_event_heads > 0:
             return [
-                MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir),
+                MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
+                                event_logits_conversion_fn=event_logits_conversion_fn),
                 pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
             ]
+
         # Default: include F1 checkpoint and dual-metric early stopping
         f1_ckpt = pl.callbacks.ModelCheckpoint(
             dirpath=output_dir / "checkpoints",

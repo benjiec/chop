@@ -8,6 +8,7 @@ import numpy as np
 
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
+from utils.events import build_event_window_logits
 
 
 def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None, components: dict | None = None) -> None:
@@ -66,7 +67,8 @@ class MetricsCallback(pl.Callback):
     """Compute validation metrics (macro F1, Brier) and per-class stats; optionally write TSV."""
 
     def __init__(self, val_loader, print_per_class_every: int = 1, margin_bp: int = 0,
-                 calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None):
+                 calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None,
+                 event_logits_conversion_fn=None):
         super().__init__()
         self.val_loader = val_loader
         self.print_per_class_every = int(print_per_class_every) if print_per_class_every is not None else 0
@@ -74,6 +76,7 @@ class MetricsCallback(pl.Callback):
         self._calculate_metrics_fn = calculate_metrics_fn
         self._compute_brier_fn = compute_brier_fn
         self.run_dir = Path(run_dir) if run_dir is not None else None
+        self._event_logits_conversion_fn = event_logits_conversion_fn
         # Initialize results accumulator so tests that call only epoch_end won't fail
         self._results_data = []
 
@@ -86,12 +89,27 @@ class MetricsCallback(pl.Callback):
 
         results_data = self._results_data
 
-        # If the module collected per-batch results, append them here
-        coll = getattr(pl_module, '_cb_results_data', None)
-        if isinstance(coll, list) and coll:
+        # Convert list[BatchResult] into SequenceResult entries using provided conversion fn when present
+        batch_results = pl_module.validation_epoch_results
+        for br in batch_results:
+            seq = br.sequence_tokens_batch
+            tgt = br.targets_batch
+            logits = br.logits_batch
+            ev = br.event_logits_batch
+            if callable(self._event_logits_conversion_fn) and (ev is not None):
+                logits_for_metrics = self._event_logits_conversion_fn(seq, ev)
+            else:
+                logits_for_metrics = logits
+            sr_list = SequenceResult.from_batch(
+                sequence_tokens_batch=seq,
+                targets_batch=tgt,
+                logits_batch=logits_for_metrics,
+                sequence_index_start=int(br.sequence_index_start),
+                mask_non_event_probs=False,
+            )
             if results_data is None:
                 results_data = []
-            results_data.extend(list(coll))
+            results_data.extend(sr_list)
 
         # Optional validity masks to exclude window edges using bp margin
         valid_masks = None

@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import json
 import argparse
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional, Set, Any
 from datetime import datetime
 import hashlib
 import pickle
@@ -98,17 +98,33 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
     for (s, e) in slices:
         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
         want_attn = bool(return_attention and len(slices) == 1)
-        out = model(win_tokens, return_attention=want_attn)
-        if want_attn and isinstance(out, tuple):
-            logits_b, _layer_attn_b = out
-        else:
-            logits_b = out
+        extras: Dict[str, Any] = {}
+        ev = None
+        try:
+            logits_b = model(
+                win_tokens,
+                extras=extras,
+                return_attention=('attention' if want_attn else None),
+                return_event_logits=('event_logits' if use_event_logits else None),
+            )
+            if want_attn and 'attention' in extras:
+                _layer_attn_b = extras['attention']
+            if use_event_logits:
+                ev = extras.get('event_logits', None)
+        except TypeError:
+            # Back-compat: some simple test models don't support extras-based API
+            out = model(win_tokens, return_attention=want_attn)
+            if want_attn and isinstance(out, tuple):
+                logits_b, _layer_attn_b = out
+            else:
+                logits_b = out
+            if use_event_logits:
+                ev = getattr(getattr(model, 'model', None), '_latest_computed_event_logits', None)
         wl = logits_b[0].detach().cpu().numpy()  # (win_len, C)
 
         if use_event_logits:
-            ev = getattr(getattr(model, 'model', None), '_latest_computed_event_logits', None)
             if not (isinstance(ev, torch.Tensor) and ev.dim() == 3 and int(ev.size(0)) == 1):
-                raise AssertionError("Event-head mode enabled but event logits were not produced by the model")
+                raise AssertionError("Event-head mode enabled but event logits were not produced by the model forward (extras['event_logits'])")
             el = build_event_window_logits(
                 seq_window_tokens=win_tokens,
                 event_logits_window=ev,

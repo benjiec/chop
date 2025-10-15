@@ -10,7 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 from transformers import AutoModel, AutoTokenizer
-from typing import Any, Dict, List, Tuple, Optional, Callable
+from typing import Any, Dict, List, Tuple, Optional, Callable, Union
+from dataclasses import dataclass
 import math
 import sys
 from pathlib import Path
@@ -300,10 +301,7 @@ class GenePredictorModel(nn.Module):
         else:
             self.event_heads = None
 
-        # Cache for latest event logits computed in forward
-        self._latest_computed_event_logits: Optional[torch.Tensor] = None
-        
-    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
+    def forward(self, x, extras: Optional[Dict[str, bool]] = None, return_attention: str = None, return_event_logits: str = None):
         # Embed DNA sequence
         x = self.embedding(x)  # (batch_size, seq_length, d_model)
         
@@ -319,23 +317,49 @@ class GenePredictorModel(nn.Module):
         # Apply dropout
         x = self.dropout(x)
 
-        # If event heads enabled, compute event logits from the same representation
+        # Determine what to return
+        want_attention_key: Optional[str] = None
+        want_event_key: Optional[str] = None
+        # Allow booleans for back-compat: True -> default key name
+        if isinstance(return_attention, bool) and return_attention:
+            want_attention_key = 'attention'
+        elif isinstance(return_attention, str) and len(return_attention) > 0:
+            want_attention_key = return_attention
+        if isinstance(return_event_logits, bool) and return_event_logits:
+            want_event_key = 'event_logits'
+        elif isinstance(return_event_logits, str) and len(return_event_logits) > 0:
+            want_event_key = return_event_logits
+
+        # If event heads are enabled, the caller must request event logits via extras
+        event_logits: Optional[torch.Tensor] = None
         if self.event_heads is not None:
+            assert want_event_key is not None, "Model configured with event heads but caller did not request event logits via extras; pass return_event_logits to forward()"
             event_logits_list = [head(x).squeeze(-1) for head in self.event_heads]  # list of (B,L)
             if len(event_logits_list) > 0:
-                self._latest_computed_event_logits = torch.stack(event_logits_list, dim=-1)  # (B,L,H)
+                event_logits = torch.stack(event_logits_list, dim=-1)  # (B,L,H)
             else:
-                self._latest_computed_event_logits = None
-        else:
-            self._latest_computed_event_logits = None
+                event_logits = None
 
         # Classify each position (base logits)
         logits = self.classifier(x)  # (batch_size, seq_length, num_classes)
 
-        if return_attention:
-            return logits, layer_attention_weights
-        else:
-            return logits
+        # Build return according to requested keys (require caller-provided extras dict)
+        if (want_attention_key is not None) or (want_event_key is not None):
+            assert isinstance(extras, dict), "extras dict must be provided when requesting return_attention or return_event_logits"
+            if want_attention_key is not None:
+                extras[want_attention_key] = layer_attention_weights
+            if want_event_key is not None:
+                extras[want_event_key] = event_logits
+        return logits
+
+
+@dataclass
+class BatchResult:
+    sequence_tokens_batch: torch.Tensor
+    targets_batch: Optional[torch.Tensor]
+    logits_batch: torch.Tensor
+    event_logits_batch: Optional[torch.Tensor]
+    sequence_index_start: int
 
 
 class GenePredictorModule(pl.LightningModule):
@@ -374,16 +398,24 @@ class GenePredictorModule(pl.LightningModule):
         self.custom_loss_fn: Callable = custom_loss_fn
 
         # Initialize per-epoch validation collection for callbacks (populated in validation_step)
-        self._cb_results_data = []
+        # Collect BatchResult entries for metrics callback
+        self.validation_epoch_results: List[BatchResult] = []
 
-    def forward(self, x: torch.Tensor, return_attention: bool = False) -> torch.Tensor:
-        return self.model(x, return_attention=return_attention)
+    def forward(self, x, extras: Optional[Dict[str, Any]] = None,
+                return_attention: Optional[str] = None,
+                return_event_logits: Optional[str] = None):
+        return self.model(
+            x,
+            extras=extras,
+            return_attention=return_attention,
+            return_event_logits=return_event_logits,
+        )
     
     def training_step(self, batch, batch_idx):
         sequences, targets = batch
-        logits = self.model(sequences)
-        # Retrieve event logits if model produced them
-        event_logits = self.model._latest_computed_event_logits
+        extras: Dict[str, Any] = {}
+        logits = self.model(sequences, extras=extras, return_event_logits='event_logits')
+        event_logits = extras['event_logits'] if 'event_logits' in extras else None
         
         comp = {}
         # Call custom loss always with event_logits (may be None)
@@ -396,8 +428,9 @@ class GenePredictorModule(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         sequences, targets = batch
-        logits = self.model(sequences)
-        event_logits = self.model._latest_computed_event_logits
+        extras: Dict[str, Any] = {}
+        logits = self.model(sequences, extras=extras, return_event_logits='event_logits')
+        event_logits = extras['event_logits'] if 'event_logits' in extras else None
         
         comp = {}
         loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
@@ -413,22 +446,22 @@ class GenePredictorModule(pl.LightningModule):
             if key.startswith('loss_head_') and not key.endswith('_weighted'):
                 self.log(f"val_{key}", float(v), prog_bar=False, on_step=False, on_epoch=True)
         
-        # Provide per-batch predictions to callbacks via module attribute to avoid a second pass
-        coll = self._cb_results_data
-        start_idx = len(coll)
-        coll.extend(SequenceResult.from_batch(
-            sequence_tokens_batch=sequences,
-            targets_batch=targets,
-            logits_batch=logits,
+        # Collect batch results for metrics callback conversion later
+        coll = self.validation_epoch_results
+        start_idx = sum(int(br.logits_batch.size(0)) for br in coll) if coll else 0
+        coll.append(BatchResult(
+            sequence_tokens_batch=sequences.detach(),
+            targets_batch=targets.detach() if targets is not None else None,
+            logits_batch=logits.detach(),
+            event_logits_batch=event_logits.detach() if isinstance(event_logits, torch.Tensor) else None,
             sequence_index_start=start_idx,
-            mask_non_event_probs=False,
         ))
         
         return loss
 
     def on_validation_epoch_start(self) -> None:
         # Reset per-epoch collection container for callback
-        self._cb_results_data = []
+        self.validation_epoch_results = []
     
     def test_step(self, batch, batch_idx):
         # Same as validation step for testing
