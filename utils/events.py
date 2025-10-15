@@ -104,12 +104,11 @@ def build_event_window_logits(
     event_motifs_by_class: Dict[int, Set[str]],
     head_class_ids: Sequence[int],
     num_classes: int,
-    margin_bp: Optional[int] = 0,
 ) -> np.ndarray:
     """Build a (win_len, num_classes) array of per-class LOGITS for a single window.
 
     For each head h mapped to class c, copy the event head logits into column c at
-    positions included by the event mask (and center mask). Other positions remain 0.
+    positions included by the event mask. Other positions remain 0.
     """
     assert isinstance(seq_window_tokens, torch.Tensor) and seq_window_tokens.dim() == 2 and int(seq_window_tokens.size(0)) == 1
     assert isinstance(event_logits_window, torch.Tensor) and event_logits_window.dim() == 3 and int(event_logits_window.size(0)) == 1
@@ -119,8 +118,6 @@ def build_event_window_logits(
     # Build class masks once
     per_class_masks_t = build_event_masks(seq_window_tokens, {int(c): set(str(m).upper() for m in motifs)
                                                              for c, motifs in event_motifs_by_class.items()})
-    center_mask_t = build_center_mask(1, L, int(margin_bp) if margin_bp is not None else 0, device=device)
-    center_mask_1d = center_mask_t[0]
 
     wl = np.zeros((L, int(num_classes)), dtype=np.float32)
     ev_np = event_logits_window[0].detach().cpu().numpy()
@@ -132,7 +129,7 @@ def build_event_window_logits(
         mc_t = per_class_masks_t.get(int(cls_id))
         if mc_t is None:
             continue
-        mask = (mc_t[0] & center_mask_1d).detach().cpu().numpy()
+        mask = mc_t[0].detach().cpu().numpy()
         if not mask.any():
             continue
         wl[mask, cls_id] = ev_np[mask, h].astype(np.float32)

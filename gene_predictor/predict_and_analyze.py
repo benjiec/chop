@@ -115,7 +115,6 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                 event_motifs_by_class={int(k): set(v) for k, v in event_motifs_by_class.items()},
                 head_class_ids=[int(x) for x in head_class_ids],
                 num_classes=int(wl.shape[-1]),
-                margin_bp=int(blending_window_margin_bp),
             )
             window_logits_np.append(el)
         else:

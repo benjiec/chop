@@ -38,7 +38,6 @@ class TestEventsBuildEventWindowLogits(unittest.TestCase):
             event_motifs_by_class=motifs_by_class,
             head_class_ids=head_class_ids,
             num_classes=C,
-            margin_bp=0,
         )
         self.assertEqual(wl_z.shape, (L, C))
         self.assertTrue(np.all(wl_z[2:5, int(P.START)] > 0))
@@ -46,17 +45,6 @@ class TestEventsBuildEventWindowLogits(unittest.TestCase):
         self.assertTrue(np.all(wl_z[6:9, int(P.STOP)] < 0))
         self.assertTrue(np.all(wl_z[9:11, int(P.DSS)] > 0))
         self.assertTrue(np.all(wl_z[0:2, int(P.ASS)] == 0))
-
-    def test_margin_excludes_edges(self):
-        B, L, Hn, C = 1, 12, 4, 8
-        seq = torch.full((B, L), 4, dtype=torch.long)
-        seq[0, 0] = 0; seq[0, 1] = 1; seq[0, 2] = 2
-        ev = torch.zeros((B, L, Hn), dtype=torch.float32)
-        ev[:, :, H.START] = 2.0
-        motifs_by_class = {int(P.START): {"ATG"}}
-        head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
-        wl = build_event_window_logits(seq[0:1, :], ev[0:1, :, :], motifs_by_class, head_class_ids, C, margin_bp=3)
-        self.assertTrue(np.all(wl[:3, int(P.START)] == 0))
 
     def test_head_class_ids_permutation_routing(self):
         # Ensure routing honors head_class_ids even when head index != class id
@@ -93,7 +81,6 @@ class TestEventsBuildEventWindowLogits(unittest.TestCase):
             event_motifs_by_class=motifs_by_class,
             head_class_ids=head_class_ids,
             num_classes=C,
-            margin_bp=0,
         )
 
         # Check routed values land in correct class columns
