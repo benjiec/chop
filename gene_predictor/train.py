@@ -54,6 +54,12 @@ def main():
     parser.add_argument('--dss-neg-weight', type=float, default=4.0, help='Negative class weight for DSS (BCE)')
     parser.add_argument('--ass-neg-weight', type=float, default=3.0, help='Negative class weight for ASS (BCE)')
 
+    # Alpha weights per head/class (only used in event-head-bce)
+    parser.add_argument('--start-alpha', type=float, default=1.0, help='Alpha weight for START head (event-head-bce)')
+    parser.add_argument('--stop-alpha', type=float, default=1.0, help='Alpha weight for STOP head (event-head-bce)')
+    parser.add_argument('--dss-alpha', type=float, default=1.0, help='Alpha weight for DSS head (event-head-bce)')
+    parser.add_argument('--ass-alpha', type=float, default=1.0, help='Alpha weight for ASS head (event-head-bce)')
+
     # (removed) class conditional readout args
 
     # required DSS motifs choice
@@ -131,6 +137,7 @@ def main():
     ce_weight_map = None
     bce_pos_weight_map = None
     bce_neg_weight_map = None
+    bce_alpha_weight_map = None
 
     event_motifs_by_class = build_event_motifs(dss_set)
     # Persist motifs map always; head mapping only in event-head mode
@@ -156,6 +163,15 @@ def main():
             }
             config['custom']['loss']['bce_pos_weights'] = bce_pos_weight_map
             config['custom']['loss']['bce_neg_weights'] = bce_neg_weight_map
+
+    # Alpha weights per class (used only by event-head BCE); persist regardless of class-weight toggle
+    bce_alpha_weight_map = {
+        int(P.START): float(args.start_alpha),
+        int(P.STOP): float(args.stop_alpha),
+        int(P.DSS): float(args.dss_alpha),
+        int(P.ASS): float(args.ass_alpha),
+    }
+    config['custom']['loss']['bce_alpha_weights'] = bce_alpha_weight_map
 
     # Build event motifs map and custom loss
     if args.loss_type == 'event-ce':
@@ -186,6 +202,7 @@ def main():
             head_class_ids,
             pos_weights_by_class=bce_pos_weight_map,
             neg_weights_by_class=bce_neg_weight_map,
+            alpha_weights_by_class=bce_alpha_weight_map,
             loss_window_margin_bp=margin_bp,
         )
 
