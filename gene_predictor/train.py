@@ -16,7 +16,7 @@ from utils.constants import GenePredictionClass as P
 from utils.constants import EventHeadIdx as H
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.losses import event_based_ce_loss_factory, event_based_bce_loss_factory, event_head_bce_loss_factory
-from utils.events import build_event_motifs, build_event_window_logits
+from utils.events import build_event_motifs, build_class_logits_from_event_head_logits
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
@@ -249,7 +249,7 @@ def main():
             def _convert(seq_tokens_batch, event_logits_batch):
                 if not (isinstance(event_logits_batch, torch.Tensor) and event_logits_batch.dim() == 3 and int(event_logits_batch.size(0)) >= 1):
                     raise RuntimeError('Event-head mode active but event logits are missing for conversion')
-                wl = build_event_window_logits(
+                wl = build_class_logits_from_event_head_logits(
                     seq_window_tokens=seq_tokens_batch[0:1, :],
                     event_logits_window=event_logits_batch[0:1, :, :],
                     event_motifs_by_class=event_motifs_by_class,

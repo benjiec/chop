@@ -26,7 +26,7 @@ from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits, window_weights
 from utils.constants import DNAEmbed
-from utils.events import build_event_window_logits
+from utils.events import build_class_logits_from_event_head_logits
 
 
 def _fit_beta_moments(samples: list) -> Tuple[float, float, float, float, float]:
@@ -125,7 +125,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
         if use_event_logits:
             if not (isinstance(ev, torch.Tensor) and ev.dim() == 3 and int(ev.size(0)) == 1):
                 raise AssertionError("Event-head mode enabled but event logits were not produced by the model forward (extras['event_logits'])")
-            el = build_event_window_logits(
+            el = build_class_logits_from_event_head_logits(
                 seq_window_tokens=win_tokens,
                 event_logits_window=ev,
                 event_motifs_by_class={int(k): set(v) for k, v in event_motifs_by_class.items()},

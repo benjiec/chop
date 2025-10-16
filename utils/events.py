@@ -98,7 +98,7 @@ def build_event_motifs(dss_motifs: Iterable[str]) -> Dict[int, Set[str]]:
     }
 
 
-def build_event_window_logits(
+def build_class_logits_from_event_head_logits(
     seq_window_tokens: torch.Tensor,
     event_logits_window: torch.Tensor,
     event_motifs_by_class: Dict[int, Set[str]],

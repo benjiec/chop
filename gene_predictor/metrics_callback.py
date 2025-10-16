@@ -8,7 +8,7 @@ import numpy as np
 
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
-from utils.events import build_event_window_logits
+from utils.events import build_class_logits_from_event_head_logits
 
 
 def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None, components: dict | None = None) -> None:

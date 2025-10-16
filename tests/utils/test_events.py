@@ -4,7 +4,7 @@ import unittest
 import numpy as np
 import torch
 
-from utils.events import build_event_window_logits, build_event_masks, build_event_masks_vectorized, build_center_mask, compute_event_spans_vectorized
+from utils.events import build_class_logits_from_event_head_logits, build_event_masks, build_event_masks_vectorized, build_center_mask, compute_event_spans_vectorized
 from utils.constants import GenePredictionClass as P
 from utils.constants import EventHeadIdx as H
 
@@ -32,7 +32,7 @@ class TestEventsBuildEventWindowLogits(unittest.TestCase):
         }
         head_class_ids = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
 
-        wl_z = build_event_window_logits(
+        wl_z = build_class_logits_from_event_head_logits(
             seq_window_tokens=seq[0:1, :],
             event_logits_window=ev[0:1, :, :],
             event_motifs_by_class=motifs_by_class,
@@ -75,7 +75,7 @@ class TestEventsBuildEventWindowLogits(unittest.TestCase):
         # Permute head mapping: [DSS, START, STOP, ASS]
         head_class_ids = [int(P.DSS), int(P.START), int(P.STOP), int(P.ASS)]
 
-        wl = build_event_window_logits(
+        wl = build_class_logits_from_event_head_logits(
             seq_window_tokens=seq[0:1, :],
             event_logits_window=ev[0:1, :, :],
             event_motifs_by_class=motifs_by_class,
