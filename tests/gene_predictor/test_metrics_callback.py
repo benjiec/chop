@@ -71,7 +71,7 @@ class TestMetricsCallback(unittest.TestCase):
         # Provide required metric functions
         calc_metrics, _calc_with = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
         calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
-        cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
+        cb = MetricsCallback(val_loader, verbose=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         # Populate new batch results structure expected by the callback
         class BR:
@@ -104,7 +104,7 @@ class TestMetricsCallback(unittest.TestCase):
 
         calc_metrics, _ = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
         calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
-        cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=Path('/tmp'))
+        cb = MetricsCallback(val_loader, verbose=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=Path('/tmp'))
 
         class DummyModule:
             def __init__(self, logits):
@@ -167,7 +167,7 @@ class TestMetricsCallback(unittest.TestCase):
 
         calc_metrics, _calc_with = event_based_generic_metrics_factory(build_event_motifs(StandardDonorDinucleotides))
         calc_brier = event_based_brier_factory(build_event_motifs(StandardDonorDinucleotides))
-        cb = MetricsCallback(val_loader, print_per_class_every=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
+        cb = MetricsCallback(val_loader, verbose=0, margin_bp=0, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier)
         mod = DummyModule(logits, cw)
         # Populate new batch results structure expected by the callback
         class BR:

@@ -66,12 +66,12 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
 class MetricsCallback(pl.Callback):
     """Compute validation metrics (macro F1, Brier) and per-class stats; optionally write TSV."""
 
-    def __init__(self, val_loader, print_per_class_every: int = 1, margin_bp: int = 0,
+    def __init__(self, val_loader, verbose: int = 1, margin_bp: int = 0,
                  calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None,
                  event_logits_conversion_fn=None):
         super().__init__()
         self.val_loader = val_loader
-        self.print_per_class_every = int(print_per_class_every) if print_per_class_every is not None else 0
+        self.verbose = int(verbose) if verbose is not None else 0
         self.margin_bp = int(margin_bp) if margin_bp is not None else 0
         self._calculate_metrics_fn = calculate_metrics_fn
         self._compute_brier_fn = compute_brier_fn
@@ -161,16 +161,15 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)] = {}
             per_class[int(cls_idx)]['brier'] = float(val)
 
-        """
-        for cls_idx, vals in per_class.items():
-            name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            print(name,
-                  'sen', "%.4f" % vals.get('sensitivity', 0.0),
-                  'pre', "%.4f" % vals.get('precision', 0.0),
-                  'f1',  "%.4f" % vals.get('f1', 0.0),
-                  'brier', "%.4f" % vals.get('brier', 0.0)
-            )
-        """
+        if self.verbose:
+            for cls_idx, vals in per_class.items():
+                name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+                print(name,
+                      'sen', "%.4f" % vals.get('sensitivity', 0.0),
+                      'pre', "%.4f" % vals.get('precision', 0.0),
+                      'f1',  "%.4f" % vals.get('f1', 0.0),
+                      'brier', "%.4f" % vals.get('brier', 0.0)
+                )
 
         # Optionally write tall TSV of metrics (aggregate loss via trainer metrics)
         val_loss = None

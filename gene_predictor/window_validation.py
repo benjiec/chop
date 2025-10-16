@@ -8,12 +8,14 @@ import numpy as np
 import argparse
 
 from dna_learner.model import GenePredictorModule as ModelModule
+from dna_learner.model import BatchResult
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import SequenceResult
-from utils.events import build_event_motifs
+from utils.events import build_event_motifs, build_class_logits_from_event_head_logits
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from gene_predictor.metrics_callback import MetricsCallback
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
+from utils.constants import GenePredictionClass as P
 
 
 def load_model(model_path):
@@ -53,31 +55,73 @@ def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
     
     device = "cpu"
     with torch.no_grad():
-        # Build SequenceResult list over validation loader
-        seq_results = []
+        # Discover event-head settings from config (align with training/predict)
+        cfg = getattr(model, 'config', {}) or {}
+        ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
+        model_cfg = cfg.get('model', {}) if isinstance(cfg, dict) else {}
+        num_event_heads = int(model_cfg.get('num_event_heads') or 0)
+        event_motifs_by_class = ccfg.get('event_motifs_by_class')
+        head_class_ids = ccfg.get('head_class_ids')
+
+        # Fallback for motifs if not present in config
+        if not event_motifs_by_class:
+            event_motifs_by_class = build_event_motifs(dss_set)
+
+        # Build BatchResult list over validation loader (like training path)
+        batch_results = []
+        total_so_far = 0
         for sequences, targets in val_loader:
             sequences = sequences.to(device)
             targets = targets.to(device)
-            logits = model.model(sequences)
-            seq_results.extend(SequenceResult.from_batch(
-                sequence_tokens_batch=sequences,
-                targets_batch=targets,
-                logits_batch=logits,
-                sequence_index_start=len(seq_results),
-                mask_non_event_probs=False,
+
+            extras = {}
+            logits = model.model(
+                sequences,
+                extras=extras,
+                return_event_logits=('event_logits' if num_event_heads > 0 else None),
+            )
+            ev = extras['event_logits'] if 'event_logits' in extras else None
+
+            batch_results.append(BatchResult(
+                sequence_tokens_batch=sequences.detach(),
+                targets_batch=targets.detach(),
+                logits_batch=logits.detach(),
+                event_logits_batch=(ev.detach() if isinstance(ev, torch.Tensor) else None),
+                sequence_index_start=int(total_so_far),
             ))
+            total_so_far += int(sequences.size(0))
 
         # Set up metrics callback (no CSV) and invoke epoch end
-        # Default to standard DSS motif set for metrics in this utility
-        event_motifs_by_class = build_event_motifs(dss_set)
         calc_metrics, _ = event_based_generic_metrics_factory(event_motifs_by_class)
         calc_brier = event_based_brier_factory(event_motifs_by_class)
-        cb = MetricsCallback(val_loader, print_per_class_every=1, margin_bp=int(margin_bp),
-                             calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=None)
+
+        # Build conversion fn (align with train.py) if event-head mode
+        logits_conversion_fn = None
+        if num_event_heads > 0:
+            def _convert(seq_tokens_batch, event_logits_batch):
+                if not (isinstance(event_logits_batch, torch.Tensor) and event_logits_batch.dim() == 3 and int(event_logits_batch.size(0)) >= 1):
+                    raise RuntimeError('Event-head mode active but event logits are missing for conversion')
+                B = int(event_logits_batch.size(0))
+                outs = []
+                for b in range(B):
+                    wl = build_class_logits_from_event_head_logits(
+                        seq_window_tokens=seq_tokens_batch[b:b+1, :],
+                        event_logits_window=event_logits_batch[b:b+1, :, :],
+                        event_motifs_by_class=event_motifs_by_class,
+                        head_class_ids=head_class_ids,
+                        num_classes=len(P.idx_to_cls),
+                    )
+                    outs.append(wl)
+                return torch.from_numpy(np.stack(outs, axis=0))
+            logits_conversion_fn = _convert
+
+        cb = MetricsCallback(val_loader, verbose=1, margin_bp=int(margin_bp),
+                             calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=None,
+                             event_logits_conversion_fn=logits_conversion_fn)
 
         class DummyModule:
             def __init__(self, results):
-                self._cb_results_data = results
+                self.validation_epoch_results = results
                 self.logged = {}
                 self._param = torch.nn.Parameter(torch.zeros(1))
             def parameters(self):
@@ -90,7 +134,7 @@ def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
                 except Exception:
                     self.logged[name] = value
 
-        mod = DummyModule(seq_results)
+        mod = DummyModule(batch_results)
         cb.on_validation_epoch_end(trainer=None, pl_module=mod)
         print("val_f1:", mod.logged.get('val_f1'))
         print("val_brier:", mod.logged.get('val_brier'))
@@ -124,14 +168,23 @@ def main():
     else:
         dss_set = StandardDonorDinucleotides
 
-    dataset = AnnotatedGenomeDataset(
-        args.fna_fn,
-        args.tsv_fn,
-        window=max_seq_len,
-        stride=args.window_stride,
-        num_windows=args.num_windows,
-        class_weights=model.config["loss"]["class_weights"]
-    )
+    if args.num_windows:
+        dataset = AnnotatedGenomeDataset(
+            args.fna_fn,
+            args.tsv_fn,
+            window=max_seq_len,
+            stride=args.window_stride,
+            num_windows=args.num_windows,
+            class_weights=model.config["loss"]["class_weights"]
+        )
+    else:
+        dataset = AnnotatedGenomeDataset(
+            args.fna_fn,
+            args.tsv_fn,
+            window=max_seq_len,
+            stride=args.window_stride,
+            class_weights=model.config["loss"]["class_weights"]
+        )
 
     run_test(dataset, model, dss_set)
 
