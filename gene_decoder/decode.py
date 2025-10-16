@@ -49,7 +49,6 @@ def main():
     p.add_argument('--topk-splicing', type=int, default=3)
     p.add_argument('--topk-starts', type=int, default=10)
     p.add_argument('--beam-size', type=int, default=16)
-    p.add_argument('--no-overlap', action='store_true')
     p.add_argument('--temperature-scale', type=float, default=1.0)
     p.add_argument('--z-transform-probs', action='store_true')
     p.add_argument('--min-prob', type=float, default=0.05)
@@ -96,7 +95,6 @@ def main():
             top_k_splicing=args.topk_splicing,
             top_k_starts=args.topk_starts,
             beam_size=args.beam_size,
-            allow_overlap=not args.no_overlap,
             min_logp=math.log(args.min_prob)
         )
 

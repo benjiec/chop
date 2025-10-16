@@ -357,7 +357,6 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     # Get suffix completions from start state, then add START event and build candidates
     suffixes = dp(start_pos + 3, Beam.EXON, 0, start_pos)
     candidates: List[CandidateGene] = []
-    print("final candidates", len(suffixes))
 
     for tail in suffixes:
         # add START event
@@ -385,25 +384,45 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
 
 def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
-                    allow_overlap: bool = True, min_logp: Optional[float] = None) -> DecodedResult:
+                    min_logp: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
     if min_logp is None:
         min_logp = math.log(0.1)
     events = _scan_events(seq, dss_motifs, probs=ps.probabilities, min_logp=min_logp)
 
-    per_start: Dict[int, List[CandidateGene]] = {}
-    start_boundary: Dict[int, float] = {}
-    for s in events["start"]:
-        cands = _decode_from_start(ps, s, events, top_k_splicing=top_k_splicing, beam_size=beam_size)
-        per_start[s] = cands
-        if cands:
-            start_boundary[s] = cands[0].boundary_score  # identical across variants of same START
+    # Precompute START logp and process starts in descending order for pruning
+    import heapq
+    start_positions = list(events.get("start", []))
+    start_logp: Dict[int, float] = {s: _event_logp(ps.probabilities, s, P.START, False) for s in start_positions}
+    starts_desc: List[int] = sorted(start_positions, key=lambda s: start_logp[s], reverse=True)
 
-    # Select top_k_starts by boundary_score; include ties at cutoff (no tie-break)
-    sorted_starts = sorted(start_boundary.items(), key=lambda kv: kv[1], reverse=True)
+    per_start: Dict[int, List[CandidateGene]] = {}
+    start_best_boundary: Dict[int, float] = {}
+    best_k_heap: List[float] = []  # min-heap of best per-start boundary scores
+
+    for s in starts_desc:
+        if len(best_k_heap) >= top_k_starts and start_logp[s] < best_k_heap[0]:
+            break
+
+        cands = _decode_from_start(ps, s, events, top_k_splicing=top_k_splicing, beam_size=beam_size)
+        if cands:
+            # order per-start candidates by boundary then transition desc
+            cands.sort(key=lambda c: (c.boundary_score, c.transition_score), reverse=True)
+            per_start[s] = cands
+            bmax = cands[0].boundary_score
+            start_best_boundary[s] = bmax
+            if len(best_k_heap) < top_k_starts:
+                heapq.heappush(best_k_heap, bmax)
+            else:
+                if bmax > best_k_heap[0]:
+                    heapq.heapreplace(best_k_heap, bmax)
+        else:
+            per_start[s] = []
+
+    # Select top_k_starts by max per-start boundary; include ties at cutoff (no tie-break)
+    sorted_starts = sorted(start_best_boundary.items(), key=lambda kv: kv[1], reverse=True)
     chosen_starts: List[int] = []
     if sorted_starts:
-        # Determine threshold boundary at the kth start (if available)
         cutoff_index = min(top_k_starts, len(sorted_starts)) - 1
         threshold = sorted_starts[cutoff_index][1]
         for s, b in sorted_starts:
@@ -415,21 +434,9 @@ def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing
     for s in chosen_starts:
         global_candidates.extend(per_start.get(s, []))
 
-    # Order global candidates primarily by boundary_score (desc), then transition_score (desc)
+    # Always allow overlap: order by boundary then transition, both descending
     global_candidates.sort(key=lambda c: (c.boundary_score, c.transition_score), reverse=True)
-
-    if allow_overlap:
-        global_top = global_candidates
-    else:
-        # Greedy non-overlapping selection by boundary_score first
-        global_top = []
-        used: List[Tuple[int, int]] = []
-        for c in global_candidates:
-            span = (c.exons[0][0], c.exons[-1][1]) if c.exons else (0, 0)
-            if any(not (span[1] <= u[0] or span[0] >= u[1]) for u in used):
-                continue
-            global_top.append(c)
-            used.append(span)
+    global_top = global_candidates
 
     return DecodedResult(sequence_index=ps.sequence_index, per_start=per_start, global_topk=global_top)
 

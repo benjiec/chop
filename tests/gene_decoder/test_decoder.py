@@ -678,8 +678,8 @@ class TestDecoder(unittest.TestCase):
         self.assertGreaterEqual(len(res.per_start.keys()), 2)
         self.assertEqual(len(res.global_topk), 2)
 
-    def test_no_overlap_selection(self):
-        # Two overlapping candidates; with allow_overlap=False only one remains
+    def test_overlapping_candidates_are_allowed(self):
+        # Two overlapping candidates; decoder should allow both when selected by top_k_starts
         L = 35
         seq = list('A' * L)
         s1 = 3; t1 = 18
@@ -695,8 +695,8 @@ class TestDecoder(unittest.TestCase):
         for pos in [(s1,P.START,3),(s2,P.START,3),(t1,P.STOP,3),(t2,P.STOP,3)]:
             _set_event(probs, pos[0], pos[1], pos[2], 0.9)
         ps = PredictedSequence(12, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=1, beam_size=8, allow_overlap=False)
-        self.assertEqual(len(res.global_topk), 1)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=2, beam_size=8)
+        self.assertGreaterEqual(len(res.global_topk), 2)
 
     def test_event_near_end_no_oob(self):
         # DSS at L-2 and STOP at L-3 should not crash; candidate may or may not use DSS
@@ -822,6 +822,116 @@ class TestDecoder(unittest.TestCase):
         self.assertEqual(ev2['dss'], [d])
         self.assertEqual(ev2['ass'], [a])
         self.assertEqual(ev2['stop'], [t])
+
+    def test_start_selection_by_max_boundary_and_ties(self):
+        # Three starts: s1 and s3 have identical max boundary; s2 is lower.
+        # With top_k_starts=1, both s1 and s3 should be included due to tie.
+        L = 60
+        seq = ['A'] * L
+        s1, s2, s3 = 3, 10, 17
+        # In-frame STOPs relative to each start: j = start + 3 + 3*k
+        t1 = s1 + 3 + 3 * 5  # 21
+        t2 = s2 + 3 + 3 * 5  # 28
+        t3 = s3 + 3 + 3 * 5  # 32
+        seq[0:3] = list('NNN')
+        seq[s1:s1+3] = list('ATG')
+        seq[s2:s2+3] = list('ATG')
+        seq[s3:s3+3] = list('ATG')
+        seq[t1:t1+3] = list('TAA')
+        seq[t2:t2+3] = list('TAA')
+        seq[t3:t3+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C, default_p=0.99)
+        # Equal START probs for all; equal STOP for s1 and s3; lower STOP for s2
+        _set_event(probs, s1, P.START, 3, 0.9)
+        _set_event(probs, s2, P.START, 3, 0.9)
+        _set_event(probs, s3, P.START, 3, 0.9)
+        _set_event(probs, t1, P.STOP, 3, 0.8)
+        _set_event(probs, t2, P.STOP, 3, 0.6)
+        _set_event(probs, t3, P.STOP, 3, 0.8)
+
+        ps = PredictedSequence(100, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=16)
+
+        # Collect start indices from global candidates
+        starts_in_global = {c.events['start'][0] for c in res.global_topk if c.events.get('start')}
+        self.assertIn(s1, starts_in_global)
+        self.assertIn(s3, starts_in_global)
+        self.assertNotIn(s2, starts_in_global)
+
+    def test_intra_start_multiple_candidates_with_different_boundaries_included(self):
+        # One start produces two candidates: single-exon vs split-exon with different STOP probs -> different boundaries.
+        # Both should be included under the selected start when top_k_splicing >= 2.
+        L = 70
+        seq = ['A'] * L
+        s = 3
+        d = 12  # DSS before the first in-frame STOP to create branching
+        a = 20
+        # Single-exon STOP (earliest in-frame from s):
+        t_single = s + 3 + 3 * 6  # 24
+        # Split path STOP (after acceptor), choose a later in-frame STOP
+        t_split = 46  # ensure in-frame after re-entry at a+2 (=22): (46 - 22) % 3 == 0
+        seq[0:3] = list('NNN')
+        seq[s:s+3] = list('ATG')
+        seq[d:d+2] = list('GT')
+        seq[a:a+2] = list('AG')
+        seq[t_single:t_single+3] = list('TAA')
+        seq[t_split:t_split+3] = list('TGA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C, default_p=0.9)
+        _set_event(probs, s, P.START, 3, 0.95)
+        _set_event(probs, d, P.DSS, 2, 0.9)
+        _set_event(probs, a, P.ASS, 2, 0.9)
+        # Single-exon STOP lower prob, split STOP higher prob -> different boundaries
+        _set_event(probs, t_single, P.STOP, 3, 0.6)
+        _set_event(probs, t_split, P.STOP, 3, 0.9)
+
+        ps = PredictedSequence(101, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=1, beam_size=32)
+
+        # Ensure both candidates under this start exist and have different boundaries
+        self.assertIn(s, res.per_start)
+        cands = res.per_start[s]
+        self.assertGreaterEqual(len(cands), 2)
+        boundaries = [c.boundary_score for c in cands[:2]]
+        self.assertNotAlmostEqual(boundaries[0], boundaries[1], places=6)
+        # Both should appear in global list since this start is selected
+        cands_from_s = [c for c in res.global_topk if c.events.get('start') == [s]]
+        self.assertGreaterEqual(len(cands_from_s), 2)
+
+    def test_only_best_starts_are_selected(self):
+        # Two starts with different boundary maxima; with top_k_starts=1 only the best should contribute to global_topk.
+        L = 55
+        seq = ['A'] * L
+        s_hi = 3
+        s_lo = 11
+        t_hi = s_hi + 3 + 3 * 5  # 21
+        # Choose t_lo in-frame for s_lo and not equal to t_hi; with s_lo=11, re-entry is 14
+        t_lo = 29
+        seq[0:3] = list('NNN')
+        seq[s_hi:s_hi+3] = list('ATG')
+        seq[s_lo:s_lo+3] = list('ATG')
+        seq[t_hi:t_hi+3] = list('TAA')
+        seq[t_lo:t_lo+3] = list('TAA')
+        seq = ''.join(seq)
+
+        C = len(P.idx_to_cls)
+        probs = _make_probs(L, C, default_p=0.99)
+        _set_event(probs, s_hi, P.START, 3, 0.95)
+        _set_event(probs, s_lo, P.START, 3, 0.95)
+        _set_event(probs, t_hi, P.STOP, 3, 0.9)
+        _set_event(probs, t_lo, P.STOP, 3, 0.6)
+
+        ps = PredictedSequence(102, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=16)
+
+        starts_in_global = {c.events['start'][0] for c in res.global_topk if c.events.get('start')}
+        self.assertIn(s_hi, starts_in_global)
+        self.assertNotIn(s_lo, starts_in_global)
 
 
 if __name__ == '__main__':
