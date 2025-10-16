@@ -12,7 +12,7 @@ from utils.metrics import compute_event_span_mean_probability_beta_fits
 from utils.events import build_class_logits_from_event_head_logits
 
 
-def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None, components: dict | None = None) -> None:
+def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: float, overall_brier: float, per_class: dict, val_loss: float | None = None) -> None:
     if run_dir is None:
         return
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -21,9 +21,12 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
 
     rows = []
     def add(metric_name, class_name, value):
+        # Skip writing rows during sanity check
+        if trainer is not None and getattr(trainer, 'sanity_checking', False):
+            return
         rows.append([
             int(trainer.current_epoch) if trainer is not None else 0,
-            'val',
+            ('sanity' if (trainer is not None and getattr(trainer, 'sanity_checking', False)) else 'val'),
             metric_name,
             class_name,
             _safe_float(value),
@@ -35,37 +38,11 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
     if val_loss is not None:
         add('loss', '', val_loss)
 
-    # Per-class metrics
+    # Per-class metrics (write all provided keys)
     for cls_idx, vals in per_class.items():
         name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-        if 'sensitivity' in vals:
-            add('sensitivity', name, vals.get('sensitivity'))
-        if 'precision' in vals:
-            add('precision', name, vals.get('precision'))
-        if 'f1' in vals:
-            add('f1', name, vals.get('f1'))
-        if 'brier' in vals:
-            add('brier', name, vals.get('brier'))
-        # Optional beta fit summaries
-        if 'pos_prob_mean' in vals:
-            add('pos_prob_mean', name, vals.get('pos_prob_mean'))
-        if 'pos_prob_std' in vals:
-            add('pos_prob_std', name, vals.get('pos_prob_std'))
-        if 'neg_prob_mean' in vals:
-            add('neg_prob_mean', name, vals.get('neg_prob_mean'))
-        if 'neg_prob_std' in vals:
-            add('neg_prob_std', name, vals.get('neg_prob_std'))
-
-    # Include components (flat) if provided
-    if components:
-        for k, v in components.items():
-            rows.append([
-                int(trainer.current_epoch) if trainer is not None else 0,
-                'val',
-                str(k),
-                '',
-                _safe_float(v),
-            ])
+        for key, val in vals.items():
+            add(str(key), name, val)
 
     with csv_path.open('a', newline='') as f:
         writer = csv.writer(f)
@@ -73,12 +50,13 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
             writer.writerow(['epoch', 'batch', 'metric', 'class', 'value'])
         writer.writerows(rows)
 
+
 class MetricsCallback(pl.Callback):
     """Compute validation metrics (macro F1, Brier) and per-class stats; optionally write TSV."""
 
     def __init__(self, val_loader, verbose: int = 1, margin_bp: int = 0,
                  calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None,
-                 event_logits_conversion_fn=None, event_motifs_by_class=None):
+                 event_logits_conversion_fn=None, event_motifs_by_class=None, head_class_ids=None):
         super().__init__()
         self.val_loader = val_loader
         self.verbose = int(verbose) if verbose is not None else 0
@@ -88,6 +66,7 @@ class MetricsCallback(pl.Callback):
         self.run_dir = Path(run_dir) if run_dir is not None else None
         self._event_logits_conversion_fn = event_logits_conversion_fn
         self._event_motifs_by_class = event_motifs_by_class
+        self._head_class_ids = list(head_class_ids) if head_class_ids is not None else None
         # Initialize results accumulator so tests that call only epoch_end won't fail
         self._results_data = []
 
@@ -185,23 +164,8 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)]['neg_prob_mean'] = float(tn.get('mean', 0.0))
                 per_class[int(cls_idx)]['neg_prob_std'] = float(tn.get('std', 0.0))
 
-        if self.verbose:
-            for cls_idx, vals in per_class.items():
-                name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-                print(name,
-                      'sen', "%.4f" % vals.get('sensitivity', 0.0),
-                      'pre', "%.4f" % vals.get('precision', 0.0),
-                      'f1',  "%.4f" % vals.get('f1', 0.0),
-                      'brier', "%.4f" % vals.get('brier', 0.0),
-                      'pos_prob_mean', "%.4f" % vals.get('pos_prob_mean', 0.0),
-                      'pos_prob_std', "%.4f" % vals.get('pos_prob_std', 0.0),
-                      'neg_prob_mean', "%.4f" % vals.get('neg_prob_mean', 0.0),
-                      'neg_prob_std', "%.4f" % vals.get('neg_prob_std', 0.0),
-                )
-
-        # Optionally write tall TSV of metrics (aggregate loss via trainer metrics)
+        # Aggregate loss via trainer metrics, map to per-class using head_class_ids when available
         val_loss = None
-        aggregated_head_components = {}
         if trainer is not None and hasattr(trainer, 'callback_metrics'):
             cbm = trainer.callback_metrics
             val_loss = float(cbm.get('val_loss')) if 'val_loss' in cbm else None
@@ -210,11 +174,31 @@ class MetricsCallback(pl.Callback):
                 if isinstance(mk, str) and mk.startswith('val_loss_head_'):
                     # map to components key name used elsewhere
                     suffix = mk[len('val_'):]
-                    aggregated_head_components[suffix] = float(mv)
-                    print(suffix, float(mv))
+                    # Also store into per_class when mapping available
+                    try:
+                        head_idx = int(suffix.split('_')[-1])
+                    except Exception:
+                        head_idx = None
+                    if head_idx is not None and self._head_class_ids is not None and head_idx < len(self._head_class_ids):
+                        cls_id = int(self._head_class_ids[head_idx])
+                        if int(cls_id) not in per_class:
+                            per_class[int(cls_id)] = {}
+                        per_class[int(cls_id)]['event_head_loss'] = float(mv)
 
+        if self.verbose:
+            for cls_idx, vals in per_class.items():
+                name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+                print(name,
+                      "%.4f" % vals.get('event_head_loss', 0.0),
+                      "%d/%d-%d/%d" % (vals.get('pos_prob_mean', 0.0)*100, vals.get('pos_prob_std', 0.0)*100,
+                                       vals.get('neg_prob_mean', 0.0*100), vals.get('neg_prob_std', 0.0)*100),
+                      "%.4f" % vals.get('brier', 0.0),
+                      "%d/%d" % (vals.get('sensitivity', 0.0)*100, vals.get('precision', 0.0)*100)
+                )
+
+        # Optionally write tall TSV of metrics 
         if self.run_dir is not None:
-            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss, aggregated_head_components)
+            write_epoch_csv_tall(self.run_dir, trainer, macro_f1, overall_brier, per_class, val_loss)
 
 
 class DualMetricEarlyStopping(pl.Callback):

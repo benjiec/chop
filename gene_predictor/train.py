@@ -176,6 +176,7 @@ def main():
     config['custom']['loss']['bce_alpha_weights'] = bce_alpha_weight_map
 
     # Build event motifs map and custom loss
+    head_class_ids = None
     if args.loss_type == 'event-ce':
         print("using event_based_ce_loss")
         custom_loss = event_based_ce_loss_factory(
@@ -268,7 +269,7 @@ def main():
         if num_event_heads > 0:
             return [
                 MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
-                                event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class),
+                                event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids),
                 pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
             ]
 
@@ -284,7 +285,7 @@ def main():
         )
         return [
             MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
-                            event_motifs_by_class=event_motifs_by_class),
+                            event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids),
             DualMetricEarlyStopping(patience=8),
             f1_ckpt,
         ]
