@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dna_learner.trainer import train as run_trainer
 import torch
+import numpy as np
 import argparse
 from datetime import datetime
 from typing import Optional, Dict, Callable
@@ -249,21 +250,25 @@ def main():
             def _convert(seq_tokens_batch, event_logits_batch):
                 if not (isinstance(event_logits_batch, torch.Tensor) and event_logits_batch.dim() == 3 and int(event_logits_batch.size(0)) >= 1):
                     raise RuntimeError('Event-head mode active but event logits are missing for conversion')
-                wl = build_class_logits_from_event_head_logits(
-                    seq_window_tokens=seq_tokens_batch[0:1, :],
-                    event_logits_window=event_logits_batch[0:1, :, :],
-                    event_motifs_by_class=event_motifs_by_class,
-                    head_class_ids=head_class_ids,
-                    num_classes=len(P.idx_to_cls),
-                )
-                return torch.from_numpy(wl).unsqueeze(0)
+                B = int(event_logits_batch.size(0))
+                outs = []
+                for b in range(B):
+                    wl = build_class_logits_from_event_head_logits(
+                        seq_window_tokens=seq_tokens_batch[b:b+1, :],
+                        event_logits_window=event_logits_batch[b:b+1, :, :],
+                        event_motifs_by_class=event_motifs_by_class,
+                        head_class_ids=head_class_ids,
+                        num_classes=len(P.idx_to_cls),
+                    )
+                    outs.append(wl)
+                return torch.from_numpy(np.stack(outs, axis=0))
             event_logits_conversion_fn = _convert
 
         # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
         if num_event_heads > 0:
             return [
                 MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
-                                event_logits_conversion_fn=event_logits_conversion_fn),
+                                event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class),
                 pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
             ]
 
@@ -278,7 +283,8 @@ def main():
             auto_insert_metric_name=False,
         )
         return [
-            MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir),
+            MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
+                            event_motifs_by_class=event_motifs_by_class),
             DualMetricEarlyStopping(patience=8),
             f1_ckpt,
         ]

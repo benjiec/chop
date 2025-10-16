@@ -118,7 +118,8 @@ def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
 
         cb = MetricsCallback(val_loader, verbose=1, margin_bp=int(margin_bp),
                              calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=None,
-                             event_logits_conversion_fn=logits_conversion_fn)
+                             event_logits_conversion_fn=logits_conversion_fn,
+                             event_motifs_by_class=event_motifs_by_class)
 
         class DummyModule:
             def __init__(self, results):
