@@ -11,6 +11,7 @@ from utils.events import normalize_event_motifs_map
 from utils.events import group_motifs_by_length
 from utils.events import convert_tokens_to_sequence
 from utils.events import build_event_masks, build_center_mask
+from utils.events import compute_event_spans_vectorized
 import torch
 
 
@@ -275,4 +276,80 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
 
     return compute_brier_scores
 
+
+
+def compute_event_span_mean_probability_beta_fits(
+    results_data: List[SequenceResult],
+    event_motifs_by_class: Dict[Union[int, str], Iterable[str]],
+) -> Dict[int, Dict[str, Dict[str, float]]]:
+    """Aggregate per-span mean probabilities into TP/TN Beta fits per class.
+
+    Returns a nested dict keyed by class id, then category 'tp'/'tn', each with:
+    { 'n': int, 'mean': float, 'std': float, 'beta_alpha': float, 'beta_beta': float }
+    """
+    normalized = normalize_event_motifs_map(event_motifs_by_class)
+    classes = sorted(normalized.keys())
+
+    # Collect samples per class and category
+    samples_tp: Dict[int, list] = {int(c): [] for c in classes}
+    samples_tn: Dict[int, list] = {int(c): [] for c in classes}
+
+    for r in results_data:
+        probs = r.probabilities
+        labels = r.targets
+        if probs is None or labels is None:
+            continue
+        tokens_t = torch.as_tensor(r.sequence_tokens, dtype=torch.long)
+        spans_map = compute_event_spans_vectorized(tokens_t, normalized)
+        L = int(probs.shape[0])
+        for cls_idx in classes:
+            for (s, e_excl) in spans_map.get(int(cls_idx), []):
+                s0, e0 = int(s), int(e_excl - 1)
+                if e0 <= s0:
+                    continue
+                s0 = max(0, s0)
+                e0 = min(L - 1, e0)
+                window = probs[s0:e0+1, int(cls_idx)].astype(float)
+                finite_mask = np.isfinite(window)
+                if not finite_mask.any():
+                    continue
+                mean_p = float(np.mean(window[finite_mask]))
+                mean_p = float(np.clip(mean_p, 1e-8, 1.0 - 1e-8))
+                is_pos = bool(np.any(np.asarray(labels[s0:e0+1], dtype=int) == int(cls_idx)))
+                if is_pos:
+                    samples_tp[int(cls_idx)].append(mean_p)
+                else:
+                    samples_tn[int(cls_idx)].append(mean_p)
+
+    def _fit_beta_moments(samples: list) -> Tuple[int, float, float, float, float]:
+        if not samples:
+            return 0, 0.0, 0.0, 0.0, 0.0
+        arr = np.asarray(samples, dtype=float)
+        arr = np.clip(arr, 1e-8, 1.0 - 1e-8)
+        m = float(np.mean(arr))
+        v = float(np.var(arr))
+        n = int(arr.size)
+        if v <= 1e-12 or m <= 1e-8 or m >= 1.0 - 1e-8:
+            k = 100.0
+            alpha = m * k
+            beta = (1.0 - m) * k
+            s = float(np.std(arr))
+            return n, m, s, float(alpha), float(beta)
+        k = m * (1.0 - m) / v - 1.0
+        if k <= 0.0:
+            k = 100.0
+        alpha = m * k
+        beta = (1.0 - m) * k
+        s = float(np.sqrt(v))
+        return n, m, s, float(alpha), float(beta)
+
+    out: Dict[int, Dict[str, Dict[str, float]]] = {}
+    for cls in classes:
+        n_tp, m_tp, s_tp, a_tp, b_tp = _fit_beta_moments(samples_tp[int(cls)])
+        n_tn, m_tn, s_tn, a_tn, b_tn = _fit_beta_moments(samples_tn[int(cls)])
+        out[int(cls)] = {
+            'tp': {'n': float(n_tp), 'mean': m_tp, 'std': s_tp, 'beta_alpha': a_tp, 'beta_beta': b_tp},
+            'tn': {'n': float(n_tn), 'mean': m_tn, 'std': s_tn, 'beta_alpha': a_tn, 'beta_beta': b_tn},
+        }
+    return out
 

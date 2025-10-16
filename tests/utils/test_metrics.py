@@ -7,6 +7,7 @@ from utils.metrics import (
     event_based_brier_factory,
     event_based_generic_metrics_factory,
     SequenceResult,
+    compute_event_span_mean_probability_beta_fits,
 )
 from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P, StandardDonorDinucleotides
@@ -270,6 +271,36 @@ class TestGenericMetrics(unittest.TestCase):
         self.assertIn((5, 6, 'TP'), spans)
         self.assertIn((20, 21, 'FN'), spans)
 
+
+class TestEventSpanMeanProbabilityBetaFits(unittest.TestCase):
+    def test_beta_fit_tp_tn_per_class(self):
+        # Build a simple sequence with one START and one DSS motif
+        dna = 'NNNATGNNNGTNN'
+        vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+        tokens = np.array([vocab.get(ch, 4) for ch in dna], dtype=np.int64)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = np.zeros((L, C), dtype=np.float32)
+        # START probs high on its window 3..5
+        probs[3:6, P.START] = 0.9
+        # DSS probs moderate on its window 9..10
+        probs[9:11, P.DSS] = 0.6
+        # Labels: only START positive, DSS negative
+        targets = np.zeros(L, dtype=int)
+        targets[3:6] = P.START
+        res = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
+
+        motifs = build_event_motifs(StandardDonorDinucleotides)
+        out = compute_event_span_mean_probability_beta_fits(res, motifs)
+        # START should have TP stats with mean near 0.9, DSS should have TN stats near 0.6
+        self.assertIn(P.START, out)
+        self.assertIn('tp', out[P.START])
+        self.assertGreater(out[P.START]['tp']['n'], 0.0)
+        self.assertAlmostEqual(out[P.START]['tp']['mean'], 0.9, places=2)
+        self.assertIn(P.DSS, out)
+        self.assertIn('tn', out[P.DSS])
+        self.assertGreater(out[P.DSS]['tn']['n'], 0.0)
+        self.assertAlmostEqual(out[P.DSS]['tn']['mean'], 0.6, places=2)
 
 class TestMetricsValidMask(unittest.TestCase):
     @classmethod

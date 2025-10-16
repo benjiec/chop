@@ -8,6 +8,7 @@ import numpy as np
 
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
+from utils.metrics import compute_event_span_mean_probability_beta_fits
 from utils.events import build_class_logits_from_event_head_logits
 
 
@@ -45,6 +46,15 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
             add('f1', name, vals.get('f1'))
         if 'brier' in vals:
             add('brier', name, vals.get('brier'))
+        # Optional beta fit summaries
+        if 'pos_prob_mean' in vals:
+            add('pos_prob_mean', name, vals.get('pos_prob_mean'))
+        if 'pos_prob_std' in vals:
+            add('pos_prob_std', name, vals.get('pos_prob_std'))
+        if 'neg_prob_mean' in vals:
+            add('neg_prob_mean', name, vals.get('neg_prob_mean'))
+        if 'neg_prob_std' in vals:
+            add('neg_prob_std', name, vals.get('neg_prob_std'))
 
     # Include components (flat) if provided
     if components:
@@ -68,7 +78,7 @@ class MetricsCallback(pl.Callback):
 
     def __init__(self, val_loader, verbose: int = 1, margin_bp: int = 0,
                  calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None,
-                 event_logits_conversion_fn=None):
+                 event_logits_conversion_fn=None, event_motifs_by_class=None):
         super().__init__()
         self.val_loader = val_loader
         self.verbose = int(verbose) if verbose is not None else 0
@@ -77,6 +87,7 @@ class MetricsCallback(pl.Callback):
         self._compute_brier_fn = compute_brier_fn
         self.run_dir = Path(run_dir) if run_dir is not None else None
         self._event_logits_conversion_fn = event_logits_conversion_fn
+        self._event_motifs_by_class = event_motifs_by_class
         # Initialize results accumulator so tests that call only epoch_end won't fail
         self._results_data = []
 
@@ -161,6 +172,19 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)] = {}
             per_class[int(cls_idx)]['brier'] = float(val)
 
+        # Add beta-fit summaries if motifs provided
+        if self._event_motifs_by_class:
+            fits = compute_event_span_mean_probability_beta_fits(results_data, self._event_motifs_by_class)
+            for cls_idx, data in (fits or {}).items():
+                tp = data.get('tp', {})
+                tn = data.get('tn', {})
+                if int(cls_idx) not in per_class:
+                    per_class[int(cls_idx)] = {}
+                per_class[int(cls_idx)]['pos_prob_mean'] = float(tp.get('mean', 0.0))
+                per_class[int(cls_idx)]['pos_prob_std'] = float(tp.get('std', 0.0))
+                per_class[int(cls_idx)]['neg_prob_mean'] = float(tn.get('mean', 0.0))
+                per_class[int(cls_idx)]['neg_prob_std'] = float(tn.get('std', 0.0))
+
         if self.verbose:
             for cls_idx, vals in per_class.items():
                 name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
@@ -168,7 +192,11 @@ class MetricsCallback(pl.Callback):
                       'sen', "%.4f" % vals.get('sensitivity', 0.0),
                       'pre', "%.4f" % vals.get('precision', 0.0),
                       'f1',  "%.4f" % vals.get('f1', 0.0),
-                      'brier', "%.4f" % vals.get('brier', 0.0)
+                      'brier', "%.4f" % vals.get('brier', 0.0),
+                      'pos_prob_mean', "%.4f" % vals.get('pos_prob_mean', 0.0),
+                      'pos_prob_std', "%.4f" % vals.get('pos_prob_std', 0.0),
+                      'neg_prob_mean', "%.4f" % vals.get('neg_prob_mean', 0.0),
+                      'neg_prob_std', "%.4f" % vals.get('neg_prob_std', 0.0),
                 )
 
         # Optionally write tall TSV of metrics (aggregate loss via trainer metrics)

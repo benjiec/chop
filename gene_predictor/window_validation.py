@@ -101,6 +101,7 @@ def run_test(dataset, model, dss_set, margin_bp = 200, batch_size = 8):
             def _convert(seq_tokens_batch, event_logits_batch):
                 if not (isinstance(event_logits_batch, torch.Tensor) and event_logits_batch.dim() == 3 and int(event_logits_batch.size(0)) >= 1):
                     raise RuntimeError('Event-head mode active but event logits are missing for conversion')
+                print("converting logits")
                 B = int(event_logits_batch.size(0))
                 outs = []
                 for b in range(B):
