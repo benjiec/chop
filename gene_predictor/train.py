@@ -21,6 +21,7 @@ from utils.events import build_event_motifs, build_class_logits_from_event_head_
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
+from gene_predictor.adaptive_alpha_callback import AdaptiveAlphaCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
@@ -61,6 +62,13 @@ def main():
     parser.add_argument('--stop-alpha', type=float, default=1.0, help='Alpha weight for STOP head (event-head-bce)')
     parser.add_argument('--dss-alpha', type=float, default=1.0, help='Alpha weight for DSS head (event-head-bce)')
     parser.add_argument('--ass-alpha', type=float, default=1.0, help='Alpha weight for ASS head (event-head-bce)')
+    # Adaptive alpha (trend-aware SSMD scheduler)
+    parser.add_argument('--adaptive-alpha', action='store_true', help='Enable adaptive alpha scheduling based on SSMD trend')
+    parser.add_argument('--alpha-min', type=float, default=0.05, help='Minimum alpha when separation is high')
+    parser.add_argument('--alpha-s-target', type=float, default=3.3, help='Target SSMD for trend-aware controller')
+    parser.add_argument('--alpha-kp', type=float, default=0.2, help='Proportional gain on SSMD error')
+    parser.add_argument('--alpha-kd', type=float, default=0.1, help='Derivative gain on SSMD trend')
+    parser.add_argument('--alpha-beta', type=float, default=0.2, help='EMA beta for SSMD smoothing')
 
     # (removed) class conditional readout args
 
@@ -267,11 +275,28 @@ def main():
 
         # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
         if num_event_heads > 0:
-            return [
-                MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
-                                event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids),
+            # Use the exact dict reference created above and passed to the loss
+            alpha_by_class = bce_alpha_weight_map
+
+            metrics_cb = MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
+                                         event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids,
+                                         alpha_by_class=alpha_by_class)
+
+            cbs = [
+                metrics_cb,
                 pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
             ]
+            if args.adaptive_alpha:
+                cbs.append(AdaptiveAlphaCallback(
+                    alpha_by_class=alpha_by_class,
+                    metrics_cb=metrics_cb,
+                    s_target=float(args.alpha_s_target),
+                    k_p=float(args.alpha_kp),
+                    k_d=float(args.alpha_kd),
+                    beta=float(args.alpha_beta),
+                    alpha_min=float(args.alpha_min),
+                ))
+            return cbs
 
         # Default: include F1 checkpoint and dual-metric early stopping
         f1_ckpt = pl.callbacks.ModelCheckpoint(
@@ -283,6 +308,7 @@ def main():
             save_last=False,
             auto_insert_metric_name=False,
         )
+        # Non event-head mode retains original behavior
         return [
             MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
                             event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids),

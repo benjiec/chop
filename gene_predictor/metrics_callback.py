@@ -9,6 +9,7 @@ import numpy as np
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
 from utils.metrics import compute_event_span_mean_probability_beta_fits
+from utils.adaptive_alpha import compute_ssmd
 from utils.events import build_class_logits_from_event_head_logits
 
 
@@ -56,7 +57,8 @@ class MetricsCallback(pl.Callback):
 
     def __init__(self, val_loader, verbose: int = 1, margin_bp: int = 0,
                  calculate_metrics_fn=None, compute_brier_fn=None, run_dir: Path | None = None,
-                 event_logits_conversion_fn=None, event_motifs_by_class=None, head_class_ids=None):
+                 event_logits_conversion_fn=None, event_motifs_by_class=None, head_class_ids=None,
+                 alpha_by_class: dict | None = None):
         super().__init__()
         self.val_loader = val_loader
         self.verbose = int(verbose) if verbose is not None else 0
@@ -69,6 +71,10 @@ class MetricsCallback(pl.Callback):
         self._head_class_ids = list(head_class_ids) if head_class_ids is not None else None
         # Initialize results accumulator so tests that call only epoch_end won't fail
         self._results_data = []
+        # Expose latest SSMD per class for other callbacks
+        self.last_ssmd_by_class: dict[int, float] | None = None
+        # Optional shared alpha reference for printing
+        self._alpha_by_class = alpha_by_class
 
     def on_validation_epoch_start(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
         self._results_data = []
@@ -164,6 +170,19 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)]['neg_prob_mean'] = float(tn.get('mean', 0.0))
                 per_class[int(cls_idx)]['neg_prob_std'] = float(tn.get('std', 0.0))
 
+        # Compute SSMD where possible and store for downstream callbacks
+        ssmd_by_class: dict[int, float] = {}
+        for cls_idx, vals in per_class.items():
+            pm = vals.get('pos_prob_mean')
+            ps = vals.get('pos_prob_std')
+            nm = vals.get('neg_prob_mean')
+            ns = vals.get('neg_prob_std')
+            if pm is not None and ps is not None and nm is not None and ns is not None:
+                s = compute_ssmd(pm, ps, nm, ns)
+                per_class[int(cls_idx)]['ssmd'] = float(s)
+                ssmd_by_class[int(cls_idx)] = float(s)
+        self.last_ssmd_by_class = ssmd_by_class
+
         # Aggregate loss via trainer metrics, map to per-class using head_class_ids when available
         val_loss = None
         if trainer is not None and hasattr(trainer, 'callback_metrics'):
@@ -195,6 +214,19 @@ class MetricsCallback(pl.Callback):
                       "%.4f" % vals.get('brier', 0.0),
                       "%d/%d" % (vals.get('sensitivity', 0.0)*100, vals.get('precision', 0.0)*100)
                 )
+
+        # Always print alphas used for loss at validation end if provided
+        if isinstance(self._alpha_by_class, dict):
+            # Print compact mapping in class-name order START, STOP, DSS, ASS when available
+            order = [int(P.START), int(P.STOP), int(P.DSS), int(P.ASS)]
+            parts = []
+            for cid in order:
+                name = P.idx_to_cls.get(int(cid), str(int(cid)))
+                val = self._alpha_by_class.get(int(cid))
+                if val is not None:
+                    parts.append(f"{name}={float(val):.3f}")
+            if parts:
+                print("alpha_by_class:", ", ".join(parts))
 
         # Optionally write tall TSV of metrics 
         if self.run_dir is not None:
