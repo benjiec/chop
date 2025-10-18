@@ -211,6 +211,7 @@ class MetricsCallback(pl.Callback):
                       "%.4f" % vals.get('event_head_loss', 0.0),
                       "%d/%d-%d/%d" % (vals.get('pos_prob_mean', 0.0)*100, vals.get('pos_prob_std', 0.0)*100,
                                        vals.get('neg_prob_mean', 0.0*100), vals.get('neg_prob_std', 0.0)*100),
+                      "%.2f" % vals.get('ssmd'),
                       "%.4f" % vals.get('brier', 0.0),
                       "%d/%d" % (vals.get('sensitivity', 0.0)*100, vals.get('precision', 0.0)*100)
                 )
