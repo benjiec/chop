@@ -11,3 +11,6 @@ gene_predictor/*_run_*
 .~*.twbr
 x.tsv
 x.fna
+event_probs.tsv
+*.pickle
+*.pkl

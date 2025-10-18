@@ -44,6 +44,11 @@ PYTHONPATH=. python gene_decoder/assess_decoding.py \
   --topk-starts 3 \
   --decoded-tsv x.tsv 
 
+PYTHONPATH=. python gene_decoder/event_probs.py \
+  --dss-motifs standard \
+  --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
+  --output-tsv event_probs.tsv \
+  --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle
 
 # synthetic tests on decoder
 
