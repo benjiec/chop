@@ -1,0 +1,23 @@
+#!/bin/bash
+
+PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
+  --fna data/GCF_002042975.1_round0_test_query.fna.gz --tsv data/GCF_002042975.1_round0_test_annotations.tsv  \
+  --dss-motifs standard \
+  --start-tp 0.7,0.3 \
+  --start-tn 0.004,0.03 \
+  --stop-tp 0.7,0.2 \
+  --stop-tn 0.004,0.02 \
+  --dss-tp 0.85,0.2 \
+  --dss-tn 0.01,0.06 \
+  --ass-tp 0.85,0.2 \
+  --ass-tn 0.01,0.08 \
+  --output-pkl synthetic_decoder_input.pkl
+
+PYTHONPATH=. python gene_decoder/decode.py --min-prob 0.32 --temperature-scale 1 --dss-motifs standard \
+  --output-tsv x.tsv --output-fna x.fna \
+  --input-pkl synthetic_decoder_input.pkl
+
+PYTHONPATH=. python gene_decoder/assess_decoding.py \
+  --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
+  --topk-starts 3 \
+  --decoded-tsv x.tsv

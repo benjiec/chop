@@ -17,16 +17,17 @@ class AdaptiveAlphaCallback(pl.Callback):
         *,
         alpha_by_class: Dict[int, float],
         metrics_cb,
-        s_target: float = 3.3,
+        ssmd_target_base: float = 3.2,
         k_p: float = 0.2,
         k_d: float = 0.1,
-        beta: float = 0.2,
+        beta: float = 0.8,
         alpha_min: float = 0.05,
     ) -> None:
         super().__init__()
         self._alpha_by_class = alpha_by_class
+        self._initial_alpha_by_class = {k:v for k,v in alpha_by_class.items()}  # making a copy, not using reference
         self._metrics_cb = metrics_cb
-        self._s_target = float(s_target)
+        self._ssmd_target_base = float(ssmd_target_base)
         self._k_p = float(k_p)
         self._k_d = float(k_d)
         self._beta = float(beta)
@@ -44,10 +45,11 @@ class AdaptiveAlphaCallback(pl.Callback):
             st = self._state_by_class.get(int(cls_id))
             if st is None:
                 st = AlphaTrendState(ema_ssmd=float(ssmd), prev_ema_ssmd=float(ssmd), alpha=alpha0)
+            ssmd_target = self._ssmd_target_base / self._initial_alpha_by_class[cls_id]
             a, new_state = alpha_from_ssmd_trend(
                 ssmd_now=float(ssmd),
                 state=st,
-                s_target=self._s_target,
+                ssmd_target=ssmd_target,
                 k_p=self._k_p,
                 k_d=self._k_d,
                 beta=self._beta,

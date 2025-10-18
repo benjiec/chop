@@ -33,10 +33,10 @@ def alpha_from_ssmd_trend(
     *,
     ssmd_now: float,
     state: AlphaTrendState,
-    s_target: float = 3.3,
+    ssmd_target: float = 3.2,
     k_p: float = 0.2,
     k_d: float = 0.1,
-    beta: float = 0.2,
+    beta: float = 0.8,
     alpha0: float = 1.0,
     alpha_min: float = 0.05,
     hysteresis: int = 1,
@@ -50,7 +50,7 @@ def alpha_from_ssmd_trend(
     ema = float(beta) * float(ssmd_now) + (1.0 - float(beta)) * ema_prev
 
     # Error (want SSMD close to/above target) and derivative (trend)
-    e = float(s_target) - ema
+    e = float(ssmd_target) - ema
     d = ema - float(state.prev_ema_ssmd)
 
     raw = float(state.alpha) + float(k_p) * e - float(k_d) * d
