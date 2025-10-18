@@ -807,19 +807,27 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, d, P.DSS, 2, 0.05)
         _set_event(probs, a, P.ASS, 2, 0.05)
         _set_event(probs, t, P.STOP, 3, 0.05)
-        ev = _scan_events(seq, StandardDonorDinucleotides, probs=probs, min_logp=math.log(0.1))
+        ev = _scan_events(seq, StandardDonorDinucleotides, probs=probs,
+                          min_logp_start=math.log(0.1),
+                          min_logp_stop=math.log(0.1),
+                          min_logp_dss=math.log(0.1),
+                          min_logp_ass=math.log(0.1))
         self.assertEqual(ev['start'], [])
         self.assertEqual(ev['dss'], [])
         self.assertEqual(ev['ass'], [])
         self.assertEqual(ev['stop'], [])
-        # Raise probs above 0.1 → should be included
+        # Raise probs above 0.1 → should be included for some
         _set_event(probs, s, P.START, 3, 0.2)
         _set_event(probs, d, P.DSS, 2, 0.2)
         _set_event(probs, a, P.ASS, 2, 0.2)
         _set_event(probs, t, P.STOP, 3, 0.2)
-        ev2 = _scan_events(seq, StandardDonorDinucleotides, probs=probs, min_logp=math.log(0.1))
+        ev2 = _scan_events(seq, StandardDonorDinucleotides, probs=probs,
+                           min_logp_start=math.log(0.1),
+                           min_logp_stop=math.log(0.1),
+                           min_logp_dss=math.log(0.3),  # exclude
+                           min_logp_ass=math.log(0.1))
         self.assertEqual(ev2['start'], [s])
-        self.assertEqual(ev2['dss'], [d])
+        self.assertEqual(ev2['dss'], [])
         self.assertEqual(ev2['ass'], [a])
         self.assertEqual(ev2['stop'], [t])
 

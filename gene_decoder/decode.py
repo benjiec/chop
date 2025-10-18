@@ -52,6 +52,10 @@ def main():
     p.add_argument('--temperature-scale', type=float, default=1.0)
     p.add_argument('--z-transform-probs', action='store_true')
     p.add_argument('--min-prob', type=float, default=0.05)
+    p.add_argument('--min-prob-start', type=float, default=None)
+    p.add_argument('--min-prob-stop', type=float, default=None)
+    p.add_argument('--min-prob-ass', type=float, default=None)
+    p.add_argument('--min-prob-dss', type=float, default=None)
     # removed scoring mode; decoder computes both boundary and transition scores
     p.add_argument('--codon-usage-json', default=None)
     # Removed JSON output
@@ -85,6 +89,11 @@ def main():
         for ps in items:
             ps.probabilities = temperature_rescale_probs(ps.probabilities, args.temperature_scale)
 
+    min_prob_start = args.min_prob_start if args.min_prob_start is not None else args.min_prob
+    min_prob_stop = args.min_prob_stop if args.min_prob_stop is not None else args.min_prob
+    min_prob_dss = args.min_prob_dss if args.min_prob_dss is not None else args.min_prob
+    min_prob_ass = args.min_prob_ass if args.min_prob_ass is not None else args.min_prob
+
     decoded: List[DecodedResult] = []
     ps_map = {ps.sequence_index: ps for ps in items}
     for ps in items:
@@ -95,7 +104,10 @@ def main():
             top_k_splicing=args.topk_splicing,
             top_k_starts=args.topk_starts,
             beam_size=args.beam_size,
-            min_logp=math.log(args.min_prob)
+            min_logp_start=math.log(min_prob_start),
+            min_logp_stop=math.log(min_prob_stop),
+            min_logp_dss=math.log(min_prob_dss),
+            min_logp_ass=math.log(min_prob_ass),
         )
 
         # Rerank with codon usage if requested

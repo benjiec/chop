@@ -58,7 +58,11 @@ def _event_logp(probs: np.ndarray, pos: int, cls_idx: int, negative: Optional[bo
     return _log(mean_p)
 
 
-def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = None, min_logp: Optional[float] = None) -> Dict[str, List[int]]:
+def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = None,
+                 min_logp_start: Optional[float] = None,
+                 min_logp_stop: Optional[float] = None,
+                 min_logp_dss: Optional[float] = None,
+                 min_logp_ass: Optional[float] = None) -> Dict[str, List[int]]:
     starts: List[int] = []
     stops: List[int] = []
     dss: List[int] = []
@@ -67,16 +71,16 @@ def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = 
     for i in range(L - 2):
         tri = seq[i:i+3]
         if tri == 'ATG':
-            if probs is not None and min_logp is not None:
-                if _event_logp(probs, i, P.START) > min_logp:
+            if probs is not None and min_logp_start is not None:
+                if _event_logp(probs, i, P.START) > min_logp_start:
                     if _debug_log_scan(i):
                         print("START", i, _event_prob(probs, i, P.START), _event_logp(probs, i, P.START))
                     starts.append(i)
             else:
                 starts.append(i)
         if tri in ConventionalStopCodons:
-            if probs is not None and min_logp is not None:
-                if _event_logp(probs, i, P.STOP) > min_logp:
+            if probs is not None and min_logp_stop is not None:
+                if _event_logp(probs, i, P.STOP) > min_logp_stop:
                     if _debug_log_scan(i):
                         print(" STOP", i, _event_prob(probs, i, P.STOP), _event_logp(probs, i, P.STOP))
                     stops.append(i)
@@ -85,16 +89,16 @@ def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = 
     for i in range(L - 1):
         di = seq[i:i+2]
         if di in dss_motifs:
-            if probs is not None and min_logp is not None:
-                if _event_logp(probs, i, P.DSS) > min_logp:
+            if probs is not None and min_logp_dss is not None:
+                if _event_logp(probs, i, P.DSS) > min_logp_dss:
                     if _debug_log_scan(i):
                         print("  DSS", i, _event_prob(probs, i, P.DSS), _event_logp(probs, i, P.DSS))
                     dss.append(i)
             else:
                 dss.append(i)
         if di in ConventionalAcceptorDinucleotides:
-            if probs is not None and min_logp is not None:
-                if _event_logp(probs, i, P.ASS) > min_logp:
+            if probs is not None and min_logp_ass is not None:
+                if _event_logp(probs, i, P.ASS) > min_logp_ass:
                     if _debug_log_scan(i):
                         print("  ASS", i, _event_prob(probs, i, P.ASS), _event_logp(probs, i, P.ASS))
                     ass.append(i)
@@ -384,11 +388,17 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
 
 
 def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
-                    min_logp: Optional[float] = None) -> DecodedResult:
+                    min_logp_start: Optional[float] = None,
+                    min_logp_stop: Optional[float] = None,
+                    min_logp_dss: Optional[float] = None,
+                    min_logp_ass: Optional[float] = None) -> DecodedResult:
     seq = ps.sequence
-    if min_logp is None:
-        min_logp = math.log(0.1)
-    events = _scan_events(seq, dss_motifs, probs=ps.probabilities, min_logp=min_logp)
+    min_logp_start = math.log(0.1) if min_logp_start is None else min_logp_start
+    min_logp_stop = math.log(0.1) if min_logp_stop is None else min_logp_stop
+    min_logp_dss = math.log(0.1) if min_logp_dss is None else min_logp_dss
+    min_logp_ass = math.log(0.1) if min_logp_ass is None else min_logp_ass
+    events = _scan_events(seq, dss_motifs, probs=ps.probabilities,
+                          min_logp_start=min_logp_start, min_logp_stop=min_logp_stop, min_logp_dss=min_logp_dss, min_logp_ass=min_logp_ass)
 
     # Precompute START logp and process starts in descending order for pruning
     import heapq
