@@ -304,7 +304,7 @@ class AnnotatedGenomeDataset:
     def __init__(self, fasta_path: str, annotations_tsv_path: str,
                  num_contigs: Optional[int] = None, window: Optional[int] = None, stride: Optional[int] = None,
                  num_windows: Optional[int] = None, class_weights: Optional[List[float]] = None,
-                 window_incl_classes: Optional[List[int]] = None,
+                 window_boost_classes: Optional[List[int]] = None,
                  exclude_margin_bps: Optional[int] = 200,
                  gene_class: int = P.INTERGENIC,
                  random_prefix_ns: bool = True,
@@ -326,7 +326,7 @@ class AnnotatedGenomeDataset:
         self.class_weights: Optional[List[float]] = list(class_weights) if class_weights is not None else None
         # Derived/accounting structures
         self._selected_window_indices: Optional[List[int]] = None
-        self._window_incl_classes = window_incl_classes
+        self._window_boost_classes = window_boost_classes
         self._exclude_margin_bps = int(exclude_margin_bps) if exclude_margin_bps is not None else None
         # Class to use for coding region between START and STOP (default: INTERGENIC)
         self.gene_class: int = int(gene_class)
@@ -440,14 +440,8 @@ class AnnotatedGenomeDataset:
         rng = random
 
         # If no sampling requested, select all windows
-        if self.num_windows is None:
+        if self.num_windows is None and self._window_boost_classes is None:
             self._selected_window_indices = list(range(len(self.windows)))
-            return
-
-        target_num = max(0, int(self.num_windows))
-        total_available = len(self.windows)
-        if target_num >= total_available:
-            self._selected_window_indices = list(range(total_available))
             return
 
         # Determine classes to balance
@@ -456,8 +450,8 @@ class AnnotatedGenomeDataset:
         else:
             # If no explicit weights, consider indices based on available weights length when present; otherwise default to [0]
             classes_to_balance = list(range(len(weights))) if weights else [0]
-        if self._window_incl_classes is not None:
-            classes_to_balance = [i for i in classes_to_balance if i in self._window_incl_classes]
+        if self._window_boost_classes is not None:
+            classes_to_balance = [i for i in classes_to_balance if i in self._window_boost_classes]
 
         # Build class->windows assignment using center-only counting and max-weight rule
         class_windows = build_class_windows(
@@ -469,9 +463,19 @@ class AnnotatedGenomeDataset:
         )
 
         # If specific classes are requested, restrict candidates to allowed classes only
-        if self._window_incl_classes is not None:
-            allowed = set(self._window_incl_classes)
-            class_windows = {c: lst for c, lst in class_windows.items() if c in allowed}
+        if self._window_boost_classes is not None and self.num_windows is None:
+            allowed = set(self._window_boost_classes)
+            for c, lst in class_windows.items():
+                if c in allowed:
+                    self.windows.extend(lst)
+            self._selected_window_indices = list(range(len(self.windows)))
+            return
+
+        target_num = max(0, int(self.num_windows))
+        total_available = len(self.windows)
+        if target_num >= total_available:
+            self._selected_window_indices = list(range(total_available))
+            return
 
         # Determine per-class target and perform recycling-based balancing via list replication
         nonempty = {c: list(lst) for c, lst in class_windows.items() if lst}
