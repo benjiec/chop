@@ -45,6 +45,7 @@ def main():
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--boost-start-stop', action='store_true')
 
+
     # class weights
     parser.add_argument('--disable-class-weights-for-loss', action='store_true', help='Disable class weights in loss function (still used for dataset)')
     parser.add_argument('--start-weight', type=float, default=5.0, help='Weight for START class')
@@ -218,28 +219,27 @@ def main():
         )
 
     if args.num_windows:
-        if args.boost_start_stop:
-            print("include START and STOP windows only")
-            window_boost_classes = [P.START, P.STOP]
-        else:
-            window_boost_classes = None
-
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
             args.tsv_fn,
             window=args.max_seq_length,
             stride=args.stride,
             num_windows=args.num_windows,
-            class_weights=class_weights,
-            window_boost_classes=window_boost_classes
+            class_weights=class_weights
         )
     else:
+        if args.boost_start_stop:
+            print("boost START and STOP windows")
+            window_boost_classes = [P.START, P.STOP]
+        else:
+            window_boost_classes = None
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
             args.tsv_fn,
             window=args.max_seq_length,
             stride=args.stride,
-            class_weights=class_weights
+            class_weights=class_weights,
+            window_boost_classes = window_boost_classes
         )
 
     # Create output directory

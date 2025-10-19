@@ -441,6 +441,7 @@ class AnnotatedGenomeDataset:
 
         # If no sampling requested, select all windows
         if self.num_windows is None and self._window_boost_classes is None:
+            print("not sampling windows, not boosting windows")
             self._selected_window_indices = list(range(len(self.windows)))
             return
 
@@ -464,11 +465,13 @@ class AnnotatedGenomeDataset:
 
         # If specific classes are requested, restrict candidates to allowed classes only
         if self._window_boost_classes is not None and self.num_windows is None:
+            print("not sampling windows, boosting windows")
+            self._selected_window_indices = list(range(len(self.windows)))
             allowed = set(self._window_boost_classes)
             for c, lst in class_windows.items():
                 if c in allowed:
-                    self.windows.extend(lst)
-            self._selected_window_indices = list(range(len(self.windows)))
+                    print("boost", c, "by", len(lst))
+                    self._selected_window_indices.extend(lst)
             return
 
         target_num = max(0, int(self.num_windows))
