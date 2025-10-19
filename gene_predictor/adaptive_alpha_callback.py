@@ -17,7 +17,7 @@ class AdaptiveAlphaCallback(pl.Callback):
         *,
         alpha_by_class: Dict[int, float],
         metrics_cb,
-        ssmd_target_base: float = 3.2,
+        ssmd_target_base: float = 2.8,  # this is computed on windows, not blended
         k_p: float = 0.2,
         k_d: float = 0.1,
         beta: float = 0.8,
@@ -45,7 +45,7 @@ class AdaptiveAlphaCallback(pl.Callback):
             st = self._state_by_class.get(int(cls_id))
             if st is None:
                 st = AlphaTrendState(ema_ssmd=float(ssmd), prev_ema_ssmd=float(ssmd), alpha=alpha0)
-            ssmd_target = self._ssmd_target_base / self._initial_alpha_by_class[cls_id]
+            ssmd_target = self._ssmd_target_base
             a, new_state = alpha_from_ssmd_trend(
                 ssmd_now=float(ssmd),
                 state=st,
