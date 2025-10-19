@@ -79,3 +79,11 @@ PYTHONPATH=. python gene_decoder/assess_decoding.py \
   --topk-starts 1 \
   --top-start-rank \
   --decoded-tsv x.tsv
+
+PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
+  --tsv data/GCF_002042975.1_round0_test_annotations.tsv  \
+  --dss-motifs standard \
+  --start-tp 0.9,0.1 \
+  --start-tn 0.02,0.01 \
+  --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
+  --output-pkl synthetic_decoder_input.pkl
