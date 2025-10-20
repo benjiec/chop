@@ -2,7 +2,11 @@ import os
 import tempfile
 import unittest
 
-from gene_decoder.flanking_stats import compute_flanking_motif_stats
+import pickle
+import numpy as np
+
+from gene_decoder import PredictedSequence
+from gene_decoder.flanking_stats import compute_flanking_motif_stats, compute_flanking_prob_stats_from_items
 
 
 class TestFlankingStats(unittest.TestCase):
@@ -78,6 +82,37 @@ class TestFlankingStats(unittest.TestCase):
             self.assertEqual(ass_counts['GTAAGATG'].total, 1)
             self.assertEqual(ass_counts['GTAAGATG'].positives, 0)
             self.assertEqual(ass_counts['GTAAGATG'].negatives, 1)
+
+    def test_compute_flanking_prob_stats_from_pkl(self):
+        # Build a minimal PredictedSequence list with two sequences
+        # Sequence 1 contains DSS at 15..17 ('GT') and ASS at 23..25 ('AG')
+        seq = list('A' * 40)
+        seq[10:13] = list('ATG')
+        seq[15:17] = list('GT')
+        seq[23:25] = list('AG')
+        seq[27:30] = list('TAA')
+        sequence = ''.join(seq)
+
+        L = len(sequence)
+        class_order = ['INTERGENIC','UTR5','START','GENE','STOP','UTR3','DSS','ASS']
+        num_classes = len(class_order)
+        probs = np.zeros((L, num_classes), dtype=np.float32)
+        # Assign distinctive probabilities over the spans
+        probs[15:17, class_order.index('DSS')] = 0.8
+        probs[23:25, class_order.index('ASS')] = 0.6
+
+        items = [PredictedSequence(sequence_index=0, sequence=sequence, probabilities=probs, class_order=class_order, sequence_id='contig1')]
+
+        dss_stats, ass_stats = compute_flanking_prob_stats_from_items(items, flank=3, site='both', dss_motifs_mode='standard', num_sequences=0)
+
+        # Expect one entry per site with mean matching the assigned probabilities
+        self.assertIn('GAAGTAAA', dss_stats)
+        self.assertEqual(dss_stats['GAAGTAAA'].total, 1)
+        self.assertAlmostEqual(dss_stats['GAAGTAAA'].mean, 0.8, places=6)
+
+        self.assertIn('AAAAGAAT', ass_stats)
+        self.assertEqual(ass_stats['AAAAGAAT'].total, 1)
+        self.assertAlmostEqual(ass_stats['AAAAGAAT'].mean, 0.6, places=6)
 
 
 if __name__ == '__main__':

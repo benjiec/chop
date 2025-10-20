@@ -94,4 +94,10 @@ PYTHONPATH=. python scripts/analyze-flanking-motifs.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv \
   --site both \
   --dss-motifs-mode standard \
-  --flank 3
+  --flank 5
+
+PYTHONPATH=. python scripts/analyze-flanking-motifs-from-pkl.py \
+  --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
+  --site both \
+  --dss-motifs-mode standard \
+  --flank 5
