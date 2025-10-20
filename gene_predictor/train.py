@@ -66,7 +66,7 @@ def main():
     # Adaptive alpha (trend-aware SSMD scheduler)
     parser.add_argument('--adaptive-alpha', action='store_true', help='Enable adaptive alpha scheduling based on SSMD trend')
     parser.add_argument('--alpha-min', type=float, default=0.05, help='Minimum alpha when separation is high')
-    parser.add_argument('--alpha-ssmd-target-base', type=float, default=2.8, help='Target SSMD (from windows, not blended)')
+    parser.add_argument('--alpha-ssmd-target', type=float, default=2.8, help='Target SSMD (from windows, lower than blended SSMD)')
     parser.add_argument('--alpha-kp', type=float, default=0.2, help='Proportional gain on SSMD error')
     parser.add_argument('--alpha-kd', type=float, default=0.1, help='Derivative gain on SSMD trend')
     parser.add_argument('--alpha-beta', type=float, default=0.8, help='EMA beta for SSMD smoothing')
@@ -290,7 +290,7 @@ def main():
                 cbs.append(AdaptiveAlphaCallback(
                     alpha_by_class=alpha_by_class,
                     metrics_cb=metrics_cb,
-                    ssmd_target_base=float(args.alpha_ssmd_target_base),
+                    ssmd_target=float(args.alpha_ssmd_target),
                     k_p=float(args.alpha_kp),
                     k_d=float(args.alpha_kd),
                     beta=float(args.alpha_beta),
