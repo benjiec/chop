@@ -101,3 +101,10 @@ PYTHONPATH=. python scripts/analyze-flanking-motifs-from-pkl.py \
   --site both \
   --dss-motifs-mode standard \
   --flank 5
+
+PYTHONPATH=. python scripts/augment-decoder-inputs-from-flanks.py \
+  --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
+  --flank 4 --dss-motifs-mode standard \
+  --flank-csv data/GCF_002042975.1_round0_train_ass_dss_flank4.csv \
+  --mode override \
+  --output-pkl synthetic_decoder_input.pkl
