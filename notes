@@ -87,3 +87,11 @@ PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
   --start-tn 0.02,0.01 \
   --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
   --output-pkl synthetic_decoder_input.pkl
+
+# frequency analysis for flanking motifs of DSS and ASS
+
+PYTHONPATH=. python scripts/analyze-flanking-motifs.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv \
+  --site both \
+  --dss-motifs-mode standard \
+  --flank 3
