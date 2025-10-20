@@ -13,7 +13,7 @@ def main() -> None:
     p.add_argument("--output-pkl", required=True, help="Output decoder pickle path")
     p.add_argument("--flank", type=int, required=True, help="Flank length used to build motifs in CSV")
     p.add_argument("--dss-motifs-mode", default="standard", choices=["standard", "dino"], help="DSS motif selection")
-    p.add_argument("--mode", default="override", choices=["override", "augment"], help="How to combine stats with predictions")
+    p.add_argument("--mode", default="override", choices=["override", "shift-positive", "shift-negative"], help="How to combine stats with predictions")
 
     args = p.parse_args()
 

@@ -64,11 +64,13 @@ def determine_replacement_prob(t_val: int, stats_prob: float, existing_prob: flo
     """
     if mode == "override":
         return float(stats_prob)
-    else:
-        if t_val > 50 and existing_prob < stats_prob and stats_prob > 0.50:
-            print("boosting", existing_prob, stats_prob)
-            return float((existing_prob+stats_prob*3)/4)
-        return float(existing_prob)
+    elif mode == "shift-positive" and t_val > 50 and existing_prob < stats_prob and stats_prob > 0.50:
+        print("boosting", existing_prob, stats_prob)
+        return float((existing_prob+stats_prob*3)/4)
+    elif mode == "shift-negative" and t_val > 50 and existing_prob > stats_prob and stats_prob < 0.20:
+        print("down shift", existing_prob, stats_prob)
+        return float((existing_prob+stats_prob*3)/4)
+    return float(existing_prob)
 
 
 def augment_items_from_flanks(
@@ -83,7 +85,8 @@ def augment_items_from_flanks(
 
     mode:
       - 'override': set span values to the stats probability
-      - 'augment': currently same as override (placeholder for future)
+      - 'shift-positive': boost positives
+      - 'shift-negatives': downgrade negatives
     """
     dss_map, ass_map = load_flank_counts_csv(flank_counts_csv)
     out: List[PredictedSequence] = []
