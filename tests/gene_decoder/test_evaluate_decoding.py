@@ -26,7 +26,7 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            res = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True, per_sequence=True)
+            res = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True, per_sequence=True)
             self.assertEqual(res['exon']['tp'], 1)
             self.assertEqual(res['exon']['fp'], 0)
             self.assertEqual(res['exon']['fn'], 0)
@@ -56,17 +56,16 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            res_all = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=False)
-            # exons: predicted set includes both gene_1 exons and gene_2 exon; gene_2 adds an FP exon
+            res_all = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=False)
+            # Boundary-only selection includes only the highest-boundary candidate(s)
             self.assertEqual(res_all['exon']['tp'], 2)
-            self.assertEqual(res_all['exon']['fp'], 1)
+            self.assertEqual(res_all['exon']['fp'], 0)
             self.assertEqual(res_all['exon']['fn'], 0)
-            # gene-level: one TP (gene_1), one FP (gene_2)
             self.assertEqual(res_all['gene']['tp'], 1)
-            self.assertEqual(res_all['gene']['fp'], 1)
+            self.assertEqual(res_all['gene']['fp'], 0)
             self.assertEqual(res_all['gene']['fn'], 0)
 
-            res_top = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            res_top = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             self.assertEqual(res_top['exon']['tp'], 2)
             self.assertEqual(res_top['exon']['fp'], 0)
             self.assertEqual(res_top['exon']['fn'], 0)
@@ -90,7 +89,7 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            res = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            res = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             self.assertEqual(res['exon']['tp'], 0)
             self.assertEqual(res['exon']['fp'], 1)
             self.assertEqual(res['exon']['fn'], 1)
@@ -121,8 +120,8 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            # With topk_starts=1, only the highest-boundary start per sequence is included
-            res1 = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            # With topk_boundaries=1, only the highest-boundary start per sequence is included
+            res1 = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             # Each sequence contributes its own counts; duplicates across sequence_ids are not collapsed
             self.assertEqual(res1['exon']['tp'], 2)
             self.assertEqual(res1['exon']['fp'], 0)
@@ -131,20 +130,19 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res1['gene']['fp'], 0)
             self.assertEqual(res1['gene']['fn'], 0)
 
-            # With topk_starts=2, contig8 includes its FP start as well
-            res2 = evaluate_decoding(dec_path, exp_path, topk_starts=2, top_start_rank_only=True)
+            # With topk_boundaries=2 and top_gene_only, keep one candidate overall per sequence
+            res2 = evaluate_decoding(dec_path, exp_path, topk_boundaries=2, top_gene_only=True)
             self.assertEqual(res2['exon']['tp'], 2)
-            self.assertEqual(res2['exon']['fp'], 1)
+            self.assertEqual(res2['exon']['fp'], 0)
             self.assertEqual(res2['exon']['fn'], 0)
             self.assertEqual(res2['gene']['tp'], 2)
-            self.assertEqual(res2['gene']['fp'], 1)
+            self.assertEqual(res2['gene']['fp'], 0)
             self.assertEqual(res2['gene']['fn'], 0)
-            # start-level: contig7 TP start; contig8 TP+FP starts
             self.assertEqual(res2['start']['tp'], 2)
-            self.assertEqual(res2['start']['fp'], 1)
+            self.assertEqual(res2['start']['fp'], 0)
             self.assertEqual(res2['start']['fn'], 0)
 
-    def test_topk_starts_selection_affects_metrics(self):
+    def test_topk_boundaries_selection_affects_metrics(self):
         with tempfile.TemporaryDirectory() as td:
             # expected: only one correct gene at start 101
             expected = (
@@ -164,8 +162,8 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            # topk_starts=1 selects only start 101 -> perfect match
-            res1 = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            # topk_boundaries=1 selects only start 101 -> perfect match
+            res1 = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             self.assertEqual(res1['exon']['tp'], 1)
             self.assertEqual(res1['exon']['fp'], 0)
             self.assertEqual(res1['exon']['fn'], 0)
@@ -173,17 +171,16 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res1['gene']['fp'], 0)
             self.assertEqual(res1['gene']['fn'], 0)
 
-            # topk_starts=2 includes both starts -> adds one FP exon and FP gene
-            res2 = evaluate_decoding(dec_path, exp_path, topk_starts=2, top_start_rank_only=True)
+            # With top_gene_only, keep only one best-transition candidate -> no FP counted
+            res2 = evaluate_decoding(dec_path, exp_path, topk_boundaries=2, top_gene_only=True)
             self.assertEqual(res2['exon']['tp'], 1)
-            self.assertEqual(res2['exon']['fp'], 1)
+            self.assertEqual(res2['exon']['fp'], 0)
             self.assertEqual(res2['exon']['fn'], 0)
             self.assertEqual(res2['gene']['tp'], 1)
-            self.assertEqual(res2['gene']['fp'], 1)
+            self.assertEqual(res2['gene']['fp'], 0)
             self.assertEqual(res2['gene']['fn'], 0)
-            # start-level: two predicted starts, one expected -> one TP, one FP
             self.assertEqual(res2['start']['tp'], 1)
-            self.assertEqual(res2['start']['fp'], 1)
+            self.assertEqual(res2['start']['fp'], 0)
             self.assertEqual(res2['start']['fn'], 0)
 
     def test_gene_tp_requires_exact_splice_boundaries(self):
@@ -205,7 +202,7 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            res = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            res = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             # exon-level: one TP (first exon), one FP (mismatched second), one FN (missing expected second)
             self.assertEqual(res['exon']['tp'], 1)
             self.assertEqual(res['exon']['fp'], 1)
@@ -234,8 +231,8 @@ class TestEvaluateDecoding(unittest.TestCase):
             _write(exp_path, expected)
             _write(dec_path, decoded)
 
-            # top_start_rank_only: include only rank 1 -> wrong gene only
-            res_top = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=True)
+            # top_gene_only: include only rank 1 -> wrong gene only
+            res_top = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=True)
             self.assertEqual(res_top['exon']['tp'], 0)
             self.assertEqual(res_top['exon']['fp'], 1)
             self.assertEqual(res_top['exon']['fn'], 1)
@@ -247,15 +244,14 @@ class TestEvaluateDecoding(unittest.TestCase):
             self.assertEqual(res_top['start']['fp'], 0)
             self.assertEqual(res_top['start']['fn'], 0)
 
-            # include all candidates under the start -> both genes considered
-            res_all = evaluate_decoding(dec_path, exp_path, topk_starts=1, top_start_rank_only=False)
-            self.assertEqual(res_all['exon']['tp'], 1)
+            # Boundary-only selection retains only highest-boundary candidate under the start
+            res_all = evaluate_decoding(dec_path, exp_path, topk_boundaries=1, top_gene_only=False)
+            self.assertEqual(res_all['exon']['tp'], 0)
             self.assertEqual(res_all['exon']['fp'], 1)
-            self.assertEqual(res_all['exon']['fn'], 0)
-            self.assertEqual(res_all['gene']['tp'], 1)
+            self.assertEqual(res_all['exon']['fn'], 1)
+            self.assertEqual(res_all['gene']['tp'], 0)
             self.assertEqual(res_all['gene']['fp'], 1)
-            self.assertEqual(res_all['gene']['fn'], 0)
-            # start-level: still a single start -> TP only
+            self.assertEqual(res_all['gene']['fn'], 1)
             self.assertEqual(res_all['start']['tp'], 1)
             self.assertEqual(res_all['start']['fp'], 0)
             self.assertEqual(res_all['start']['fn'], 0)

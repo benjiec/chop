@@ -9,16 +9,16 @@ def main():
     p = argparse.ArgumentParser(description='Assess decoder predictions against expected annotations.')
     p.add_argument('--decoded-tsv', required=True, help='Decoder output TSV (row-per-exon).')
     p.add_argument('--expected-tsv', required=True, help='Expected annotations TSV (row-per-exon).')
-    p.add_argument('--topk-starts', type=int, required=True, help='Top-K starts per sequence_id to include (ranked by boundary_score of best start).')
-    p.add_argument('--top-start-rank', action='store_true', help='If set, include only start_rank==1 candidate per selected start.')
+    p.add_argument('--topk-boundaries', type=int, required=True, help='Top-K gene boundaries per sequence_id to include.')
+    p.add_argument('--top-gene', action='store_true', help='If set, only return one top gene.')
     p.add_argument('--per-sequence', action='store_true', help='If set, compute per-sequence stats internally (not printed).')
     args = p.parse_args()
 
     metrics = evaluate_decoding(
         decoded_tsv=args.decoded_tsv,
         expected_tsv=args.expected_tsv,
-        topk_starts=args.topk_starts,
-        top_start_rank_only=bool(args.top_start_rank),
+        topk_boundaries=args.topk_boundaries,
+        top_gene_only=bool(args.top_gene),
         per_sequence=bool(args.per_sequence),
     )
 

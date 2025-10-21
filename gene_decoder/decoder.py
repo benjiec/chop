@@ -456,7 +456,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     return candidates[:top_k_splicing]
 
 
-def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10,
+def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 10, top_k_starts: int = 10,
                     min_logp_start: Optional[float] = None,
                     min_logp_stop: Optional[float] = None,
                     min_logp_dss: Optional[float] = None,

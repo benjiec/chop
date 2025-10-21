@@ -46,7 +46,7 @@ def main():
     p.add_argument('--input-pkl', required=True, help='Pickle file containing List[PredictedSequence]')
     p.add_argument('--dss-motifs', required=True, help='Can either be standard or dino')
     p.add_argument('--num-sequences', type=int, default=0)
-    p.add_argument('--topk-splicing', type=int, default=3)
+    p.add_argument('--topk-splicing', type=int, default=10)
     p.add_argument('--topk-starts', type=int, default=10)
     p.add_argument('--temperature-scale', type=float, default=1.0)
     p.add_argument('--z-transform-probs', action='store_true')

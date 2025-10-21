@@ -10,7 +10,9 @@ class _Candidate:
     strand: str
     exons: List[Tuple[int, int]]  # 0-based half-open
     boundary_score: float
+    transition_score: float
     start_rank: int
+    start1: int
 
 
 def _idx(header: List[str], name: str) -> int:
@@ -40,6 +42,7 @@ def _parse_decoded_tsv(decoded_tsv: str) -> Dict[str, Dict[int, List[_Candidate]
         xe_i = _idx(header, 'exon_end')
         strand_i = _idx(header, 'strand')
         bnd_i = _idx(header, 'boundary_score')
+        tran_i = _idx(header, 'transition_score')
         srank_i = _idx(header, 'start_rank')
 
         for line in f:
@@ -61,6 +64,7 @@ def _parse_decoded_tsv(decoded_tsv: str) -> Dict[str, Dict[int, List[_Candidate]
                 exon_e0 = exon_e1
                 strand = parts[strand_i]
                 boundary = float(parts[bnd_i]) if parts[bnd_i] != '' else 0.0
+                transition = float(parts[tran_i]) if parts[tran_i] != '' else 0.0
                 start_rank = int(parts[srank_i])
             except Exception:
                 continue
@@ -69,7 +73,7 @@ def _parse_decoded_tsv(decoded_tsv: str) -> Dict[str, Dict[int, List[_Candidate]
             start_map = seq_map.setdefault(start1, {})
             cand = start_map.get(gid)
             if cand is None:
-                cand = _Candidate(strand=strand, exons=[], boundary_score=boundary, start_rank=start_rank)
+                cand = _Candidate(strand=strand, exons=[], boundary_score=boundary, transition_score=transition, start_rank=start_rank, start1=start1)
                 start_map[gid] = cand
             cand.exons.append((exon_s0, exon_e0))
             # keep first boundary/start_rank encountered; values should be consistent per gene_id
@@ -123,28 +127,20 @@ def _parse_expected_starts(expected_tsv: str) -> Dict[str, Set[Tuple[str, int]]]
     return starts_by_seq
 
 
-def _pick_top_k_starts(starts: Dict[int, List[_Candidate]], topk_starts: int) -> List[int]:
-    """Rank starts by boundary_score of best start_rank==1 candidate (fallback to best boundary).
-    Return the list of selected start positions (1-based). Exactly topk_starts, or fewer if not enough starts.
-    """
-    scored: List[Tuple[float, int]] = []
+def _pick_top_k_boundaries(starts: Dict[int, List[_Candidate]], topk_boundaries: int) -> List[_Candidate]:
+    boundary_scores = []
     for start1, cands in starts.items():
-        # prefer rank==1; fallback to min rank; then fallback to max boundary
-        best = None
-        best_rank = None
         for c in cands:
-            if c.start_rank == 1:
-                best = c
-                best_rank = 1
-                break
-        if best is None and cands:
-            # choose candidate with smallest start_rank
-            best = min(cands, key=lambda x: (x.start_rank, -x.boundary_score))
-            best_rank = best.start_rank
-        score = best.boundary_score if best is not None else float('-inf')
-        scored.append((score, start1))
-    scored.sort(key=lambda t: t[0], reverse=True)
-    selected = [s for _, s in scored[:max(0, int(topk_starts))]]
+            if c.boundary_score not in boundary_scores:
+                boundary_scores.append(c.boundary_score)
+    boundary_scores = sorted(boundary_scores, reverse=True)
+    top_boundary_scores = boundary_scores[:topk_boundaries]
+
+    selected: List[_Candidate] = []
+    for start1, cands in starts.items():
+        for c in cands:
+            if c.boundary_score in top_boundary_scores:
+                selected.append(c)
     return selected
 
 
@@ -163,16 +159,15 @@ def _compute_counts(tp: int, fp: int, fn: int) -> Dict[str, float]:
 def evaluate_decoding(
     decoded_tsv: str,
     expected_tsv: str,
-    topk_starts: int,
-    top_start_rank_only: bool = False,
+    topk_boundaries: int,
+    top_gene_only: bool = False,
     per_sequence: bool = False,
 ) -> Dict[str, object]:
     """Evaluate exon-level and gene-level metrics comparing decoded TSV vs expected TSV.
 
     - Strand-aware exact matching for both exons and genes.
-    - Starts are ranked per sequence by boundary_score of start_rank==1 candidate (fallback described above).
-    - If top_start_rank_only is True, only include start_rank==1 candidate per selected start.
-      Otherwise include all candidates under each selected start.
+    - If top_gene_only is True return top candidate
+    - Otherwise include all candidates
     """
     decoded = _parse_decoded_tsv(decoded_tsv)
     expected = _parse_expected(expected_tsv)
@@ -192,31 +187,22 @@ def evaluate_decoding(
             for s0, e0 in exons:
                 exp_exon_set.add((strand, s0, e0))
 
-        selected_starts = _pick_top_k_starts(starts, topk_starts)
+        selected_candidates = _pick_top_k_boundaries(starts, topk_boundaries)
+        if top_gene_only:
+            selected_candidates = sorted(selected_candidates, key=lambda c: -(c.boundary_score+c.transition_score))
+            selected_candidates = selected_candidates[:1]
 
         pred_gene_set: Set[Tuple[str, Tuple[Tuple[int, int], ...]]] = set()
         pred_exon_set: Set[Tuple[str, int, int]] = set()
         pred_start_set: Set[Tuple[str, int]] = set()
 
-        for start1 in selected_starts:
-            cands = starts.get(start1, [])
-            if top_start_rank_only:
-                # include only start_rank==1; if multiple flagged as 1, include all such
-                chosen = [c for c in cands if c.start_rank == 1]
-                if not chosen and cands:
-                    # fall back to best-rank candidate
-                    best = min(cands, key=lambda x: (x.start_rank, -x.boundary_score))
-                    chosen = [best]
-            else:
-                chosen = list(cands)
-
-            for c in chosen:
-                gene_key = (c.strand, tuple(c.exons))
-                pred_gene_set.add(gene_key)
-                for s0, e0 in c.exons:
-                    pred_exon_set.add((c.strand, s0, e0))
-                # Record strand-aware start coordinate (1-based)
-                pred_start_set.add((c.strand, start1))
+        for c in selected_candidates:
+            gene_key = (c.strand, tuple(c.exons))
+            pred_gene_set.add(gene_key)
+            for s0, e0 in c.exons:
+                pred_exon_set.add((c.strand, s0, e0))
+            # Record strand-aware start coordinate (1-based)
+            pred_start_set.add((c.strand, c.start1))
 
         # exon-level
         tp_ex = len(pred_exon_set & exp_exon_set)
