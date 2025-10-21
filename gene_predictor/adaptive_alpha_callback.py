@@ -19,10 +19,10 @@ class AdaptiveAlphaCallback(pl.Callback):
         metrics_cb,
 
 	# ssmd_target: computed on windows, not blended, so value will be lower
-	# then the final blended SSMD. 2.0 here is probably approach 3 at
-	# blended level so we can slow down.
-
+	# then the final blended SSMD. 2.0 here is probably approaching 3 at
+	# blended level
         ssmd_target: float = 2.0,
+
         k_p: float = 0.2,
         k_d: float = 0.1,
         beta: float = 0.8,
@@ -63,7 +63,7 @@ class AdaptiveAlphaCallback(pl.Callback):
                 beta=self._beta,
                 alpha0=alpha0,
                 alpha_min=self._alpha_min,
-                hysteresis=2,
+                hysteresis=1,
             )
             self._state_by_class[int(cls_id)] = new_state
             self._alpha_by_class[int(cls_id)] = float(a)

@@ -66,7 +66,7 @@ def main():
     # Adaptive alpha (trend-aware SSMD scheduler)
     parser.add_argument('--adaptive-alpha', action='store_true', help='Enable adaptive alpha scheduling based on SSMD trend')
     parser.add_argument('--alpha-min', type=float, default=0.05, help='Minimum alpha when separation is high')
-    parser.add_argument('--alpha-ssmd-target', type=float, default=2.8, help='Target SSMD (from windows, lower than blended SSMD)')
+    parser.add_argument('--alpha-ssmd-target', type=float, default=2.0, help='Target SSMD (from windows, lower than blended SSMD)')
     parser.add_argument('--alpha-kp', type=float, default=0.2, help='Proportional gain on SSMD error')
     parser.add_argument('--alpha-kd', type=float, default=0.1, help='Derivative gain on SSMD trend')
     parser.add_argument('--alpha-beta', type=float, default=0.8, help='EMA beta for SSMD smoothing')
@@ -77,7 +77,7 @@ def main():
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
     # loss selection
     parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce', 'event-head-bce'],
-                        help='Loss type: event-ce (masked cross-entropy), event-bce (masked BCE per event class on main logits), or event-head-bce (masked BCE on separate event heads)')
+                        help='Loss type: event-ce (masked cross-entropy), event-bce (masked BCE), or event-head-bce (masked BCE on separate event heads)')
 
     args = parser.parse_args()
     margin_bp = min(200, args.max_seq_length // 2)

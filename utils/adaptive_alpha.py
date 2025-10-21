@@ -33,7 +33,7 @@ def alpha_from_ssmd_trend(
     *,
     ssmd_now: float,
     state: AlphaTrendState,
-    ssmd_target: float = 4.0,
+    ssmd_target: float = 2.0,
     k_p: float = 0.2,
     k_d: float = 0.1,
     beta: float = 0.8,
