@@ -14,7 +14,8 @@ import random
 import math
 import re
 
-from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_codons, StandardDonorDinucleotides, ConventionalAcceptorDinucleotides
+from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_codons, ConventionalAcceptorDinucleotides
+from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.events import compute_event_spans_vectorized
 from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
@@ -28,7 +29,7 @@ from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
 from utils.windowing import compute_window_slices, blend_logits, window_weights
 from utils.constants import DNAEmbed
-from utils.events import build_class_logits_from_event_head_logits
+from utils.events import build_event_motifs, build_class_logits_from_event_head_logits
 
 
 def _fit_beta_moments(samples: list) -> Tuple[float, float, float, float, float]:
@@ -609,6 +610,8 @@ def main():
     parser.add_argument('--fna-fn', type=str, required=True, help='File name for genome sequence in FASTA format')
     parser.add_argument('--tsv-fn', type=str, required=True, help='File name for annotations in TSV format')
     parser.add_argument('--num-contigs', type=int, default=0, help='Number of contigs, if 0 use all from input file')
+    parser.add_argument('--dss-motifs', type=str, default='standard', choices=['standard', 'dino'],
+                        help='If not specified in model, donor splice site motifs to use for event-based loss: standard or dino')
     parser.add_argument('--run-dir', type=str, required=True,
                        help='Run directory that contains the checkpoints subdirectory.')
     parser.add_argument('--model-path', type=str, required=True,
@@ -656,6 +659,12 @@ def main():
     cfg = getattr(model, 'config', {})
     ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
     event_motifs_by_class = ccfg.get('event_motifs_by_class')
+    if event_motifs_by_class is None:
+        if args.dss_motifs == 'dino':
+            dss_set = DinoDonorDinucleotides
+        else:
+            dss_set = StandardDonorDinucleotides
+        event_motifs_by_class = build_event_motifs(dss_set)
 
     # Run predictions (with attention if requested)
     results = run_predictions(

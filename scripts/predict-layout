@@ -3,4 +3,5 @@ PYTHONPATH=. python gene_predictor/predict_and_analyze.py \
   --num-contigs $2 \
   --run-dir $3 \
   --model-path $4 \
-  --write-decoder-input-pkl
+  --write-decoder-input-pkl \
+  --dss-motifs $5

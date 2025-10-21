@@ -273,7 +273,7 @@ def main():
                 return torch.from_numpy(np.stack(outs, axis=0))
             event_logits_conversion_fn = _convert
 
-        # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=4)
+        # Event-head mode: don't monitor F1; still report metrics; early-stop on val_loss only (patience=8)
         if num_event_heads > 0:
             # Use the exact dict reference created above and passed to the loss
             alpha_by_class = bce_alpha_weight_map
