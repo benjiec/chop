@@ -108,6 +108,48 @@ def _scan_events(seq: str, dss_motifs: List[str], probs: Optional[np.ndarray] = 
     return {"start": starts, "stop": stops, "dss": dss, "ass": ass}
 
 
+def _exons_from_events(start_pos: int, events: Dict[str, List[int]]) -> List[Tuple[int, int]]:
+    # Reconstruct exon intervals using ordered DSS/ASS/STOP events.
+    # Rules:
+    # - Start in EXON at start_pos
+    # - DSS closes exon at position d (end = d)
+    # - ASS re-opens exon at a+2 (after acceptor dinucleotide)
+    # - STOP closes exon at t+3 (after stop triplet) and terminates
+    dss_positions = sorted(events.get("dss", []))
+    ass_positions = sorted(events.get("ass", []))
+    stop_positions = sorted(events.get("stop", []))
+
+    # Merge events into a single ordered stream with tags
+    merged: List[Tuple[int, str]] = []
+    merged += [(d, "dss") for d in dss_positions]
+    merged += [(a, "ass") for a in ass_positions]
+    merged += [(t, "stop") for t in stop_positions]
+    merged.sort(key=lambda t: t[0])
+
+    exons: List[Tuple[int, int]] = []
+    in_exon = True
+    current_start = start_pos
+
+    for pos, kind in merged:
+        if kind == "dss" and in_exon:
+            # close exon before donor dinucleotide
+            exons.append((current_start, pos))
+            in_exon = False
+            current_start = -1
+        elif kind == "ass" and not in_exon:
+            # open exon after acceptor dinucleotide
+            in_exon = True
+            current_start = pos + 2
+        elif kind == "stop" and in_exon:
+            # close exon including stop triplet and terminate
+            exons.append((current_start, pos + 3))
+            in_exon = False
+            current_start = -1
+            break
+
+    return exons
+
+
 @dataclass
 class Beam:
     # Beam states (class attributes) - define after fields to avoid dataclass init ordering issues
@@ -120,6 +162,7 @@ class Beam:
     skips: Dict[str, List[int]] = field(default_factory=lambda: {"dss": [], "ass": []})
     intron_count: int = 0
     exon_start: int = -1
+    transition_acc: float = 0.0
 
     # Class attributes (not part of __init__ parameters)
     EXON: int = 0
@@ -129,7 +172,13 @@ class Beam:
         return {k: list(v) for k, v in self.events.items()}
 
     def compute_exons(self) -> List[Tuple[int, int]]:
-        return list(self.exons)
+        if self.exons:
+            return list(self.exons)
+        starts = self.events.get("start", [])
+        if not starts:
+            return []
+        start_pos = starts[0]
+        return _exons_from_events(start_pos, self.events)
 
     def compute_scores(self, probs: np.ndarray, verbose: Optional[bool] = False) -> Tuple[float, float]:
         ordered_log = []
@@ -202,12 +251,30 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
         if t >= start_pos + 3:
             has_stop[t] = True
 
+    # Precompute DSS/ASS log-probabilities (positive and negative) once per start
+    logp_dss = np.full(L, -1e30, dtype=np.float32)
+    logp_dss_neg = np.full(L, -1e30, dtype=np.float32)
+    for d in events["dss"]:
+        if d >= start_pos + 3:
+            lp = _event_logp(probs, d, P.DSS, False)
+            lpn = _event_logp(probs, d, P.DSS, True)
+            logp_dss[d] = lp
+            logp_dss_neg[d] = lpn
+
+    logp_ass = np.full(L, -1e30, dtype=np.float32)
+    logp_ass_neg = np.full(L, -1e30, dtype=np.float32)
+    for a in events["ass"]:
+        if a >= start_pos + 3:
+            lp = _event_logp(probs, a, P.ASS, False)
+            lpn = _event_logp(probs, a, P.ASS, True)
+            logp_ass[a] = lp
+            logp_ass_neg[a] = lpn
+
     # DP: memoize top-k suffix beams from (i,state,phase,exon_start)
     from functools import lru_cache
 
     def score_key(b: Beam) -> float:
-        _, transition = b.compute_scores(probs)
-        return transition
+        return b.transition_acc
 
     def merge_prefix_suffix(prefix: Beam, tail: Beam) -> Beam:
         # Combine events, skips, and exons; take tail's position/state/phase trackers
@@ -232,10 +299,11 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
             skips=sk,
             intron_count=tail.intron_count,
             exon_start=tail.exon_start,
+            transition_acc=prefix.transition_acc + tail.transition_acc,
         )
 
     @lru_cache(maxsize=None)
-    def dp(i: int, state: int, phase: int, exon_start: int) -> Tuple[Beam, ...]:
+    def dp(i: int, state: int, phase: int) -> Tuple[Beam, ...]:
         if i >= L:
             return tuple()
         results: List[Beam] = []
@@ -248,19 +316,17 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                 # If STOP begins at j and in-frame, terminate here (earliest STOP)
                 if has_stop[j] and ((phase + (j - i)) % 3 == 0):
                     stop_ev = {"start": [], "dss": [], "ass": [], "stop": [j]}
-                    exons_list: List[Tuple[int, int]] = []
-                    if exon_start >= 0:
-                        exons_list.append((exon_start, j + 3))
                     stop_beam = Beam(
                         id=beam_id,
                         pos=j + 3,
                         state=Beam.EXON,
                         phase=(phase + (j - i)) % 3,
-                        exons=exons_list,
+                        exons=[],
                         events=stop_ev,
                         skips={"dss": [], "ass": []},
                         intron_count=0,
-                        exon_start=exon_start,
+                        exon_start=-1,
+                        transition_acc=0.0,
                     )
                     results.append(stop_beam)
                     break
@@ -273,13 +339,14 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                         pos=j + 2,
                         state=Beam.INTRON,
                         phase=(phase + (j - i)) % 3,
-                        exons=[(exon_start, j)],
+                        exons=[],
                         events={"start": [], "dss": [j], "ass": [], "stop": []},
                         skips={"dss": [], "ass": []},
                         intron_count=0,
                         exon_start=-1,
+                        transition_acc=float(logp_dss[j]),
                     )
-                    for tail in dp(j + 2, Beam.INTRON, (phase + (j - i)) % 3, -1):
+                    for tail in dp(j + 2, Beam.INTRON, (phase + (j - i)) % 3):
                         results.append(merge_prefix_suffix(take_prefix, tail))
                         if _debug_log_dp(j):
                             print("dss take", j, "phase", (phase + (j - i)) % 3)
@@ -295,9 +362,10 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                         events={"start": [], "dss": [], "ass": [], "stop": []},
                         skips={"dss": [j], "ass": []},
                         intron_count=0,
-                        exon_start=exon_start,
+                        exon_start=-1,
+                        transition_acc=float(logp_dss_neg[j]),
                     )
-                    for tail in dp(j + 1, Beam.EXON, (phase + (j + 1 - i)) % 3, exon_start):
+                    for tail in dp(j + 1, Beam.EXON, (phase + (j + 1 - i)) % 3):
                         results.append(merge_prefix_suffix(skip_prefix, tail))
                         if _debug_log_dp(j):
                             print("dss skip", j, "phase", (phase + (j - i)) % 3)
@@ -322,9 +390,10 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                         events={"start": [], "dss": [], "ass": [j], "stop": []},
                         skips={"dss": [], "ass": []},
                         intron_count=0,
-                        exon_start=j + 2,
+                        exon_start=-1,
+                        transition_acc=float(logp_ass[j]),
                     )
-                    for tail in dp(j + 2, Beam.EXON, phase, j + 2):
+                    for tail in dp(j + 2, Beam.EXON, phase):
                         results.append(merge_prefix_suffix(take_prefix, tail))
                         if _debug_log_dp(j):
                             print("ass take", j, "phase", phase)
@@ -341,8 +410,9 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
                         skips={"dss": [], "ass": [j]},
                         intron_count=0,
                         exon_start=-1,
+                        transition_acc=float(logp_ass_neg[j]),
                     )
-                    for tail in dp(j + 1, Beam.INTRON, phase, -1):
+                    for tail in dp(j + 1, Beam.INTRON, phase):
                         results.append(merge_prefix_suffix(skip_prefix, tail))
                         if _debug_log_dp(j):
                             print("ass skip", j, "phase", phase)
@@ -358,7 +428,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
         return tuple(results)
 
     # Get suffix completions from start state, then add START event and build candidates
-    suffixes = dp(start_pos + 3, Beam.EXON, 0, start_pos)
+    suffixes = dp(start_pos + 3, Beam.EXON, 0)
     candidates: List[CandidateGene] = []
 
     for tail in suffixes:
