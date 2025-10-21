@@ -182,8 +182,7 @@ class Beam:
         )
 
 
-def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, List[int]],
-                      top_k_splicing: int = 3, beam_size: int = 16) -> List[CandidateGene]:
+def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, List[int]], top_k_splicing: int = 3) -> List[CandidateGene]:
     seq = ps.sequence
     probs = ps.probabilities
     beam_id = uuid.uuid4().hex[:8]
@@ -387,7 +386,7 @@ def _decode_from_start(ps: PredictedSequence, start_pos: int, events: Dict[str, 
     return candidates[:top_k_splicing]
 
 
-def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10, beam_size: int = 16,
+def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing: int = 3, top_k_starts: int = 10,
                     min_logp_start: Optional[float] = None,
                     min_logp_stop: Optional[float] = None,
                     min_logp_dss: Optional[float] = None,
@@ -414,7 +413,7 @@ def decode_sequence(ps: PredictedSequence, dss_motifs: List[str], top_k_splicing
         if len(best_k_heap) >= top_k_starts and start_logp[s] < best_k_heap[0]:
             break
 
-        cands = _decode_from_start(ps, s, events, top_k_splicing=top_k_splicing, beam_size=beam_size)
+        cands = _decode_from_start(ps, s, events, top_k_splicing=top_k_splicing)
         if cands:
             # order per-start candidates by boundary then transition desc
             cands.sort(key=lambda c: (c.boundary_score, c.transition_score), reverse=True)

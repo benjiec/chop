@@ -93,7 +93,7 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=0, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
 
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
@@ -132,7 +132,7 @@ class TestDecoder(unittest.TestCase):
         ps = PredictedSequence(sequence_index=1, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Also test hazard scoring path runs
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=32)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
 
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
@@ -163,7 +163,7 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=14, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         self.assertEqual(len(res.global_topk), 0)
 
     def test_start_then_two_ass_ignored(self):
@@ -189,7 +189,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(15, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2)
         self.assertEqual(len(res.global_topk), 1)
         cand = res.global_topk[0]
         # Single exon; ASS inside exon ignored
@@ -223,7 +223,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(16, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         self.assertGreaterEqual(len(res.global_topk), 1)
         # Pick any candidate that uses a DSS and verify only the first is taken
         cand = next(c for c in res.global_topk if len(c.events['dss']) >= 1)
@@ -248,7 +248,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(20, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
         self.assertEqual(len(res.global_topk), 1)
         cb = res.global_topk[0]
         ch = cb
@@ -282,7 +282,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(21, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_h = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=16)
+        res_h = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
         self.assertEqual(len(res_h.global_topk), 1)
         cand = res_h.global_topk[0]
         # choose the single-exon candidate (no dss taken)
@@ -333,7 +333,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, p_stop)
 
         ps = PredictedSequence(22, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res_h = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2, beam_size=16)
+        res_h = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2)
         self.assertGreaterEqual(len(res_h.global_topk), 1)
         # pick the split candidate (one dss and one ass recorded)
         cand = next(c for c in res_h.global_topk if len(c.events['dss']) == 1 and len(c.events['ass']) == 1)
@@ -382,7 +382,7 @@ class TestDecoder(unittest.TestCase):
 
         ps = PredictedSequence(sequence_index=2, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         for res in (res,):
             self.assertGreaterEqual(len(res.global_topk), 1)
             cand = res.global_topk[0]
@@ -417,7 +417,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t2, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(43, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=10, top_k_starts=10, beam_size=10000)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=10, top_k_starts=10)
         self.assertGreaterEqual(len(res.global_topk), 1)
         for cand in res.global_topk:
             self.assertIn(t1, cand.events['stop'])
@@ -462,7 +462,7 @@ class TestDecoder(unittest.TestCase):
         self.assertGreater(split_boundary, direct_boundary)
 
         ps = PredictedSequence(44, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=20, top_k_starts=20, beam_size=100000)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=20, top_k_starts=20)
         self.assertGreaterEqual(len(res.global_topk), 1)
         for cand in res.global_topk:
             self.assertIn(t1, cand.events['stop'])
@@ -481,7 +481,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, 3, P.START, 3, 0.95)
         _set_event(probs, 16, P.STOP, 3, 0.95)
         ps = PredictedSequence(4, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         self.assertEqual(len(res.global_topk), 0)
 
     def test_exon_ass_ignored(self):
@@ -499,7 +499,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, 10, P.ASS, 2, 0.99)
         _set_event(probs, 21, P.STOP, 3, 0.9)
         ps = PredictedSequence(5, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
         self.assertEqual(len(res.global_topk), 1)
         self.assertEqual(res.global_topk[0].events['ass'], [])
 
@@ -525,7 +525,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, a+5, P.DSS, 2, 0.99)
         _set_event(probs, t, P.STOP, 3, 0.95)
         ps = PredictedSequence(6, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=32)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         # Pick any split candidate and validate intronic DSS is ignored
         split = next(c for c in res.global_topk if len(c.events['dss']) == 1)
         self.assertIn(d, split.events['dss'])
@@ -551,7 +551,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
         ps = PredictedSequence(7, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Use very large beam and k to avoid pruning effects in this test
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=100, top_k_starts=100, beam_size=100000)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=100, top_k_starts=100)
         self.assertGreaterEqual(len(res.global_topk), 1)
         # Choose the single-exon (no DSS taken) candidate
         b = next(c for c in res.global_topk if len(c.events['dss']) == 0)
@@ -589,7 +589,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, a2, P.ASS, 2, 0.95)
         _set_event(probs, t, P.STOP, 3, 0.99)
         ps = PredictedSequence(8, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=32)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         # pick the best split candidate
         c = next(c for c in res.global_topk if len(c.events['dss']) == 1)
         # Should use a2, skipping a1
@@ -623,7 +623,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.6)
         ps = PredictedSequence(9, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
         # Use hazard scoring so repeated DSS skips penalize single-exon path
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=2)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
         self.assertEqual(len(res.global_topk), 1)
         c = res.global_topk[0]
         self.assertEqual(c.events['dss'], [d])
@@ -650,7 +650,7 @@ class TestDecoder(unittest.TestCase):
         for pos, cls, span, p in [(s,P.START,3,0.99), (d1,P.DSS,2,0.99), (a1,P.ASS,2,0.99), (d2,P.DSS,2,0.99), (a2,P.ASS,2,0.99), (t,P.STOP,3,0.99)]:
             _set_event(probs, pos, cls, span, p)
         ps = PredictedSequence(10, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         self.assertGreaterEqual(len(res.global_topk), 1)
 
     def test_multiple_starts_and_global_union(self):
@@ -674,7 +674,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t1, P.STOP, 3, 0.95)
         _set_event(probs, t2, P.STOP, 3, 0.95)
         ps = PredictedSequence(11, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2)
         self.assertGreaterEqual(len(res.per_start.keys()), 2)
         self.assertEqual(len(res.global_topk), 2)
 
@@ -695,7 +695,7 @@ class TestDecoder(unittest.TestCase):
         for pos in [(s1,P.START,3),(s2,P.START,3),(t1,P.STOP,3),(t2,P.STOP,3)]:
             _set_event(probs, pos[0], pos[1], pos[2], 0.9)
         ps = PredictedSequence(12, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=2, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=2)
         self.assertGreaterEqual(len(res.global_topk), 2)
 
     def test_event_near_end_no_oob(self):
@@ -716,7 +716,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, d, P.DSS, 2, 0.9)
         _set_event(probs, t, P.STOP, 3, 0.9)
         ps = PredictedSequence(13, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2, beam_size=8)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=2)
         # Ensure no exception; candidate existence depends on frame
         self.assertGreaterEqual(len(res.global_topk), 0)
 
@@ -747,7 +747,7 @@ class TestDecoder(unittest.TestCase):
         ps = PredictedSequence(sequence_index=3, sequence=seq, probabilities=probs,
                                class_order=[P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
 
-        res_b = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3, beam_size=32)
+        res_b = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=3, top_k_starts=3)
         self.assertGreaterEqual(len(res_b.global_topk), 2)
         # Identify single-exon vs split-exon by presence of junctions
         has_single = any(len(c.events['dss']) == 0 and len(c.exons) == 1 for c in res_b.global_topk)
@@ -782,7 +782,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t, P.STOP, 3, 0.99)
 
         ps = PredictedSequence(45, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=5, top_k_starts=5, beam_size=1000)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=5, top_k_starts=5)
         # Expect a split candidate with DSS at 10, ASS at 20, STOP at 24
         split = next(c for c in res.global_topk if c.events['dss'] == [d] and c.events['ass'] == [a] and c.events['stop'] == [t])
         self.assertIsNotNone(split)
@@ -861,7 +861,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t3, P.STOP, 3, 0.8)
 
         ps = PredictedSequence(100, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
 
         # Collect start indices from global candidates
         starts_in_global = {c.events['start'][0] for c in res.global_topk if c.events.get('start')}
@@ -899,7 +899,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t_split, P.STOP, 3, 0.9)
 
         ps = PredictedSequence(101, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=1, beam_size=32)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=2, top_k_starts=1)
 
         # Ensure both candidates under this start exist and have different boundaries
         self.assertIn(s, res.per_start)
@@ -935,7 +935,7 @@ class TestDecoder(unittest.TestCase):
         _set_event(probs, t_lo, P.STOP, 3, 0.6)
 
         ps = PredictedSequence(102, seq, probs, [P.idx_to_cls[i] for i in sorted(P.idx_to_cls.keys())])
-        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1, beam_size=16)
+        res = decode_sequence(ps, StandardDonorDinucleotides, top_k_splicing=1, top_k_starts=1)
 
         starts_in_global = {c.events['start'][0] for c in res.global_topk if c.events.get('start')}
         self.assertIn(s_hi, starts_in_global)
