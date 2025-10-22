@@ -10,6 +10,8 @@ from dna_learner.model import (
     GenePredictorModel,
     GenePredictorModule,
     create_base_config,
+    AuxStreamEncoder,
+    BiasedGlobalCrossAttention,
 )
 from utils.losses import adjusted_ce_entropy_loss
 from utils.constants import EventHeadIdx as H
@@ -47,6 +49,66 @@ class TestGenePredictorModel(unittest.TestCase):
         attn = extras['attention']
         self.assertIn('layer_0', attn)
         self.assertEqual(attn['layer_0'].shape, (2, 2, 30, 30))
+
+    def test_aux_stream_disabled_is_noop(self):
+        # Model configured with aux support disabled
+        model = GenePredictorModel(
+            max_seq_length=64,
+            num_classes=3,
+            vocab_size=5,
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            dropout=0.0,
+            attention_masks=None,
+            kmer_size=0,
+            enable_aux_stream=False,
+            aux_cross_attn_layers=1,
+        )
+        x = torch.randint(0, 5, (2, 40))
+        aux = torch.randn(2, 40, 2)
+        logits_no_aux = model(x)
+        logits_with_ignored_aux = model(x, aux_stream=aux)
+        self.assertEqual(logits_no_aux.shape, logits_with_ignored_aux.shape)
+
+    def test_aux_stream_enabled_shapes_and_lazy_init(self):
+        model = GenePredictorModel(
+            max_seq_length=64,
+            num_classes=4,
+            vocab_size=5,
+            d_model=24,
+            n_layers=1,
+            n_heads=3,
+            dropout=0.0,
+            attention_masks=None,
+            kmer_size=0,
+            enable_aux_stream=True,
+            aux_cross_attn_layers=1,
+            aux_relpos_max_distance=16,
+        )
+        x = torch.randint(0, 5, (2, 32))
+        aux = torch.randn(2, 32, 3)  # C=3
+        # Before first forward, aux encoder not yet built
+        self.assertTrue(getattr(model, 'aux_encoder') is None)
+        logits = model(x, aux_stream=aux)
+        self.assertEqual(logits.shape, (2, 32, 4))
+        # After forward, aux encoder must be initialized with in_channels=3
+        self.assertIsNotNone(model.aux_encoder)
+        self.assertEqual(int(getattr(model, '_aux_encoder_in_dim')), 3)
+
+    def test_biased_global_cross_attention_bias_matrix(self):
+        d_model = 12
+        heads = 3
+        L = 10
+        block = BiasedGlobalCrossAttention(d_model=d_model, n_heads=heads, dropout=0.0, relpos_max_distance=4)
+        x = torch.randn(2, L, d_model)
+        y = torch.randn(2, L, d_model)
+        out = block(x, y)
+        self.assertEqual(out.shape, (2, L, d_model))
+        # Gate is between 0 and 1 after sigmoid
+        gate = torch.sigmoid(block.gate).item()
+        self.assertGreaterEqual(gate, 0.0)
+        self.assertLessEqual(gate, 1.0)
 
     def test_model_with_event_heads_outputs_event_logits(self):
         model = GenePredictorModel(
@@ -627,3 +689,37 @@ class TestModuleForwardAPI(unittest.TestCase):
         x = torch.randint(0, 5, (1, 10), dtype=torch.long)
         with self.assertRaises(AssertionError):
             _ = mod.forward(x, return_event_logits='event_logits')
+
+    def test_module_supports_aux_stream_in_batches(self):
+        num_classes = 3
+        cfg = create_base_config(
+            max_seq_length=32,
+            num_classes=num_classes,
+            class_names=[f'C{i}' for i in range(num_classes)],
+            d_model=16,
+            n_layers=1,
+            n_heads=2,
+            learning_rate=1e-3,
+            max_epochs=1,
+            batch_size=2,
+            class_weights=[1.0] * num_classes,
+            attention_masks=None,
+            kmer_size=0,
+        )
+        # Enable aux in model config
+        cfg['model']['enable_aux_stream'] = True
+        cfg['model']['aux_cross_attn_layers'] = 1
+
+        dummy_loss = lambda s, t, l, ev, c: torch.tensor(0.0)
+        mod = GenePredictorModule(cfg, custom_loss_fn=dummy_loss)
+        x = torch.randint(0, 5, (2, 20), dtype=torch.long)
+        y = torch.randint(0, num_classes, (2, 20), dtype=torch.long)
+        aux = torch.randn(2, 20, 2)
+
+        # Training with 3-tuple
+        loss1 = mod.training_step((x, y, aux), 0)
+        self.assertTrue(torch.is_tensor(loss1))
+
+        # Validation with dict batch
+        loss2 = mod.validation_step({'sequences': x, 'targets': y, 'aux_stream': aux}, 0)
+        self.assertTrue(torch.is_tensor(loss2))

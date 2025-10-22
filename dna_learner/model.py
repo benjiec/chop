@@ -250,6 +250,111 @@ class MaskedTransformerLayer(nn.Module):
             return x
 
 
+class AuxStreamEncoder(nn.Module):
+    """Encode an aligned auxiliary stream [B, L, C] into model hidden size [B, L, D].
+
+    Channel-agnostic: projects C -> D with optional lightweight nonlinearity.
+    """
+
+    def __init__(self, in_channels: int, d_model: int, dropout: float = 0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(in_channels)
+        self.proj = nn.Linear(in_channels, d_model)
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, aux_stream: torch.Tensor) -> torch.Tensor:
+        # aux_stream: (B, L, C)
+        x = self.norm(aux_stream)
+        x = self.proj(x)
+        x = self.act(x)
+        x = self.drop(x)
+        return x  # (B, L, D)
+
+
+class BiasedGlobalCrossAttention(nn.Module):
+    """Cross-attention from DNA queries to aux-stream keys/values with learned relative bias.
+
+    - Queries: dna_repr [B, Lq, D]
+    - Keys/Values: aux_repr [B, Lk, D]
+    - Heads: configurable; uses standard scaled dot-product attention with per-head bias.
+    - Adds gated residual: output = x + sigmoid(gate) * attn_out
+    """
+
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1, relpos_max_distance: int = 256, init_gate: float = -2.0):
+        super().__init__()
+        if d_model % n_heads != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by n_heads ({n_heads}) for cross-attn")
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.scale = self.head_dim ** -0.5
+        self.relpos_max_distance = int(relpos_max_distance)
+
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+
+        K = int(self.relpos_max_distance)
+        self.relpos_bias = nn.Parameter(torch.zeros(self.n_heads, 2 * K + 1))
+        # Gate initialized near zero contribution
+        self.gate = nn.Parameter(torch.tensor(float(init_gate)))
+
+    def _relative_bias_matrix(self, Lq: int, Lk: int, device: torch.device) -> torch.Tensor:
+        """Return per-head bias matrix of shape [H, Lq, Lk]."""
+        # Compute offset matrix Δ = i - j
+        i = torch.arange(Lq, device=device).unsqueeze(1)  # [Lq,1]
+        j = torch.arange(Lk, device=device).unsqueeze(0)  # [1,Lk]
+        delta = i - j  # [Lq, Lk]
+        K = self.relpos_max_distance
+        delta_clipped = torch.clamp(delta, min=-K, max=K) + K  # [Lq, Lk] in [0, 2K]
+        # Gather bias for each head
+        bias = self.relpos_bias[:, delta_clipped]  # [H, Lq, Lk]
+        return bias
+
+    def forward(self, x_dna: torch.Tensor, x_aux: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # x_dna: [B, Lq, D], x_aux: [B, Lk, D], key_padding_mask: [B, Lk]=False for pad
+        B, Lq, _ = x_dna.shape
+        _, Lk, _ = x_aux.shape
+
+        q = self.q_proj(x_dna)
+        k = self.k_proj(x_aux)
+        v = self.v_proj(x_aux)
+
+        # Reshape to heads
+        q = q.view(B, Lq, self.n_heads, self.head_dim).transpose(1, 2)  # [B,H,Lq,Dh]
+        k = k.view(B, Lk, self.n_heads, self.head_dim).transpose(1, 2)  # [B,H,Lk,Dh]
+        v = v.view(B, Lk, self.n_heads, self.head_dim).transpose(1, 2)  # [B,H,Lk,Dh]
+
+        # Attention logits with relative bias
+        attn_logits = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B,H,Lq,Lk]
+        bias = self._relative_bias_matrix(Lq, Lk, attn_logits.device)  # [H,Lq,Lk]
+        attn_logits = attn_logits + bias.unsqueeze(0)
+
+        if key_padding_mask is not None:
+            # Mask: True for keep, False for pad → we need to -inf where pad
+            # key_padding_mask: [B,Lk] with True=valid expected? Our datasets often use Bool mask; assume True means keep
+            # Build broadcast mask [B,1,1,Lk]
+            keep = key_padding_mask.to(dtype=torch.bool).unsqueeze(1).unsqueeze(1)
+            attn_logits = attn_logits.masked_fill(~keep, float('-inf'))
+
+        attn = F.softmax(attn_logits, dim=-1)
+        attn = torch.where(torch.isnan(attn), torch.zeros_like(attn), attn)
+        attn = self.attn_dropout(attn)
+
+        out = torch.matmul(attn, v)  # [B,H,Lq,Dh]
+        out = out.transpose(1, 2).contiguous().view(B, Lq, self.d_model)  # [B,Lq,D]
+        out = self.out_proj(out)
+        out = self.resid_dropout(out)
+
+        # Gated residual
+        gate = torch.sigmoid(self.gate)
+        return x_dna + gate * out
+
+
 class GenePredictorModel(nn.Module):
     
     def __init__(self, max_seq_length, num_classes,
@@ -260,7 +365,13 @@ class GenePredictorModel(nn.Module):
                  dropout: float = 0.1, 
                  attention_masks: Optional[Dict[int, int]] = None,
                  kmer_size: int = 0,
-                 num_event_heads: int = 0):
+                 num_event_heads: int = 0,
+                 enable_aux_stream: bool = False,
+                 aux_cross_attn_layers: int = 1,
+                 aux_cross_attn_heads: Optional[int] = None,
+                 aux_cross_attn_dropout: float = 0.1,
+                 aux_relpos_max_distance: int = 256,
+                 aux_init_gate: float = -2.0):
 
         super().__init__()
 
@@ -273,6 +384,7 @@ class GenePredictorModel(nn.Module):
         self.n_heads = n_heads
         self.max_seq_length = max_seq_length
         self.num_event_heads = int(num_event_heads) if num_event_heads is not None else 0
+        self.enable_aux_stream = bool(enable_aux_stream)
         
         # DNA embedding
         self.embedding = DNAEmbedding(vocab_size=vocab_size, d_model=d_model, max_seq_length=max_seq_length, kmer_size=kmer_size)
@@ -289,6 +401,28 @@ class GenePredictorModel(nn.Module):
             ) for _ in range(n_layers)
         ])
 
+        # Optional aux-stream cross-attention stack
+        self.aux_cross_attn_layers = int(aux_cross_attn_layers) if aux_cross_attn_layers is not None else 0
+        self.aux_cross_attn_heads = int(aux_cross_attn_heads) if aux_cross_attn_heads is not None else int(n_heads)
+        if self.enable_aux_stream and self.aux_cross_attn_layers > 0:
+            if d_model % self.aux_cross_attn_heads != 0:
+                raise ValueError(f"d_model ({d_model}) must be divisible by aux_cross_attn_heads ({self.aux_cross_attn_heads})")
+            # Aux encoder is channel-agnostic; instantiate lazily at first forward when C is known.
+            self._aux_encoder_in_dim: Optional[int] = None
+            self.aux_encoder: Optional[AuxStreamEncoder] = None
+            self.cross_attn_blocks = nn.ModuleList([
+                BiasedGlobalCrossAttention(
+                    d_model=d_model,
+                    n_heads=self.aux_cross_attn_heads,
+                    dropout=aux_cross_attn_dropout,
+                    relpos_max_distance=int(aux_relpos_max_distance),
+                    init_gate=float(aux_init_gate),
+                ) for _ in range(self.aux_cross_attn_layers)
+            ])
+        else:
+            self.aux_encoder = None
+            self.cross_attn_blocks = None
+
         # Classification head - configurable number of classes
         self.classifier = nn.Linear(d_model, num_classes)
         
@@ -301,7 +435,8 @@ class GenePredictorModel(nn.Module):
         else:
             self.event_heads = None
 
-    def forward(self, x, extras: Optional[Dict[str, bool]] = None, return_attention: str = None, return_event_logits: str = None):
+    def forward(self, x, extras: Optional[Dict[str, bool]] = None, return_attention: str = None, return_event_logits: str = None,
+                aux_stream: Optional[torch.Tensor] = None, aux_key_padding_mask: Optional[torch.Tensor] = None):
         # Embed DNA sequence
         x = self.embedding(x)  # (batch_size, seq_length, d_model)
         
@@ -316,6 +451,18 @@ class GenePredictorModel(nn.Module):
 
         # Apply dropout
         x = self.dropout(x)
+
+        # Optional aux-stream fusion via biased-global cross-attention
+        if self.enable_aux_stream and (self.cross_attn_blocks is not None) and (self.aux_cross_attn_layers > 0) and (aux_stream is not None):
+            # Lazy-init aux encoder based on channel count C
+            if self.aux_encoder is None:
+                if aux_stream.dim() != 3:
+                    raise ValueError("aux_stream must have shape [B, L, C]")
+                self._aux_encoder_in_dim = int(aux_stream.size(-1))
+                self.aux_encoder = AuxStreamEncoder(in_channels=self._aux_encoder_in_dim, d_model=int(x.size(-1)), dropout=self.dropout.p)
+            aux_repr = self.aux_encoder(aux_stream)
+            for block in self.cross_attn_blocks:
+                x = block(x, aux_repr, key_padding_mask=aux_key_padding_mask)
 
         # Determine what to return
         want_attention_key: Optional[str] = None
@@ -386,6 +533,12 @@ class GenePredictorModule(pl.LightningModule):
             attention_masks=model_config.get('attention_masks'),
             kmer_size=model_config.get('kmer_size', 0),
             num_event_heads=model_config.get('num_event_heads', 0),
+            enable_aux_stream=bool(model_config.get('enable_aux_stream', False)),
+            aux_cross_attn_layers=int(model_config.get('aux_cross_attn_layers', 0) or 0),
+            aux_cross_attn_heads=(int(model_config.get('aux_cross_attn_heads')) if model_config.get('aux_cross_attn_heads') is not None else None),
+            aux_cross_attn_dropout=float(model_config.get('aux_cross_attn_dropout', 0.1)),
+            aux_relpos_max_distance=int(model_config.get('aux_relpos_max_distance', 256)),
+            aux_init_gate=float(model_config.get('aux_init_gate', -2.0)),
         )
 
         # Loss function configuration (class weights remain in config for datasets/metrics)
@@ -403,18 +556,36 @@ class GenePredictorModule(pl.LightningModule):
 
     def forward(self, x, extras: Optional[Dict[str, Any]] = None,
                 return_attention: Optional[str] = None,
-                return_event_logits: Optional[str] = None):
+                return_event_logits: Optional[str] = None,
+                aux_stream: Optional[torch.Tensor] = None,
+                aux_key_padding_mask: Optional[torch.Tensor] = None):
         return self.model(
             x,
             extras=extras,
             return_attention=return_attention,
             return_event_logits=return_event_logits,
+            aux_stream=aux_stream,
+            aux_key_padding_mask=aux_key_padding_mask,
         )
     
     def training_step(self, batch, batch_idx):
-        sequences, targets = batch
+        # Support (seq, tgt) or (seq, tgt, aux) or dict with keys
+        aux_stream = None
+        if isinstance(batch, (list, tuple)):
+            if len(batch) == 2:
+                sequences, targets = batch
+            elif len(batch) == 3:
+                sequences, targets, aux_stream = batch
+            else:
+                raise ValueError("Unexpected batch tuple length; expected 2 or 3 elements")
+        elif isinstance(batch, dict):
+            sequences = batch.get('sequences')
+            targets = batch.get('targets')
+            aux_stream = batch.get('aux_stream')
+        else:
+            raise ValueError("Batch must be (seq, tgt), (seq, tgt, aux), or dict")
         extras: Dict[str, Any] = {}
-        logits = self.model(sequences, extras=extras, return_event_logits='event_logits')
+        logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
         
         comp = {}
@@ -427,9 +598,22 @@ class GenePredictorModule(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        sequences, targets = batch
+        aux_stream = None
+        if isinstance(batch, (list, tuple)):
+            if len(batch) == 2:
+                sequences, targets = batch
+            elif len(batch) == 3:
+                sequences, targets, aux_stream = batch
+            else:
+                raise ValueError("Unexpected batch tuple length; expected 2 or 3 elements")
+        elif isinstance(batch, dict):
+            sequences = batch.get('sequences')
+            targets = batch.get('targets')
+            aux_stream = batch.get('aux_stream')
+        else:
+            raise ValueError("Batch must be (seq, tgt), (seq, tgt, aux), or dict")
         extras: Dict[str, Any] = {}
-        logits = self.model(sequences, extras=extras, return_event_logits='event_logits')
+        logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
         
         comp = {}
@@ -497,6 +681,13 @@ def create_base_config(
     kmer_size: int = 0,
     accumulate_grad_batches: Optional[int] = None,
     num_event_heads: Optional[int] = None,
+    # Aux stream fusion knobs
+    enable_aux_stream: Optional[bool] = None,
+    aux_cross_attn_layers: Optional[int] = None,
+    aux_cross_attn_heads: Optional[int] = None,
+    aux_cross_attn_dropout: Optional[float] = None,
+    aux_relpos_max_distance: Optional[int] = None,
+    aux_init_gate: Optional[float] = None,
 ) -> dict:
 
     # Validate d_model is divisible by n_heads
@@ -533,6 +724,20 @@ def create_base_config(
 
     if num_event_heads is not None:
         cfg['model']['num_event_heads'] = int(num_event_heads)
+
+    # Aux fusion defaults: keep disabled unless explicitly requested
+    if enable_aux_stream is not None:
+        cfg['model']['enable_aux_stream'] = bool(enable_aux_stream)
+    if aux_cross_attn_layers is not None:
+        cfg['model']['aux_cross_attn_layers'] = int(aux_cross_attn_layers)
+    if aux_cross_attn_heads is not None:
+        cfg['model']['aux_cross_attn_heads'] = int(aux_cross_attn_heads)
+    if aux_cross_attn_dropout is not None:
+        cfg['model']['aux_cross_attn_dropout'] = float(aux_cross_attn_dropout)
+    if aux_relpos_max_distance is not None:
+        cfg['model']['aux_relpos_max_distance'] = int(aux_relpos_max_distance)
+    if aux_init_gate is not None:
+        cfg['model']['aux_init_gate'] = float(aux_init_gate)
 
     return cfg
 
