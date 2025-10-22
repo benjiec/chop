@@ -21,9 +21,8 @@ from dna_learner.model import GenePredictorModule as ModelModule
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence
-from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
-from utils.metrics import compute_event_span_mean_probability_beta_fits
 from utils.metrics import SequenceResult
+from utils.metrics_report import compute_event_metrics, print_event_metrics_report
  
 from gene_decoder import PredictedSequence
 from utils.metrics import convert_tokens_to_sequence
@@ -680,10 +679,9 @@ def main():
     )
     
     # Compute metrics and motif-span prediction events for visualization (single call)
-    # Build event-driven metrics/brier honoring DSS motifs choice from CLI
-    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(event_motifs_by_class)
-    brier_fn = event_based_brier_factory(event_motifs_by_class)
-    generic, events = calc_metrics_with_windows(results, min_weight=1.0)
+    metrics = compute_event_metrics(results, event_motifs_by_class, min_weight=1.0)
+    generic = metrics.get('generic', {})
+    events = metrics.get('events', [])
     
     # Save results (FASTA + per-contig colored report)
     base_name = save_analysis_results(results, output_dir, class_weights=cw, line_width=args.line_width, ansi_colors=args.ansi_colors, events=events)
@@ -713,54 +711,8 @@ def main():
     dump_attention_fragments(results, events, attn_fa, k=args.dump_attention_k, window=args.dump_attention_window)
     print(f"✓ Attention fragments written to: {attn_fa}")
     
-    # Brier score on final results
-    brier = brier_fn(results, event_only=True)
-    print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
-    brier_by_cls = brier.get('brier_by_class', {})
-    if brier_by_cls:
-        print("\nBrier by class:")
-        for cls_idx in sorted(brier_by_cls.keys()):
-            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            print(f"  {name:>10s}: {float(brier_by_cls[cls_idx]):.4f}")
-
-    # Print generic per-class metrics (for classes selected above)
-    if generic:
-        print("\nPer-class metrics:")
-        for cls_idx in sorted(generic.keys()):
-            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(cls_idx))
-            m = generic[cls_idx]
-            print(f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
-                  f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}")
-
-    # Event-only TP/TN Beta fits (decoder-span mean probabilities), aggregated across sequences
-    print("\nEvent-only probability Beta fits (decoder span-mean, aggregated):")
-    beta_fits = compute_event_span_mean_probability_beta_fits(results, event_motifs_by_class)
-    classes = (GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS)
-    for cls_idx in classes:
-        cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-        fits = beta_fits.get(int(cls_idx))
-        if fits:
-            tp = fits['tp']
-            tn = fits['tn']
-            print(f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f})")
-            print(f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f})")
-        else:
-            print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
-            print(f"  {cname:>5s} TN: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
-
-    if generic and beta_fits and brier_by_cls:
-        print("\nSummary\ncls,sen/pre,brier,tp_m/tp_s-tn_m/tn_s,ssmd")
-        for cls_idx in classes:
-            cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            sen = generic[cls_idx]['sensitivity']*100
-            pre = generic[cls_idx]['precision']*100
-            b = brier_by_cls[cls_idx]
-            tp_m = beta_fits[cls_idx]['tp']['mean']*100
-            tp_s = beta_fits[cls_idx]['tp']['std']*100
-            tn_m = beta_fits[cls_idx]['tn']['mean']*100
-            tn_s = beta_fits[cls_idx]['tn']['std']*100
-            ssmd = (tp_m-tn_m) / math.sqrt(tp_s*tp_s+tn_s*tn_s)
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{ssmd:.2f}")
+    # Print shared metrics report
+    print_event_metrics_report(metrics)
 
 if __name__ == "__main__":
     main()

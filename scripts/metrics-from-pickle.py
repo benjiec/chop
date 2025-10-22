@@ -15,13 +15,9 @@ from utils.constants import (
     DNAEmbed,
 )
 from utils.genome import AnnotatedGenomeDataset, _load_fasta
-from utils.metrics import (
-    SequenceResult,
-    event_based_generic_metrics_factory,
-    event_based_brier_factory,
-    compute_event_span_mean_probability_beta_fits,
-)
+from utils.metrics import SequenceResult
 from utils.events import build_event_motifs
+from utils.metrics_report import compute_event_metrics, print_event_metrics_report
 
 
 def _char_to_token_array(seq: str) -> np.ndarray:
@@ -131,68 +127,9 @@ def main():
         dss = dss.union(DinoDonorDinucleotides)
     event_motifs_by_class = build_event_motifs(dss)
 
-    # Compute metrics and events (same API as predictor)
-    calc_metrics, calc_metrics_with_windows = event_based_generic_metrics_factory(event_motifs_by_class)
-    brier_fn = event_based_brier_factory(event_motifs_by_class)
-    generic, events = calc_metrics_with_windows(results, min_weight=1.0)
-
-    # Print Brier
-    brier = brier_fn(results, event_only=True)
-    print(f"Brier (overall): {brier.get('brier', 0.0):.4f}")
-    brier_by_cls = brier.get('brier_by_class', {})
-    if brier_by_cls:
-        print("\nBrier by class:")
-        for cls_idx in sorted(brier_by_cls.keys()):
-            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            print(f"  {name:>10s}: {float(brier_by_cls[cls_idx]):.4f}")
-
-    # Per-class metrics
-    if generic:
-        print("\nPer-class metrics:")
-        for cls_idx in sorted(generic.keys()):
-            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(cls_idx))
-            m = generic[cls_idx]
-            print(
-                f"  {name:>10s}  TP={m['tp']} FP={m['fp']} FN={m['fn']}  "
-                f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}"
-            )
-
-    # Beta fits
-    print("\nEvent-only probability Beta fits (decoder span-mean, aggregated):")
-    beta_fits = compute_event_span_mean_probability_beta_fits(results, event_motifs_by_class)
-    classes = (GenePredictionClass.START, GenePredictionClass.STOP, GenePredictionClass.DSS, GenePredictionClass.ASS)
-    for cls_idx in classes:
-        cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-        fits = beta_fits.get(int(cls_idx))
-        if fits:
-            tp = fits['tp']
-            tn = fits['tn']
-            print(
-                f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} "
-                f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f})"
-            )
-            print(
-                f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} "
-                f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f})"
-            )
-        else:
-            print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
-            print(f"  {cname:>5s} TN: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
-
-    if generic and beta_fits and brier_by_cls:
-        import math
-        print("\nSummary\ncls,sen/pre,brier,tp_m/tp_s-tn_m/tn_s,ssmd")
-        for cls_idx in classes:
-            cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            sen = generic[cls_idx]['sensitivity'] * 100
-            pre = generic[cls_idx]['precision'] * 100
-            b = brier_by_cls[cls_idx]
-            tp_m = beta_fits[cls_idx]['tp']['mean'] * 100
-            tp_s = beta_fits[cls_idx]['tp']['std'] * 100
-            tn_m = beta_fits[cls_idx]['tn']['mean'] * 100
-            tn_s = beta_fits[cls_idx]['tn']['std'] * 100
-            ssmd = (tp_m - tn_m) / math.sqrt(tp_s * tp_s + tn_s * tn_s) if (tp_s > 0 or tn_s > 0) else 0.0
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{ssmd:.2f}")
+    # Compute + print using shared helpers
+    metrics = compute_event_metrics(results, event_motifs_by_class, min_weight=1.0)
+    print_event_metrics_report(metrics)
 
 
 if __name__ == '__main__':
