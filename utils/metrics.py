@@ -343,13 +343,42 @@ def compute_event_span_mean_probability_metrics(
         s = float(np.sqrt(v))
         return n, m, s, float(alpha), float(beta)
 
+    def _median_iqr(samples: list) -> Tuple[float, float]:
+        if not samples:
+            return 0.0, 0.0
+        arr = np.asarray(samples, dtype=float)
+        arr = np.clip(arr, 1e-8, 1.0 - 1e-8)
+        med = float(np.median(arr))
+        q1 = float(np.percentile(arr, 25))
+        q3 = float(np.percentile(arr, 75))
+        iqr = max(0.0, q3 - q1)
+        return med, iqr
+
     out: Dict[int, Dict[str, Dict[str, float]]] = {}
     for cls in classes:
         n_tp, m_tp, s_tp, a_tp, b_tp = _fit_beta_moments(samples_tp[int(cls)])
         n_tn, m_tn, s_tn, a_tn, b_tn = _fit_beta_moments(samples_tn[int(cls)])
+        med_tp, iqr_tp = _median_iqr(samples_tp[int(cls)])
+        med_tn, iqr_tn = _median_iqr(samples_tn[int(cls)])
         out[int(cls)] = {
-            'tp': {'n': float(n_tp), 'mean': m_tp, 'std': s_tp, 'beta_alpha': a_tp, 'beta_beta': b_tp},
-            'tn': {'n': float(n_tn), 'mean': m_tn, 'std': s_tn, 'beta_alpha': a_tn, 'beta_beta': b_tn},
+            'tp': {
+                'n': float(n_tp),
+                'mean': m_tp,
+                'std': s_tp,
+                'beta_alpha': a_tp,
+                'beta_beta': b_tp,
+                'median': med_tp,
+                'iqr': iqr_tp,
+            },
+            'tn': {
+                'n': float(n_tn),
+                'mean': m_tn,
+                'std': s_tn,
+                'beta_alpha': a_tn,
+                'beta_beta': b_tn,
+                'median': med_tn,
+                'iqr': iqr_tn,
+            },
         }
     return out
 

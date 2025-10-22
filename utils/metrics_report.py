@@ -63,7 +63,7 @@ def print_event_metrics_report(
                 f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}"
             )
 
-    print("\nEvent-only probability Beta fits (decoder span-mean, aggregated):")
+    print("\nEvent-only probability distribution metrics (decoder span-mean, aggregated):")
     for cls_idx in classes_for_beta:
         cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
         fits = prob_metrics.get(int(cls_idx)) if isinstance(prob_metrics, dict) else None
@@ -72,11 +72,11 @@ def print_event_metrics_report(
             tn = fits['tn']
             print(
                 f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} "
-                f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f})"
+                f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f}) median={tp.get('median',0.0):.4f} iqr={tp.get('iqr',0.0):.4f}"
             )
             print(
                 f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} "
-                f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f})"
+                f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f}) median={tn.get('median',0.0):.4f} iqr={tn.get('iqr',0.0):.4f}"
             )
         else:
             print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
@@ -84,7 +84,7 @@ def print_event_metrics_report(
 
     if generic and prob_metrics and brier_by_class:
         import math
-        print("\nSummary\ncls,sen/pre,brier,tp_m/tp_s-tn_m/tn_s,ssmd")
+        print("\nSummary\ncls,sen/pre,brier,tp_m/tp_s-tn_m/tn_s,ssmd,robust")
         for cls_idx in classes_for_beta:
             cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             sen = generic[cls_idx]['sensitivity'] * 100
@@ -95,6 +95,13 @@ def print_event_metrics_report(
             tn_m = prob_metrics[cls_idx]['tn']['mean'] * 100
             tn_s = prob_metrics[cls_idx]['tn']['std'] * 100
             ssmd = (tp_m - tn_m) / math.sqrt(tp_s * tp_s + tn_s * tn_s) if (tp_s > 0 or tn_s > 0) else 0.0
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{ssmd:.2f}")
+            # Robust effect size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
+            tp_med = prob_metrics[cls_idx]['tp'].get('median', 0.0) * 100
+            tp_iqr = prob_metrics[cls_idx]['tp'].get('iqr', 0.0) * 100
+            tn_med = prob_metrics[cls_idx]['tn'].get('median', 0.0) * 100
+            tn_iqr = prob_metrics[cls_idx]['tn'].get('iqr', 0.0) * 100
+            robust_den = (tp_iqr + tn_iqr) / 2.0
+            robust = (tp_med - tn_med) / robust_den if robust_den > 0 else 0.0
+            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{ssmd:.2f},{robust:.2f}")
 
 
