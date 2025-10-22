@@ -101,16 +101,16 @@ def print_event_metrics_report(
 
     if generic and prob_metrics and brier_by_class:
         import math
-        print("\nSummary\ncls,sen/pre,brier,tn_m+3*tn_s,tp_tail_med/iqr-tn_tail_med/iqr,tail_robust")
+        print("\nSummary\ncls,sen/pre,brier,tp_tail_med/iqr-tn_tail_med/iqr,tail_robust,tn_m+2*tn_s")
         for cls_idx in classes_for_beta:
             cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             sen = generic[cls_idx]['sensitivity'] * 100
             pre = generic[cls_idx]['precision'] * 100
             b = brier_by_class[cls_idx]
-            # Estimate min-prob to tn_m+3*tn_s
+            # Estimate min-prob to tn_m+2*tn_s
             tn_m = prob_metrics[cls_idx]['tn']['mean']
             tn_s = prob_metrics[cls_idx]['tn']['std']
-            min_prob=round(tn_m+3*tn_s,2)
+            min_prob=round(tn_m+2*tn_s,2)
             # Equal Tail Robust Effect Size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
             tp_med = prob_metrics[cls_idx]['tail']['tp']['median'] * 100
             tp_iqr = prob_metrics[cls_idx]['tail']['tp']['iqr'] * 100
@@ -118,6 +118,6 @@ def print_event_metrics_report(
             tn_iqr = prob_metrics[cls_idx]['tail']['tn']['iqr'] * 100
             robust_den = (tp_iqr + tn_iqr) / 2.0
             robust = (tp_med - tn_med) / robust_den if robust_den > 0 else 0.0
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{min_prob:.2f},{int(tp_med)}/{int(tp_iqr)}-{int(tn_med)}/{int(tn_iqr)},{robust:.2f}")
+            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_med)}/{int(tp_iqr)}-{int(tn_med)}/{int(tn_iqr)},{robust:.2f},{min_prob:.2f}")
 
 
