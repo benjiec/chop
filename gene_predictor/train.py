@@ -21,7 +21,6 @@ from utils.events import build_event_motifs, build_class_logits_from_event_head_
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory
 from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
-from gene_predictor.adaptive_alpha_callback import AdaptiveAlphaCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
 from utils.genome import AnnotatedGenomeDataset
 
@@ -63,15 +62,6 @@ def main():
     parser.add_argument('--stop-alpha', type=float, default=1.0, help='Alpha weight for STOP head (event-head-bce)')
     parser.add_argument('--dss-alpha', type=float, default=1.0, help='Alpha weight for DSS head (event-head-bce)')
     parser.add_argument('--ass-alpha', type=float, default=1.0, help='Alpha weight for ASS head (event-head-bce)')
-    # Adaptive alpha (trend-aware SSMD scheduler)
-    parser.add_argument('--adaptive-alpha', action='store_true', help='Enable adaptive alpha scheduling based on SSMD trend')
-    parser.add_argument('--alpha-min', type=float, default=0.05, help='Minimum alpha when separation is high')
-    parser.add_argument('--alpha-ssmd-target', type=float, default=2.0, help='Target SSMD (from windows, lower than blended SSMD)')
-    parser.add_argument('--alpha-kp', type=float, default=0.2, help='Proportional gain on SSMD error')
-    parser.add_argument('--alpha-kd', type=float, default=0.1, help='Derivative gain on SSMD trend')
-    parser.add_argument('--alpha-beta', type=float, default=0.8, help='EMA beta for SSMD smoothing')
-
-    # (removed) class conditional readout args
 
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
@@ -286,16 +276,6 @@ def main():
                 metrics_cb,
                 pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
             ]
-            if args.adaptive_alpha:
-                cbs.append(AdaptiveAlphaCallback(
-                    alpha_by_class=alpha_by_class,
-                    metrics_cb=metrics_cb,
-                    ssmd_target=float(args.alpha_ssmd_target),
-                    k_p=float(args.alpha_kp),
-                    k_d=float(args.alpha_kd),
-                    beta=float(args.alpha_beta),
-                    alpha_min=float(args.alpha_min),
-                ))
             return cbs
 
         # Default: include F1 checkpoint and dual-metric early stopping

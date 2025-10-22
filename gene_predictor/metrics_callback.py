@@ -9,7 +9,6 @@ import numpy as np
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
 from utils.metrics import compute_event_span_mean_probability_metrics
-from utils.adaptive_alpha import compute_ssmd
 from utils.events import build_class_logits_from_event_head_logits
 
 
@@ -71,8 +70,6 @@ class MetricsCallback(pl.Callback):
         self._head_class_ids = list(head_class_ids) if head_class_ids is not None else None
         # Initialize results accumulator so tests that call only epoch_end won't fail
         self._results_data = []
-        # Expose latest SSMD per class for other callbacks
-        self.last_ssmd_by_class: dict[int, float] | None = None
         # Optional shared alpha reference for printing
         self._alpha_by_class = alpha_by_class
 
@@ -170,19 +167,6 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)]['neg_prob_mean'] = float(tn.get('mean', 0.0))
                 per_class[int(cls_idx)]['neg_prob_std'] = float(tn.get('std', 0.0))
 
-        # Compute SSMD where possible and store for downstream callbacks
-        ssmd_by_class: dict[int, float] = {}
-        for cls_idx, vals in per_class.items():
-            pm = vals.get('pos_prob_mean')
-            ps = vals.get('pos_prob_std')
-            nm = vals.get('neg_prob_mean')
-            ns = vals.get('neg_prob_std')
-            if pm is not None and ps is not None and nm is not None and ns is not None:
-                s = compute_ssmd(pm, ps, nm, ns)
-                per_class[int(cls_idx)]['ssmd'] = float(s)
-                ssmd_by_class[int(cls_idx)] = float(s)
-        self.last_ssmd_by_class = ssmd_by_class
-
         # Aggregate loss via trainer metrics, map to per-class using head_class_ids when available
         val_loss = None
         if trainer is not None and hasattr(trainer, 'callback_metrics'):
@@ -211,7 +195,6 @@ class MetricsCallback(pl.Callback):
                       "%.4f" % vals.get('event_head_loss', 0.0),
                       "%d/%d-%d/%d" % (vals.get('pos_prob_mean', 0.0)*100, vals.get('pos_prob_std', 0.0)*100,
                                        vals.get('neg_prob_mean', 0.0*100), vals.get('neg_prob_std', 0.0)*100),
-                      "%.2f" % vals.get('ssmd'),
                       "%.4f" % vals.get('brier', 0.0),
                       "%d/%d" % (vals.get('sensitivity', 0.0)*100, vals.get('precision', 0.0)*100)
                 )
