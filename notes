@@ -51,6 +51,12 @@ PYTHONPATH=. python gene_decoder/event_probs.py \
   --output-tsv event_probs.tsv \
   --input-pkl gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle
 
+PYTHONPATH=. python scripts/metrics-from-pickle.py \
+  --dss-motifs standard \
+  --fna-fn data/GCF_002042975.1_round0_test_query.fna.gz \
+  --tsv-fn data/GCF_002042975.1_round0_test_annotations.tsv \
+  --pickle-path gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle
+
 # synthetic tests on decoder
 
 PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
