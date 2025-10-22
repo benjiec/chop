@@ -278,7 +278,7 @@ def event_based_brier_factory(event_motifs_by_class: Dict[Union[int, str], Itera
 
 
 
-def compute_event_span_mean_probability_beta_fits(
+def compute_event_span_mean_probability_metrics(
     results_data: List[SequenceResult],
     event_motifs_by_class: Dict[Union[int, str], Iterable[str]],
 ) -> Dict[int, Dict[str, Dict[str, float]]]:

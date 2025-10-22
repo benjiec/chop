@@ -7,7 +7,7 @@ from utils.metrics import (
     event_based_brier_factory,
     event_based_generic_metrics_factory,
     SequenceResult,
-    compute_event_span_mean_probability_beta_fits,
+    compute_event_span_mean_probability_metrics,
 )
 from utils.events import build_event_motifs
 from utils.constants import GenePredictionClass as P, StandardDonorDinucleotides
@@ -272,7 +272,7 @@ class TestGenericMetrics(unittest.TestCase):
         self.assertIn((20, 21, 'FN'), spans)
 
 
-class TestEventSpanMeanProbabilityBetaFits(unittest.TestCase):
+class TestEventSpanMeanProbabilityMetrics(unittest.TestCase):
     def test_beta_fit_tp_tn_per_class(self):
         # Build a simple sequence with one START and one DSS motif
         dna = 'NNNATGNNNGTNN'
@@ -291,7 +291,7 @@ class TestEventSpanMeanProbabilityBetaFits(unittest.TestCase):
         res = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
 
         motifs = build_event_motifs(StandardDonorDinucleotides)
-        out = compute_event_span_mean_probability_beta_fits(res, motifs)
+        out = compute_event_span_mean_probability_metrics(res, motifs)
         # START should have TP stats with mean near 0.9, DSS should have TN stats near 0.6
         self.assertIn(P.START, out)
         self.assertIn('tp', out[P.START])

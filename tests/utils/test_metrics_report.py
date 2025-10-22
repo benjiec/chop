@@ -42,7 +42,7 @@ class TestMetricsReport(unittest.TestCase):
         self.assertIn('events', out)
         self.assertIn('brier_overall', out)
         self.assertIn('brier_by_class', out)
-        self.assertIn('beta_fits', out)
+        self.assertIn('prob_metrics', out)
         # sanity: brier overall within [0,1]
         self.assertGreaterEqual(out['brier_overall'], 0.0)
         self.assertLessEqual(out['brier_overall'], 1.0)

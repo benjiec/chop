@@ -8,7 +8,7 @@ import numpy as np
 
 from utils.constants import GenePredictionClass as P
 from utils.metrics import SequenceResult
-from utils.metrics import compute_event_span_mean_probability_beta_fits
+from utils.metrics import compute_event_span_mean_probability_metrics
 from utils.adaptive_alpha import compute_ssmd
 from utils.events import build_class_logits_from_event_head_logits
 
@@ -157,9 +157,9 @@ class MetricsCallback(pl.Callback):
                 per_class[int(cls_idx)] = {}
             per_class[int(cls_idx)]['brier'] = float(val)
 
-        # Add beta-fit summaries if motifs provided
+        # Add probability distribution summaries if motifs provided
         if self._event_motifs_by_class:
-            fits = compute_event_span_mean_probability_beta_fits(results_data, self._event_motifs_by_class)
+            fits = compute_event_span_mean_probability_metrics(results_data, self._event_motifs_by_class)
             for cls_idx, data in (fits or {}).items():
                 tp = data.get('tp', {})
                 tn = data.get('tn', {})
