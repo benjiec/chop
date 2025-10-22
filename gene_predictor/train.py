@@ -43,6 +43,7 @@ def main():
                         help='Head attention masks: symmetric "head:window", asymmetric "head:before:after", or donut "head:before:gap:after" (e.g., "0:4,1:8:6,2:50:0,3:20:10:0")')
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--boost-start-stop', action='store_true')
+    parser.add_argument('--aux-stream', type=str, default=None, help='Path to aux stream pickle file (per-sequence [L,C] features)')
 
 
     # class weights
@@ -229,7 +230,8 @@ def main():
             window=args.max_seq_length,
             stride=args.stride,
             class_weights=class_weights,
-            window_boost_classes = window_boost_classes
+            window_boost_classes = window_boost_classes,
+            aux_stream_path=args.aux_stream,
         )
 
     # Create output directory

@@ -96,7 +96,11 @@ def compute_flanking_motif_stats(
     ass_counts: Dict[str, FlankingCounts] = {}
 
     for seq_idx in range(len(dataset)):
-        seq_tokens, labels = dataset[seq_idx]
+        item = dataset[seq_idx]
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            seq_tokens, labels = item[0], item[1]
+        else:
+            seq_tokens, labels = item
         sequence = convert_tokens_to_sequence(seq_tokens)
         L = len(sequence)
         tokens_t = torch.tensor(seq_tokens, dtype=torch.long).unsqueeze(0)[0]

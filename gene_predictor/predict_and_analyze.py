@@ -208,7 +208,12 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
     with torch.no_grad():
         # Maintain a global sequence counter to map to dataset order
         seq_counter = 0
-        for batch_idx, (sequences, targets) in enumerate(data_loader):
+        for batch_idx, batch in enumerate(data_loader):
+            # Support datasets that may return (seq, tgt, aux)
+            if isinstance(batch, (list, tuple)) and len(batch) == 3:
+                sequences, targets, _ = batch
+            else:
+                sequences, targets = batch
             sequences = sequences.to(device)
             targets = targets.to(device)
 
