@@ -360,6 +360,24 @@ def compute_event_span_mean_probability_metrics(
         n_tn, m_tn, s_tn, a_tn, b_tn = _fit_beta_moments(samples_tn[int(cls)])
         med_tp, iqr_tp = _median_iqr(samples_tp[int(cls)])
         med_tn, iqr_tn = _median_iqr(samples_tn[int(cls)])
+        # Equal-count tails: lower half of TP vs upper tail of TN, matched by count
+        tp_list = sorted(float(x) for x in samples_tp[int(cls)])
+        tn_list = sorted((float(x) for x in samples_tn[int(cls)]), reverse=True)
+        n_tail_tp = len(tp_list) // 2
+        n_tail = min(n_tail_tp, len(tn_list)) if len(tn_list) > 0 else 0
+        tp_tail = tp_list[:n_tail] if n_tail > 0 else []
+        tn_tail = tn_list[:n_tail] if n_tail > 0 else []
+        tp_tail_med, tp_tail_iqr = _median_iqr(tp_tail)
+        tn_tail_med, tn_tail_iqr = _median_iqr(tn_tail)
+        # Tail AUC: P(tn_tail > tp_tail) with ties as 0.5
+        tail_auc = 0.0
+        if n_tail > 0:
+            A = np.asarray(tp_tail, dtype=float)
+            B = np.asarray(tn_tail, dtype=float)
+            gt = (B[:, None] > A[None, :]).sum()
+            eq = (B[:, None] == A[None, :]).sum()
+            tail_auc = float((gt + 0.5 * eq) / float(A.size * B.size))
+
         out[int(cls)] = {
             'tp': {
                 'n': float(n_tp),
@@ -378,6 +396,12 @@ def compute_event_span_mean_probability_metrics(
                 'beta_beta': b_tn,
                 'median': med_tn,
                 'iqr': iqr_tn,
+            },
+            'tail': {
+                'n': float(n_tail),
+                'tp': {'median': tp_tail_med, 'iqr': tp_tail_iqr},
+                'tn': {'median': tn_tail_med, 'iqr': tn_tail_iqr},
+                'auc': float(tail_auc),
             },
         }
     return out

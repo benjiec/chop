@@ -70,6 +70,7 @@ def print_event_metrics_report(
         if fits:
             tp = fits['tp']
             tn = fits['tn']
+            tail = fits.get('tail', {})
             print(
                 f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} "
                 f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f}) median={tp.get('median',0.0):.4f} iqr={tp.get('iqr',0.0):.4f}"
@@ -78,30 +79,45 @@ def print_event_metrics_report(
                 f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} "
                 f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f}) median={tn.get('median',0.0):.4f} iqr={tn.get('iqr',0.0):.4f}"
             )
+            if tail and int(tail.get('n', 0)) > 0:
+                n = int(tail.get('n', 0))
+                tp_tail = tail.get('tp', {})
+                tn_tail = tail.get('tn', {})
+                # Recompute robust on reported med/iqr for display consistency
+                tp_med = float(tp_tail.get('median', 0.0))
+                tp_iqr = float(tp_tail.get('iqr', 0.0))
+                tn_med = float(tn_tail.get('median', 0.0))
+                tn_iqr = float(tn_tail.get('iqr', 0.0))
+                den = (tp_iqr + tn_iqr) / 2.0 if (tp_iqr > 0.0 or tn_iqr > 0.0) else 0.0
+                tres = (tp_med - tn_med) / den if den > 0.0 else 0.0
+                tauc = float(tail.get('auc', 0.0))
+                print(
+                    f"    tails (equal count): n={n} tp_tail(med/iqr)={tp_med:.4f}/{tp_iqr:.4f} "
+                    f"tn_tail(med/iqr)={tn_med:.4f}/{tn_iqr:.4f} robust={tres:.2f} auc={tauc:.3f}"
+                )
         else:
             print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
             print(f"  {cname:>5s} TN: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
 
     if generic and prob_metrics and brier_by_class:
         import math
-        print("\nSummary\ncls,sen/pre,brier,tp_m/tp_s-tn_m/tn_s,ssmd,robust")
+        print("\nSummary\ncls,sen/pre,brier,tn_m+3*tn_s,tp_tail_med/iqr-tn_tail_med/iqr,tail_robust")
         for cls_idx in classes_for_beta:
             cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             sen = generic[cls_idx]['sensitivity'] * 100
             pre = generic[cls_idx]['precision'] * 100
             b = brier_by_class[cls_idx]
-            tp_m = prob_metrics[cls_idx]['tp']['mean'] * 100
-            tp_s = prob_metrics[cls_idx]['tp']['std'] * 100
-            tn_m = prob_metrics[cls_idx]['tn']['mean'] * 100
-            tn_s = prob_metrics[cls_idx]['tn']['std'] * 100
-            ssmd = (tp_m - tn_m) / math.sqrt(tp_s * tp_s + tn_s * tn_s) if (tp_s > 0 or tn_s > 0) else 0.0
-            # Robust effect size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
-            tp_med = prob_metrics[cls_idx]['tp'].get('median', 0.0) * 100
-            tp_iqr = prob_metrics[cls_idx]['tp'].get('iqr', 0.0) * 100
-            tn_med = prob_metrics[cls_idx]['tn'].get('median', 0.0) * 100
-            tn_iqr = prob_metrics[cls_idx]['tn'].get('iqr', 0.0) * 100
+            # Estimate min-prob to tn_m+3*tn_s
+            tn_m = prob_metrics[cls_idx]['tn']['mean']
+            tn_s = prob_metrics[cls_idx]['tn']['std']
+            min_prob=round(tn_m+3*tn_s,2)
+            # Equal Tail Robust Effect Size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
+            tp_med = prob_metrics[cls_idx]['tail']['tp']['median'] * 100
+            tp_iqr = prob_metrics[cls_idx]['tail']['tp']['iqr'] * 100
+            tn_med = prob_metrics[cls_idx]['tail']['tn']['median'] * 100
+            tn_iqr = prob_metrics[cls_idx]['tail']['tn']['iqr'] * 100
             robust_den = (tp_iqr + tn_iqr) / 2.0
             robust = (tp_med - tn_med) / robust_den if robust_den > 0 else 0.0
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{ssmd:.2f},{robust:.2f}")
+            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{min_prob:.2f},{int(tp_med)}/{int(tp_iqr)}-{int(tn_med)}/{int(tn_iqr)},{robust:.2f}")
 
 

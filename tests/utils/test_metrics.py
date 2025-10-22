@@ -302,6 +302,63 @@ class TestEventSpanMeanProbabilityMetrics(unittest.TestCase):
         self.assertGreater(out[P.DSS]['tn']['n'], 0.0)
         self.assertAlmostEqual(out[P.DSS]['tn']['mean'], 0.6, places=2)
 
+    def _enc(self, seq: str):
+        vocab = {'A': 0, 'T': 1, 'G': 2, 'C': 3, 'N': 4}
+        return np.array([vocab.get(ch, 4) for ch in seq], dtype=np.int64)
+
+    def test_tail_metrics_direction_and_auc_equal_count(self):
+        # 6 ATGs: TP at first 4 with [0.10, 0.20, 0.90, 0.95]; TN at last 2 with [0.80, 0.85]
+        dna = 'ATGNNNATGNNNATGNNNATGNNNATGNNNATG'
+        tokens = self._enc(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = np.zeros((L, C), dtype=np.float32)
+        targets = np.full(L, P.INTERGENIC, dtype=np.int64)
+
+        tp_starts = [0, 6, 12, 18]
+        tn_starts = [24, len(dna)-3]
+        tp_vals = [0.10, 0.20, 0.90, 0.95]
+        tn_vals = [0.80, 0.85]
+        for s, v in zip(tp_starts, tp_vals):
+            targets[s:s+3] = P.START
+            probs[s:s+3, P.START] = v
+        for s, v in zip(tn_starts, tn_vals):
+            probs[s:s+3, P.START] = v
+
+        res = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
+        out = compute_event_span_mean_probability_metrics(res, build_event_motifs(StandardDonorDinucleotides))
+        tail = out[P.START]['tail']
+        # Equal-count: half TP = 2, TN available >= 2 -> n=2
+        self.assertEqual(int(tail['n']), 2)
+        self.assertLess(tail['tp']['median'], tail['tn']['median'])
+        self.assertGreater(tail['auc'], 0.5)
+
+    def test_tail_metrics_positive_separation_equal_count(self):
+        # 6 ATGs: TP at first 4 with higher low-tail; TN at last 2 with lower high-tail
+        dna = 'ATGNNNATGNNNATGNNNATGNNNATGNNNATG'
+        tokens = self._enc(dna)
+        L = len(tokens)
+        C = len(P.idx_to_cls)
+        probs = np.zeros((L, C), dtype=np.float32)
+        targets = np.full(L, P.INTERGENIC, dtype=np.int64)
+
+        tp_starts = [0, 6, 12, 18]
+        tn_starts = [24, len(dna)-3]
+        tp_vals = [0.60, 0.65, 0.70, 0.80]
+        tn_vals = [0.30, 0.35]
+        for s, v in zip(tp_starts, tp_vals):
+            targets[s:s+3] = P.START
+            probs[s:s+3, P.START] = v
+        for s, v in zip(tn_starts, tn_vals):
+            probs[s:s+3, P.START] = v
+
+        res = [SequenceResult(sequence_index=0, sequence_tokens=tokens, targets=targets, predictions=None, probabilities=probs)]
+        out = compute_event_span_mean_probability_metrics(res, build_event_motifs(StandardDonorDinucleotides))
+        tail = out[P.START]['tail']
+        self.assertEqual(int(tail['n']), 2)
+        self.assertGreater(tail['tp']['median'], tail['tn']['median'])
+        self.assertLess(tail['auc'], 0.5)
+
 class TestMetricsValidMask(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
