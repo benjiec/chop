@@ -42,7 +42,7 @@ PYTHONPATH=. python gene_decoder/decode.py --num-sequences 253 --temperature-sca
 
 PYTHONPATH=. python gene_decoder/assess_decoding.py \
   --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
-  --topk-starts 3 \
+  --topk-boundaries 3 \
   --decoded-tsv x.tsv 
 
 PYTHONPATH=. python gene_decoder/event_probs.py \
@@ -79,13 +79,7 @@ PYTHONPATH=. python gene_decoder/decode.py --temperature-scale 1 --dss-motifs st
 
 PYTHONPATH=. python gene_decoder/assess_decoding.py \
   --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
-  --topk-starts 3 \
-  --decoded-tsv x.tsv
-
-PYTHONPATH=. python gene_decoder/assess_decoding.py \
-  --expected-tsv data/GCF_002042975.1_round0_test_annotations.tsv \
-  --topk-starts 1 \
-  --top-start-rank \
+  --topk-boundaries 3 \
   --decoded-tsv x.tsv
 
 PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
@@ -113,8 +107,8 @@ PYTHONPATH=. python scripts/analyze-flanking-motifs-from-pkl.py \
 # augment existing pkl file with flank stats, boosting rather than override
 
 PYTHONPATH=. python scripts/augment-decoder-inputs-from-flanks.py \
-  --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
+  --input-pkl gene_predictor/gene_predictor_run_20251018_174531/prediction_20251019_193935_53e097c9f4_decoder.pickle \
   --flank 4 --dss-motifs-mode standard \
   --flank-csv data/GCF_002042975.1_round0_train_ass_dss_flank4.csv \
-  --mode augment \
+  --mode override \
   --output-pkl synthetic_decoder_input.pkl
