@@ -569,21 +569,10 @@ class GenePredictorModule(pl.LightningModule):
         )
     
     def training_step(self, batch, batch_idx):
-        # Support (seq, tgt) or (seq, tgt, aux) or dict with keys
-        aux_stream = None
-        if isinstance(batch, (list, tuple)):
-            if len(batch) == 2:
-                sequences, targets = batch
-            elif len(batch) == 3:
-                sequences, targets, aux_stream = batch
-            else:
-                raise ValueError("Unexpected batch tuple length; expected 2 or 3 elements")
-        elif isinstance(batch, dict):
-            sequences = batch.get('sequences')
-            targets = batch.get('targets')
-            aux_stream = batch.get('aux_stream')
-        else:
-            raise ValueError("Batch must be (seq, tgt), (seq, tgt, aux), or dict")
+        # Expect batches as a 3-tuple: (sequences, targets, aux_stream)
+        if not (isinstance(batch, (list, tuple)) and len(batch) == 3):
+            raise ValueError("Batch must be a 3-tuple: (sequences, targets, aux_stream)")
+        sequences, targets, aux_stream = batch
         extras: Dict[str, Any] = {}
         logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
@@ -598,20 +587,9 @@ class GenePredictorModule(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        aux_stream = None
-        if isinstance(batch, (list, tuple)):
-            if len(batch) == 2:
-                sequences, targets = batch
-            elif len(batch) == 3:
-                sequences, targets, aux_stream = batch
-            else:
-                raise ValueError("Unexpected batch tuple length; expected 2 or 3 elements")
-        elif isinstance(batch, dict):
-            sequences = batch.get('sequences')
-            targets = batch.get('targets')
-            aux_stream = batch.get('aux_stream')
-        else:
-            raise ValueError("Batch must be (seq, tgt), (seq, tgt, aux), or dict")
+        if not (isinstance(batch, (list, tuple)) and len(batch) == 3):
+            raise ValueError("Batch must be a 3-tuple: (sequences, targets, aux_stream)")
+        sequences, targets, aux_stream = batch
         extras: Dict[str, Any] = {}
         logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None

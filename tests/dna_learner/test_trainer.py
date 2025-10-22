@@ -183,12 +183,12 @@ class TestCustomLossHook(unittest.TestCase):
         sequences = torch.randint(0, 5, (B, L))
         targets = torch.randint(0, Cn, (B, L))
 
-        loss_train = module.training_step((sequences, targets), 0)
+        loss_train = module.training_step((sequences, targets, None), 0)
         self.assertEqual(call_counts["count"], 1)
         self.assertTrue(torch.is_tensor(loss_train))
         self.assertAlmostEqual(float(loss_train.detach().cpu().item()), 0.42, places=6)
 
-        loss_val = module.validation_step((sequences, targets), 0)
+        loss_val = module.validation_step((sequences, targets, None), 0)
         self.assertEqual(call_counts["count"], 2)
         self.assertTrue(torch.is_tensor(loss_val))
         self.assertAlmostEqual(float(loss_val.detach().cpu().item()), 0.42, places=6)

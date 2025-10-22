@@ -153,7 +153,7 @@ class TestGenePredictorModel(unittest.TestCase):
         self.assertEqual(module.model.embedding.d_model % module.model.transformer_layers[0].n_heads, 0)
         x = torch.randint(0, 5, (2, 40))
         y = torch.randint(0, 3, (2, 40))
-        loss = module.training_step((x, y), 0)
+        loss = module.training_step((x, y, None), 0)
         self.assertTrue(torch.is_tensor(loss))
 
     # focal loss tests removed as feature is no longer present
@@ -202,8 +202,8 @@ class TestGenePredictorModel(unittest.TestCase):
         mod_no_fp.model.forward = lambda x, **kwargs: logits
         mod_with_fp.model.forward = lambda x, **kwargs: logits
 
-        loss_no_fp = mod_no_fp.validation_step((torch.zeros_like(targets), targets), 0)
-        loss_with_fp = mod_with_fp.validation_step((torch.zeros_like(targets), targets), 0)
+        loss_no_fp = mod_no_fp.validation_step((torch.zeros_like(targets), targets, None), 0)
+        loss_with_fp = mod_with_fp.validation_step((torch.zeros_like(targets), targets, None), 0)
         # With FP penalty, loss should be higher
         self.assertGreater(float(loss_with_fp), float(loss_no_fp))
 
@@ -622,9 +622,9 @@ class TestValidationBatchCollection(unittest.TestCase):
 
         # Begin validation epoch and run three batches
         mod.on_validation_epoch_start()
-        mod.validation_step((x1, y1), 0)
-        mod.validation_step((x2, y2), 1)
-        mod.validation_step((x3, y3), 2)
+        mod.validation_step((x1, y1, None), 0)
+        mod.validation_step((x2, y2, None), 1)
+        mod.validation_step((x3, y3, None), 2)
 
         # Expect 3 BatchResult entries (one per batch)
         brs = getattr(mod, 'validation_epoch_results')
@@ -721,5 +721,5 @@ class TestModuleForwardAPI(unittest.TestCase):
         self.assertTrue(torch.is_tensor(loss1))
 
         # Validation with dict batch
-        loss2 = mod.validation_step({'sequences': x, 'targets': y, 'aux_stream': aux}, 0)
+        loss2 = mod.validation_step((x, y, aux), 0)
         self.assertTrue(torch.is_tensor(loss2))

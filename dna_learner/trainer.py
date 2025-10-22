@@ -9,6 +9,48 @@ from dna_learner.model import GenePredictorModule
 import shutil
 
 
+def _triple_collate(batch):
+    """Collate items into (sequences, targets, aux_stream) triples.
+
+    - If dataset yields 2-tuples, append None for aux_stream.
+    - If dataset yields 3-tuples, pass through.
+    """
+    seqs = []
+    tgts = []
+    auxs = []
+    for item in batch:
+        if isinstance(item, (list, tuple)):
+            if len(item) == 2:
+                s, t = item
+                a = None
+            elif len(item) == 3:
+                s, t, a = item
+            else:
+                raise ValueError("Dataset items must be 2- or 3-tuples")
+        elif isinstance(item, dict):
+            s = item.get('sequences')
+            t = item.get('targets')
+            a = item.get('aux_stream')
+        else:
+            raise ValueError("Dataset item must be (seq, tgt) or (seq, tgt, aux) or dict")
+        seqs.append(s)
+        tgts.append(t)
+        auxs.append(a)
+    sequences = torch.utils.data.default_collate(seqs)
+    targets = torch.utils.data.default_collate(tgts)
+    # If all auxs are None, return None; else collate tensors
+    if all(a is None for a in auxs):
+        aux_stream = None
+    else:
+        # Replace Nones with zeros of appropriate shape before collate, then mask downstream if needed
+        # Infer first non-None tensor shape
+        ref = next(a for a in auxs if a is not None)
+        zeros = torch.zeros_like(ref)
+        aux_norm = [zeros if a is None else a for a in auxs]
+        aux_stream = torch.utils.data.default_collate(aux_norm)
+    return sequences, targets, aux_stream
+
+
 def train(
     dataset,
     config,
@@ -33,14 +75,16 @@ def train(
         train_dataset, 
         batch_size=config['training']['batch_size'], 
         shuffle=True,
-        num_workers=0
+        num_workers=0,
+        collate_fn=_triple_collate,
     )
     
     val_loader = DataLoader(
         val_dataset, 
         batch_size=config['training']['batch_size'], 
         shuffle=False,
-        num_workers=0
+        num_workers=0,
+        collate_fn=_triple_collate,
     )
     
     print(f"training samples: {len(train_dataset)}")
