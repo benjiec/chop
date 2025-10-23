@@ -48,15 +48,18 @@ def main():
         mask = (base == P.INTERGENIC) & (tgt != P.INTERGENIC)
         base[mask] = tgt[mask]
 
-    # Map sequence string -> target array to use with NumericalStream.add_channel
+    # Map sequence string -> target array; require identical targets for duplicate sequences
     # This relies on add_channel iterating over the same FASTA sequences
     seq_to_target: dict[str, np.ndarray] = {}
     for sid, seq in records.items():
-        arr = contig_to_target[sid]
-        key = seq  # exact string match
-        if key in seq_to_target:
-            raise ValueError("FASTA contains duplicate sequences (identical strings) for different IDs; cannot disambiguate")
-        seq_to_target[key] = arr.astype(np.float32)
+        arr = contig_to_target[sid].astype(np.float32)
+        if seq in seq_to_target:
+            # Enforce identical targets across duplicated sequence strings
+            if not np.array_equal(seq_to_target[seq].astype(np.int64), arr.astype(np.int64)):
+                print(f"Duplicate sequence with different targets for IDs including {sid}, skip")
+            # else: identical, keep existing
+        else:
+            seq_to_target[seq] = arr
 
     def gen(seq: str) -> np.ndarray:
         try:

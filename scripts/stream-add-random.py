@@ -11,7 +11,7 @@ def build_random_generator():
     def randgen(seq: str) -> np.ndarray:
         L = len(seq)
         # Uniform [0,1) per position; seed is intentionally not set per repo rules.
-        return np.random.random(size=(L,)).astype(np.float32)
+        return np.random.randint(0, 4, size=(L,)).astype(np.float32)
     return randgen
 
 

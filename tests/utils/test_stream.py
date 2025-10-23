@@ -167,6 +167,31 @@ class TestNumericalStreamIntegration(unittest.TestCase):
                 self.assertEqual(arr.shape[1], 2)
                 self.assertEqual(arr.shape[0], len(seqs[sid]))
 
+    def test_gz_roundtrip(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            pkl = td / 's.pkl.gz'
+            # create empty gz
+            with open(td / 'tmp.pkl', 'wb') as f:
+                pickle.dump([], f)
+            import gzip as _gz
+            with _gz.open(pkl, 'wb') as f:
+                pickle.dump([], f)
+            ns = NumericalStream(str(pkl))
+            # Add channel from fasta
+            fa = td / 's.fa'
+            seqs = {'ctg1': 'ATGCA', 'ctg2': 'GGGG'}
+            self._write_simple_fasta(fa, seqs)
+            def gen_zero(seq: str):
+                return np.zeros(len(seq), dtype=np.float32)
+            ns.add_channel(str(fa), 'z', gen_zero)
+            ns.save()
+            ns2 = NumericalStream(str(pkl))
+            self.assertEqual(ns2.channels, ['z'])
+            for sid in ['ctg1', 'ctg2']:
+                arr = ns2.get(sid)
+                self.assertEqual(arr.shape, (len(seqs[sid]), 1))
+
 
 if __name__ == '__main__':
     unittest.main()

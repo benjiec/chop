@@ -102,7 +102,10 @@ class NumericalStream:
         return list(self._raw_map.keys())
 
     def _load(self) -> None:
-        with open(self.pickle_path, 'rb') as f:
+        p = Path(self.pickle_path)
+        is_gz = any(suf == '.gz' for suf in p.suffixes)
+        opener = gzip.open if is_gz else open
+        with opener(self.pickle_path, 'rb') as f:
             items = pickle.load(f)
         if not isinstance(items, list):
             raise ValueError("aux stream pickle must be a list of objects")
@@ -199,7 +202,10 @@ class NumericalStream:
                 'channels': list(channel_list),
                 'data': arr.astype(np.float32, copy=False),
             })
-        with open(self.pickle_path, 'wb') as f:
+        p = Path(self.pickle_path)
+        is_gz = any(suf == '.gz' for suf in p.suffixes)
+        opener = gzip.open if is_gz else open
+        with opener(self.pickle_path, 'wb') as f:
             pickle.dump(items, f)
 
     def add_channel(self, fasta_path: str, channel_name: str, generate_data) -> None:

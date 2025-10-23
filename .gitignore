@@ -12,5 +12,4 @@ gene_predictor/*_run_*
 x.tsv
 x.fna
 event_probs.tsv
-*.pickle
-*.pkl
+synthetic_decoder_input.pkl
