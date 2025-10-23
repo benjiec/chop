@@ -65,6 +65,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                              targets_b: Optional[torch.Tensor] = None,
                              sequence_index: Optional[int] = None,
                              sequence_id: Optional[str] = None,
+                             aux_stream_full: Optional[torch.Tensor] = None,
                              event_motifs_by_class: Optional[Dict[int, Set[str]]] = None) -> Tuple[SequenceResult, Optional[Dict[str, np.ndarray]]]:
     """Predict a single sequence (shape (1, L)) and return (SequenceResult, layer_attn).
 
@@ -81,6 +82,12 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
             pad = torch.full((1, pad_len), int(DNAEmbed.N), dtype=seq_tokens_b.dtype, device=seq_tokens_b.device)
             seq_tokens_b = torch.cat([pad, seq_tokens_b], dim=1)
             L = int(seq_tokens_b.size(1))
+            if aux_stream_full is not None:
+                # Left-pad aux with zeros to keep alignment
+                assert aux_stream_full.dim() == 3 and int(aux_stream_full.size(0)) == 1
+                C = int(aux_stream_full.size(2))
+                z = torch.zeros((1, pad_len, C), dtype=aux_stream_full.dtype, device=aux_stream_full.device)
+                aux_stream_full = torch.cat([z, aux_stream_full], dim=1)
 
     # Unified windowed inference and blending (single slice if short)
     if stride is None:
@@ -99,6 +106,9 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
 
     for (s, e) in slices:
         win_tokens = seq_tokens_b[:, s:e]  # (1, win_len)
+        aux_win = None
+        if aux_stream_full is not None:
+            aux_win = aux_stream_full[:, s:e, :]
         want_attn = bool(return_attention and len(slices) == 1)
         extras: Dict[str, Any] = {}
         ev = None
@@ -108,6 +118,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
                 extras=extras,
                 return_attention=('attention' if want_attn else None),
                 return_event_logits=('event_logits' if use_event_logits else None),
+                aux_stream=aux_win,
             )
             if want_attn and 'attention' in extras:
                 _layer_attn_b = extras['attention']
@@ -184,9 +195,19 @@ def load_trained_model(model_path: Path, device='cpu'):
     return model
 
 
-def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0):
+def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0,
+                       aux_stream: Optional[str] = None,
+                       aux_normalize: bool = True):
     # not windowing in the dataset class, but rely on windowing here and then blending the results here
-    dataset = AnnotatedGenomeDataset(fna_fn, tsv_fn, window = None, num_contigs = num_contigs, random_prefix_ns=False)
+    dataset = AnnotatedGenomeDataset(
+        fna_fn,
+        tsv_fn,
+        window=None,
+        num_contigs=num_contigs,
+        random_prefix_ns=False,
+        aux_stream_path=aux_stream,
+        aux_normalize=bool(aux_normalize),
+    )
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test samples - windowing and blending results...")
     return data_loader, dataset
@@ -211,11 +232,14 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
         for batch_idx, batch in enumerate(data_loader):
             # Support datasets that may return (seq, tgt, aux)
             if isinstance(batch, (list, tuple)) and len(batch) == 3:
-                sequences, targets, _ = batch
+                sequences, targets, aux_stream = batch
             else:
                 sequences, targets = batch
+                aux_stream = None
             sequences = sequences.to(device)
             targets = targets.to(device)
+            if aux_stream is not None:
+                aux_stream = aux_stream.to(device)
 
             B = sequences.size(0)
             # Enforce batch_size == 1 for deterministic mapping to dataset contigs
@@ -234,6 +258,11 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     assert seq_counter < len(ds.contig_ids), "Sequence counter out of range for contig_ids"
                     sequence_id = ds.contig_ids[seq_counter]
 
+                # Prepare aux stream slice for this sequence (batch size == 1)
+                aux_full = None
+                if aux_stream is not None:
+                    aux_full = aux_stream[b:b+1]
+
                 sr, layer_attn_b = predict_sequence_outputs(
                     model, max_len, seq_tokens_b,
                     device=device,
@@ -245,6 +274,7 @@ def run_predictions(model, data_loader, device='cpu', return_attention: bool = F
                     targets_b=targets_b,
                     sequence_index=(batch_idx if B == 1 else 0),
                     sequence_id=sequence_id,
+                    aux_stream_full=aux_full,
                     event_motifs_by_class=event_motifs_by_class,
                 )
 
@@ -636,6 +666,10 @@ def main():
     parser.add_argument('--random-prefix-min', type=int, default=100, help='Minimum N-prefix length')
     parser.add_argument('--random-prefix-max', type=int, default=400, help='Maximum N-prefix length')
     parser.add_argument('--write-decoder-input-pkl', action='store_true', help='If set, write a pickle list of PredictedSequence for decoder input')
+    # Aux stream options
+    parser.add_argument('--aux-stream', type=str, default=None, help='Optional path to aux stream pickle (.pkl or .pkl.gz)')
+    parser.add_argument('--aux-normalize', action='store_true', default=True, help='Normalize aux stream channels (z-score)')
+    parser.add_argument('--no-aux-normalize', dest='aux_normalize', action='store_false', help='Disable aux stream normalization')
     # Removed dss-motifs override; use motifs saved in model config
     
     args = parser.parse_args()
@@ -657,7 +691,13 @@ def main():
     print(config)
     cw = config['loss']['class_weights']
 
-    data_loader, dataset = generate_test_data(args.fna_fn, args.tsv_fn, args.num_contigs)
+    data_loader, dataset = generate_test_data(
+        args.fna_fn,
+        args.tsv_fn,
+        args.num_contigs,
+        aux_stream=args.aux_stream,
+        aux_normalize=bool(args.aux_normalize),
+    )
     
     # Use motifs and head mapping saved with the trained model configuration
     cfg = getattr(model, 'config', {})

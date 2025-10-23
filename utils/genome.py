@@ -317,8 +317,9 @@ class AnnotatedGenomeDataset:
         # Aux
         self.aux_stream_path: Optional[str] = str(aux_stream_path) if aux_stream_path else None
         self.aux_normalize: bool = bool(aux_normalize)
-        self.aux_by_contig: Optional[List[np.ndarray]] = None
+        self.aux_by_contig: List[Optional[np.ndarray]] = []
         self._num_stream: Optional[NumericalStream] = None
+        self._has_any_aux: bool = False
 
         # Load aux raw first
         if self.aux_stream_path:
@@ -333,6 +334,7 @@ class AnnotatedGenomeDataset:
             if self.aux_normalize:
                 ns.normalize()
             self._num_stream = ns
+            self._has_any_aux = True
 
         self._build(num_contigs)
 
@@ -348,8 +350,9 @@ class AnnotatedGenomeDataset:
             seq = self.sequences[contig_idx][start:end]
             tgt = self.targets[contig_idx][start:end]
             aux: Optional[np.ndarray] = None
-            if self.aux_by_contig is not None:
-                a = self.aux_by_contig[contig_idx][start:end, :]
+            a_full = self.aux_by_contig[contig_idx]
+            if a_full is not None:
+                a = a_full[start:end, :]
                 aux = a.copy()
             # Pad to fixed window length for batching
             win_len = int(self.window)
@@ -362,14 +365,14 @@ class AnnotatedGenomeDataset:
                     if aux is not None:
                         C = int(aux.shape[1])
                         aux = np.concatenate([aux, np.zeros((pad, C), dtype=aux.dtype)], axis=0)
-            if self.aux_by_contig is not None:
+            if self._has_any_aux:
                 return _encode_sequence(seq), tgt, aux
             else:
                 return _encode_sequence(seq), tgt
         else:
             seq = self.sequences[idx]
             tgt = self.targets[idx]
-            if self.aux_by_contig is not None:
+            if self._has_any_aux:
                 aux = self.aux_by_contig[idx]
                 return _encode_sequence(seq), tgt, aux
             else:
@@ -377,7 +380,7 @@ class AnnotatedGenomeDataset:
 
     def _build(self, num_contigs: Optional[int] = 0):
 
-        by_contig_aux: Optional[List[np.ndarray]] = [] if self._num_stream is not None else None
+        by_contig_aux: List[Optional[np.ndarray]] = []
         for ann in self.annotations:
             if ann.sequence_id not in self.fasta_records:
                 continue
@@ -403,14 +406,26 @@ class AnnotatedGenomeDataset:
                 enabled=self._random_prefix_ns,
             )
 
-            if by_contig_aux is not None:
-                # Validate aux length equals original FASTA length
+            if self._num_stream is not None:
+                # Validate aux length equals original FASTA length when present; synthesize zeros if missing
                 raw_len = len(self.fasta_records.get(ann.sequence_id, ""))
-                aux_raw = self._num_stream.get(ann.sequence_id)
-                if int(aux_raw.shape[0]) != int(raw_len):
-                    raise ValueError(f"aux stream length mismatch for {ann.sequence_id}: aux={int(aux_raw.shape[0])} vs original_fasta={int(raw_len)}")
-                arr = self._num_stream.pad(ann.sequence_id, pad_len)
+                try:
+                    aux_raw = self._num_stream.get(ann.sequence_id)
+                    if int(aux_raw.shape[0]) != int(raw_len):
+                        raise ValueError(f"aux stream length mismatch for {ann.sequence_id}: aux={int(aux_raw.shape[0])} vs original_fasta={int(raw_len)}")
+                    arr = self._num_stream.pad(ann.sequence_id, pad_len)
+                except KeyError:
+                    # Missing contig in stream: create zeros with same channels and apply left prefix padding
+                    C = int(len(self._num_stream.channels)) if self._num_stream.channels is not None else 0
+                    base = np.zeros((raw_len, C), dtype=np.float32)
+                    if pad_len > 0:
+                        pad = np.zeros((pad_len, C), dtype=np.float32)
+                        arr = np.concatenate([pad, base], axis=0)
+                    else:
+                        arr = base
                 by_contig_aux.append(arr.astype(np.float32, copy=False))
+            else:
+                by_contig_aux.append(None)
 
             self.sequences.append(seq)
             self.targets.append(tgt)
@@ -420,11 +435,9 @@ class AnnotatedGenomeDataset:
             self.sequences = self.sequences[0:num_contigs]
             self.targets = self.targets[0:num_contigs]
             self.contig_ids = self.contig_ids[0:num_contigs]
-            if by_contig_aux is not None:
-                by_contig_aux = by_contig_aux[0:num_contigs]
+            by_contig_aux = by_contig_aux[0:num_contigs]
 
-        if by_contig_aux is not None:
-            self.aux_by_contig = by_contig_aux
+        self.aux_by_contig = by_contig_aux
 
         print(len(self.sequences), "sequences")
         # If windowing is enabled, precompute windows over each contig
