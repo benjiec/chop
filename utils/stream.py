@@ -31,6 +31,34 @@ def load_fasta(fasta_path: str) -> Dict[str, str]:
     return records
 
 
+def build_gc_generator(window_size: int):
+    w = int(window_size)
+    if w <= 0:
+        raise ValueError("window size must be positive")
+    if w % 2 == 1:
+        x = y = w // 2
+    else:
+        y = w // 2
+        x = y - 1
+
+    def gc_generator(seq: str) -> np.ndarray:
+        L = len(seq)
+        seq_u = seq.upper()
+        b = np.frombuffer(seq_u.encode('ascii'), dtype=np.uint8)
+        gc_mask = ((b == 71) | (b == 67)).astype(np.float32)  # 'G' or 'C'
+        pref = np.concatenate([np.zeros(1, dtype=np.float32), np.cumsum(gc_mask, dtype=np.float32)])
+        out = np.zeros(L, dtype=np.float32)
+        for i in range(L):
+            s = max(0, i - x)
+            e = min(L, i + y + 1)
+            cnt = pref[e] - pref[s]
+            denom = float(e - s) if (e - s) > 0 else 1.0
+            out[i] = cnt / denom
+        return out
+
+    return gc_generator
+
+
 class NumericalStream:
     """Loader and normalizer for per-sequence numerical streams.
 

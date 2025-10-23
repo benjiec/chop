@@ -119,3 +119,19 @@ PYTHONPATH=. python scripts/augment-decoder-inputs-from-flanks.py \
   --flank-csv data/GCF_002042975.1_round0_train_ass_dss_flank4.csv \
   --mode override \
   --output-pkl synthetic_decoder_input.pkl
+
+
+# streams
+
+PYTHONPATH=. python scripts/stream-add-random.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --stream data/GCF_002042975.1_round0_train_stream_random.pkl
+
+PYTHONPATH=. python scripts/stream-add-target.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --stream data/GCF_002042975.1_round0_train_stream_target.pkl
+
+PYTHONPATH=. python scripts/stream-add-gc.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 50 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl

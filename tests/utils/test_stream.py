@@ -7,7 +7,54 @@ from pathlib import Path
 import numpy as np
 
 from utils.genome import AnnotatedGenomeDataset
-from utils.stream import NumericalStream
+from utils.stream import NumericalStream, build_gc_generator
+
+
+class TestGCGenerator(unittest.TestCase):
+    def _gc_ratio(self, s: str) -> float:
+        s = s.upper()
+        if len(s) == 0:
+            return 0.0
+        gc = sum(1 for ch in s if ch in ('G', 'C'))
+        return gc / float(len(s))
+
+    def test_gc_generator_centering_rules(self):
+        # Odd window (5): X=2,Y=2 centered on token
+        seq = 'ATGCGT'  # length 6
+        gen5 = build_gc_generator(5)
+        out5 = gen5(seq)
+        # Position 2 (0-based) -> window [0..4)
+        self.assertAlmostEqual(out5[2], self._gc_ratio(seq[0:5]), places=6)
+        # Position 3 -> window [1..6)
+        self.assertAlmostEqual(out5[3], self._gc_ratio(seq[1:6]), places=6)
+
+        # Even window (4): X=1,Y=2
+        gen4 = build_gc_generator(4)
+        out4 = gen4(seq)
+        # Position 2 -> window [1..5)
+        self.assertAlmostEqual(out4[2], self._gc_ratio(seq[1:5]), places=6)
+        # Position 3 -> window [2..6)
+        self.assertAlmostEqual(out4[3], self._gc_ratio(seq[2:6]), places=6)
+
+    def test_gc_generator_edges(self):
+        # Document behavior at sequence edges: window is clipped to sequence bounds
+        seq = 'GCAA'  # L=4
+        # Odd window (3): X=1,Y=1
+        gen3 = build_gc_generator(3)
+        out3 = gen3(seq)
+        # i=0 -> [0..1)
+        self.assertAlmostEqual(out3[0], self._gc_ratio(seq[0:1]), places=6)
+        # i=1 -> [0..3)
+        self.assertAlmostEqual(out3[1], self._gc_ratio(seq[0:3]), places=6)
+        # i=3 -> [2..4)
+        self.assertAlmostEqual(out3[3], self._gc_ratio(seq[2:4]), places=6)
+        # Even window (4): X=1,Y=2 -> clipped
+        gen4 = build_gc_generator(4)
+        out4 = gen4(seq)
+        # i=0 -> [0..3)
+        self.assertAlmostEqual(out4[0], self._gc_ratio(seq[0:3]), places=6)
+        # i=3 -> [2..4)
+        self.assertAlmostEqual(out4[3], self._gc_ratio(seq[2:4]), places=6)
 
 
 class TestNumericalStreamIntegration(unittest.TestCase):
