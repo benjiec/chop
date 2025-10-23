@@ -107,17 +107,17 @@ def print_event_metrics_report(
             sen = generic[cls_idx]['sensitivity'] * 100
             pre = generic[cls_idx]['precision'] * 100
             b = brier_by_class[cls_idx]
-            # Estimate min-prob to tn_m+2*tn_s
-            tn_m = prob_metrics[cls_idx]['tn']['mean']
-            tn_s = prob_metrics[cls_idx]['tn']['std']
+            tp_m = prob_metrics[cls_idx]['tp']['mean']*100
+            tp_s = prob_metrics[cls_idx]['tp']['std']*100
+            tn_m = prob_metrics[cls_idx]['tn']['mean']*100
+            tn_s = prob_metrics[cls_idx]['tn']['std']*100
+            # Estimate min-prob to (tn_m/100)+2*(tn_s/100)
             min_prob=round(tn_m+2*tn_s,2)
             # Equal Tail Robust Effect Size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
-            tp_med = prob_metrics[cls_idx]['tail']['tp']['median'] * 100
-            tp_iqr = prob_metrics[cls_idx]['tail']['tp']['iqr'] * 100
-            tn_med = prob_metrics[cls_idx]['tail']['tn']['median'] * 100
-            tn_iqr = prob_metrics[cls_idx]['tail']['tn']['iqr'] * 100
-            robust_den = (tp_iqr + tn_iqr) / 2.0
-            robust = (tp_med - tn_med) / robust_den if robust_den > 0 else 0.0
-            print(f"{cname:>5s},{int(sen)}/{int(pre)},{b:.4f},{int(tp_med)}/{int(tp_iqr)}-{int(tn_med)}/{int(tn_iqr)},{robust:.2f},{min_prob:.2f}")
-
-
+            ttp_med = prob_metrics[cls_idx]['tail']['tp']['median'] * 100
+            ttp_iqr = prob_metrics[cls_idx]['tail']['tp']['iqr'] * 100
+            ttn_med = prob_metrics[cls_idx]['tail']['tn']['median'] * 100
+            ttn_iqr = prob_metrics[cls_idx]['tail']['tn']['iqr'] * 100
+            robust_den = (ttp_iqr + ttn_iqr) / 2.0
+            robust = (ttp_med - ttn_med) / robust_den if robust_den > 0 else 0.0
+            print(f"{cname:>5s},{b:.4f},{int(tp_m)}/{int(tp_s)}-{int(tn_m)}/{int(tn_s)},{int(ttp_med)}/{int(ttp_iqr)}-{int(ttn_med)}/{int(ttn_iqr)},{robust:.2f},{min_prob:.2f}")
