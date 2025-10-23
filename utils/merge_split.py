@@ -8,7 +8,7 @@ import csv
 import random
 
 # Reuse existing FASTA/FNA loader to avoid duplication and to support .gz
-from utils.genome import _load_fasta
+from utils.stream import load_fasta
 
 
 REQUIRED_TSV_COLUMNS: List[str] = [
@@ -30,7 +30,7 @@ def load_all_fasta(fasta_paths: Iterable[str]) -> Dict[str, str]:
     """
     merged: Dict[str, str] = {}
     for p in fasta_paths:
-        records = _load_fasta(str(p))
+        records = load_fasta(str(p))
         for sid, seq in records.items():
             if sid in merged:
                 if merged[sid] != seq:

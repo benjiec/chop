@@ -7,7 +7,6 @@ import gzip
 
 import numpy as np
 import random
-import pickle
 
 from utils.constants import (
     GenePredictionClass as P,
@@ -20,7 +19,7 @@ from utils.constants import (
 from utils.windowing import compute_window_slices
 from torch.utils.data import Subset
 from utils.sequences import reverse_complement
-from utils.stream import NumericalStream
+from utils.stream import NumericalStream, load_fasta
 
 
 def build_class_windows(
@@ -90,32 +89,6 @@ class GeneAnnotation:
     gene_id: str
     strand: str  # '+' or '-'
     exons: List[Tuple[int, int]]  # 0-based half-open [start, end)
-
-
-def _load_fasta(fasta_path: str) -> Dict[str, str]:
-    records: Dict[str, str] = {}
-    sid = None
-    buf: List[str] = []
-    # Support both plain text and gzip-compressed FASTA files
-    path_obj = Path(fasta_path)
-    is_gz = any(suf == '.gz' for suf in path_obj.suffixes)
-    open_fn = gzip.open if is_gz else open
-    mode = 'rt' if is_gz else 'r'
-    with open_fn(fasta_path, mode) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith('>'):
-                if sid is not None:
-                    records[sid] = ''.join(buf).upper()
-                sid = line[1:].split()[0]
-                buf = []
-            else:
-                buf.append(line)
-        if sid is not None:
-            records[sid] = ''.join(buf).upper()
-    return records
 
 
 def _parse_tsv_annotations(tsv_path: str) -> List[GeneAnnotation]:
@@ -317,7 +290,7 @@ class AnnotatedGenomeDataset:
                  aux_stream_path: Optional[str] = None,
                  aux_normalize: bool = True,
                  ):
-        self.fasta_records = _load_fasta(fasta_path)
+        self.fasta_records = load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
         self.sequences: List[str] = []
         self.targets: List[np.ndarray] = []

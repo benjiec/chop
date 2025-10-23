@@ -14,7 +14,8 @@ from utils.constants import (
     DinoDonorDinucleotides,
     DNAEmbed,
 )
-from utils.genome import AnnotatedGenomeDataset, _load_fasta
+from utils.genome import AnnotatedGenomeDataset
+from utils.stream import load_fasta
 from utils.metrics import SequenceResult
 from utils.events import build_event_motifs
 from utils.metrics_report import compute_event_metrics, print_event_metrics_report
@@ -78,7 +79,7 @@ def _build_sequence_results(
 
 
 def _sanity_check_fna_sequences(items: List[PredictedSequence], fna_fn: str) -> None:
-    records = _load_fasta(fna_fn)
+    records = load_fasta(fna_fn)
     for idx, ps in enumerate(items):
         sid = getattr(ps, 'sequence_id', None)
         if not sid:

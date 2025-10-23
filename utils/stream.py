@@ -1,16 +1,34 @@
 #!/usr/bin/env python3
-
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional
 import numpy as np
 import pickle
+from pathlib import Path
+import gzip
 
 
-@dataclass
-class NumericalStreamSequence:
-    sequence_id: str
-    channels: List[str]
-    data: np.ndarray  # shape [L, C], float32
+def load_fasta(fasta_path: str) -> Dict[str, str]:
+    records: Dict[str, str] = {}
+    p = Path(fasta_path)
+    is_gz = any(suf == '.gz' for suf in p.suffixes)
+    opener = gzip.open if is_gz else open
+    mode = 'rt' if is_gz else 'r'
+    sid = None
+    buf: List[str] = []
+    with opener(fasta_path, mode) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('>'):
+                if sid is not None:
+                    records[sid] = ''.join(buf).upper()
+                sid = line[1:].split()[0]
+                buf = []
+            else:
+                buf.append(line)
+        if sid is not None:
+            records[sid] = ''.join(buf).upper()
+    return records
 
 
 class NumericalStream:
@@ -31,6 +49,18 @@ class NumericalStream:
         self._std: Optional[np.ndarray] = None
         self._load()
 
+    @staticmethod
+    def create_empty(pickle_path: str) -> "NumericalStream":
+        """Create a new empty stream on disk and return the instance.
+
+        The file will contain an empty list to indicate no sequences/channels yet.
+        """
+        path_obj = Path(pickle_path)
+        path_obj.parent.mkdir(parents=True, exist_ok=True)
+        with open(path_obj, 'wb') as f:
+            pickle.dump([], f)
+        return NumericalStream(str(path_obj))
+
     @property
     def mean(self) -> Optional[np.ndarray]:
         return self._mean
@@ -46,8 +76,16 @@ class NumericalStream:
     def _load(self) -> None:
         with open(self.pickle_path, 'rb') as f:
             items = pickle.load(f)
-        if not isinstance(items, list) or len(items) == 0:
-            raise ValueError("aux stream pickle must be a non-empty list of objects")
+        if not isinstance(items, list):
+            raise ValueError("aux stream pickle must be a list of objects")
+        if len(items) == 0:
+            # empty stream
+            self.channels = None
+            self._raw_map = {}
+            self._norm_map = None
+            self._mean = None
+            self._std = None
+            return
         channel_list: Optional[List[str]] = None
         raw: Dict[str, np.ndarray] = {}
         for it in items:
@@ -122,4 +160,71 @@ class NumericalStream:
         C = int(base.shape[1])
         return np.concatenate([np.zeros((prefix_len, C), dtype=np.float32), base], axis=0)
 
+    def save(self) -> None:
+        """Write the current raw stream to pickle in the standard format."""
+        items: List[Dict[str, object]] = []
+        channel_list = self.channels if self.channels is not None else []
+        for sid in sorted(self._raw_map.keys()):
+            arr = self._raw_map[sid]
+            items.append({
+                'sequence_id': sid,
+                'channels': list(channel_list),
+                'data': arr.astype(np.float32, copy=False),
+            })
+        with open(self.pickle_path, 'wb') as f:
+            pickle.dump(items, f)
 
+    def add_channel(self, fasta_path: str, channel_name: str, generate_data) -> None:
+        """Add a new channel computed from sequences in fasta_path.
+
+        - If stream is empty, sequences from fasta become the stream's sequence_ids and lengths.
+        - If stream is non-empty, sequence IDs must match exactly and lengths must match.
+        - generate_data(seq_str) -> np.ndarray of shape [L] or [L,].
+        """
+        if not isinstance(channel_name, str) or len(channel_name) == 0:
+            raise ValueError("channel_name must be a non-empty string")
+        recs = load_fasta(fasta_path)
+        if len(recs) == 0:
+            raise ValueError("FASTA contains no sequences")
+
+        if self.channels is None:
+            # Initialize empty stream with this single channel
+            new_channels = [channel_name]
+            new_map: Dict[str, np.ndarray] = {}
+            for sid, seq in recs.items():
+                arr = np.asarray(generate_data(seq), dtype=np.float32)
+                if arr.ndim != 1:
+                    raise ValueError(f"generate_data must return 1D array for {sid}")
+                if int(arr.shape[0]) != len(seq):
+                    raise ValueError(f"length mismatch for {sid}: data={int(arr.shape[0])} seq={len(seq)}")
+                new_map[sid] = arr.reshape(-1, 1)
+            self.channels = new_channels
+            self._raw_map = new_map
+            self._norm_map = None
+            self._mean = None
+            self._std = None
+            return
+
+        # Stream non-empty: validate channel uniqueness, sequence IDs and lengths
+        if channel_name in self.channels:
+            raise ValueError(f"channel '{channel_name}' already exists")
+        existing_ids = set(self._raw_map.keys())
+        fasta_ids = set(recs.keys())
+        if existing_ids != fasta_ids:
+            missing = existing_ids - fasta_ids
+            extra = fasta_ids - existing_ids
+            raise ValueError(f"FASTA sequence IDs must match existing stream; missing={sorted(list(missing))}, extra={sorted(list(extra))}")
+        # Append new column per sequence
+        for sid in self._raw_map.keys():
+            seq = recs[sid]
+            arr = np.asarray(generate_data(seq), dtype=np.float32)
+            if arr.ndim != 1:
+                raise ValueError(f"generate_data must return 1D array for {sid}")
+            if int(arr.shape[0]) != len(seq):
+                raise ValueError(f"length mismatch for {sid}: data={int(arr.shape[0])} seq={len(seq)}")
+            cur = self._raw_map[sid]
+            self._raw_map[sid] = np.concatenate([cur, arr.reshape(-1, 1)], axis=1)
+        self.channels = list(self.channels) + [channel_name]
+        self._norm_map = None
+        self._mean = None
+        self._std = None

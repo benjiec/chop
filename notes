@@ -1,4 +1,4 @@
-# prep data
+# prepare training and testing data
 
 source chop_env/bin/activate && python scripts/merge-and-split-data.py \
   --tsv data/GCF_002042975.1_filtered_tcov0.99_evalue1e-20_annotations.tsv \
@@ -11,14 +11,13 @@ source chop_env/bin/activate && python scripts/merge-and-split-data.py \
   --output-test-tsv data/test.tsv \
   --output-test-fna data/test.fna
 
-# algae
+
+# algae training, note dss-motifs specification
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60,3:300:40:0" --num-windows 20000 --stride 100 --stop-weight 8 --dss-motifs dino
 
-scripts/predict-layout GCA_001939145.1 99 gene_predictor/gene_predictor_run_20250928_142721 model_epoch=04_val_f1=0.224.ckpt
 
-
-# coral
+# coral training, note dss-motifs specification
 
 PYTHONPATH=. python gene_predictor/train.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv --attention-masks "0:4,1:12,2:60:12:60,3:140:40:140,4:220:120:0" --num-windows 20000 --stride 330 --enable-cc --dss-motifs standard
 
@@ -30,9 +29,14 @@ PYTHONPATH=. python gene_predictor/window_validation.py --fna-fn data/GCF_002042
   --run-dir gene_predictor/gene_predictor_run_20250930_202314 \
   --model-path model_epoch=22_val_f1=0.713.ckpt
 
-# predict on 10, change to 1000 to do a full prediction
-scripts/predict-layout GCF_002042975.1 10 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt
 
+# prediction using trained model
+
+scripts/predict-layout GCF_002042975.1 253 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt
+
+
+# viterbi decoder
+ 
 PYTHONPATH=. python gene_decoder/build_codon_usage.py --fna data/GCF_002042975.1_round0_train_query.fna.gz --tsv data/GCF_002042975.1_round0_train_annotations.tsv --output data/GCF_002042975.1.codon_usage.json
 
 PYTHONPATH=. python gene_decoder/decode.py --num-sequences 253 --temperature-scale 1 --dss-motifs standard \
@@ -57,7 +61,8 @@ PYTHONPATH=. python scripts/metrics-from-pickle.py \
   --tsv-fn data/GCF_002042975.1_round0_test_annotations.tsv \
   --pickle-path gene_predictor/gene_predictor_run_20250930_202314/prediction_20251003_143033_e36ad3c063_decoder.pickle
 
-# synthetic tests on decoder
+
+# generate synthetic data to understand decoder performance
 
 PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz --tsv data/GCF_002042975.1_round0_test_annotations.tsv  \
@@ -90,6 +95,7 @@ PYTHONPATH=. python scripts/synthesize-decoder-inputs.py \
   --input-pkl gene_predictor/gene_predictor_run_20251017_070259/prediction_20251018_160726_53e097c9f4_decoder.pickle \
   --output-pkl synthetic_decoder_input.pkl
 
+
 # frequency analysis for flanking motifs of DSS and ASS
 
 PYTHONPATH=. python scripts/analyze-flanking-motifs.py \
@@ -103,6 +109,7 @@ PYTHONPATH=. python scripts/analyze-flanking-motifs-from-pkl.py \
   --site both \
   --dss-motifs-mode standard \
   --flank 5
+
 
 # augment existing pkl file with flank stats, boosting rather than override
 

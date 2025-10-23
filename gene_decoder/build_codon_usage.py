@@ -2,7 +2,8 @@
 
 import argparse
 from typing import Iterator
-from utils.genome import _load_fasta, _parse_tsv_annotations, GeneAnnotation
+from utils.genome import _parse_tsv_annotations, GeneAnnotation
+from utils.stream import load_fasta
 from gene_decoder.codon_usage import build_codon_usage_from_cds
 
 
@@ -25,7 +26,7 @@ def main():
     p.add_argument('--output', required=True, help='Output JSON path for codon->prob')
     args = p.parse_args()
 
-    records = _load_fasta(args.fna)
+    records = load_fasta(args.fna)
     anns = _parse_tsv_annotations(args.tsv)
     codon_model = build_codon_usage_from_cds(_iter_cds(records, anns), alpha=args.alpha)
     codon_model.to_json(args.output)

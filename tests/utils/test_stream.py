@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from utils.genome import AnnotatedGenomeDataset
+from utils.stream import NumericalStream
 
 
 class TestNumericalStreamIntegration(unittest.TestCase):
@@ -93,6 +94,31 @@ class TestNumericalStreamIntegration(unittest.TestCase):
             _, _, a = ds[0]
             self.assertTrue(np.any(a == 0.0))
             self.assertTrue(np.any(a != 0.0))
+
+    def test_create_empty_add_channel_and_save_reload(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            pkl = td / 'empty.pkl'
+            ns = NumericalStream.create_empty(str(pkl))
+            # Add channel from fasta
+            fa = td / 's.fa'
+            seqs = {'ctg1': 'ATGC', 'ctg2': 'NNNNN'}
+            self._write_simple_fasta(fa, seqs)
+            def gen_len(seq: str):
+                return np.arange(len(seq), dtype=np.float32)
+            ns.add_channel(str(fa), 'pos', gen_len)
+            # Add second channel
+            def gen_ones(seq: str):
+                return np.ones(len(seq), dtype=np.float32)
+            ns.add_channel(str(fa), 'ones', gen_ones)
+            # Save and reload
+            ns.save()
+            ns2 = NumericalStream(str(pkl))
+            self.assertEqual(ns2.channels, ['pos', 'ones'])
+            for sid in ['ctg1', 'ctg2']:
+                arr = ns2.get(sid)
+                self.assertEqual(arr.shape[1], 2)
+                self.assertEqual(arr.shape[0], len(seqs[sid]))
 
 
 if __name__ == '__main__':
