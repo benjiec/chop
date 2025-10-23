@@ -20,6 +20,7 @@ from utils.constants import (
 from utils.windowing import compute_window_slices
 from torch.utils.data import Subset
 from utils.sequences import reverse_complement
+from utils.stream import NumericalStream
 
 
 def build_class_windows(
@@ -340,22 +341,27 @@ class AnnotatedGenomeDataset:
         self.allow_nonconforming_ass = bool(allow_nonconforming_ass)
         self.allow_nonconforming_dss = bool(allow_nonconforming_dss)
         self.motif_fail_counts: Dict[str, int] = {"start": 0, "stop": 0, "ass": 0, "dss": 0}
-        # Aux stream related fields
+        # Aux
         self.aux_stream_path: Optional[str] = str(aux_stream_path) if aux_stream_path else None
         self.aux_normalize: bool = bool(aux_normalize)
-        self.aux_channels: Optional[List[str]] = None
-        self.aux_by_contig: Optional[List[np.ndarray]] = None  # Each entry [L,C] aligned to sequences list (after prefix)
-        self.aux_mean: Optional[np.ndarray] = None  # [C]
-        self.aux_std: Optional[np.ndarray] = None   # [C]
-        self._aux_raw_map: Optional[Dict[str, np.ndarray]] = None  # Raw per-contig aux before prefix/normalization
+        self.aux_by_contig: Optional[List[np.ndarray]] = None
+        self._num_stream: Optional[NumericalStream] = None
 
-        # Load aux raw map first (channels and raw arrays), then build sequences/targets, then normalize/pad aux to align
+        # Load aux raw first
         if self.aux_stream_path:
-            self._load_aux_raw_map(self.aux_stream_path)
+            ns = NumericalStream(self.aux_stream_path)
+            # Early validation: aux lengths must match original FASTA lengths
+            for sid in ns.sequence_ids:
+                orig = len(self.fasta_records.get(sid, ""))
+                if int(orig) <= 0:
+                    raise ValueError(f"aux stream sequence_id not found in FASTA: {sid}")
+                if int(ns.get(sid).shape[0]) != int(orig):
+                    raise ValueError(f"aux stream length mismatch for {sid}: aux={int(ns.get(sid).shape[0])} vs original_fasta={int(orig)}")
+            if self.aux_normalize:
+                ns.normalize()
+            self._num_stream = ns
 
         self._build(num_contigs)
-        if self.aux_stream_path:
-            self._finalize_aux_alignment_and_norm()
 
     def __len__(self) -> int:
         if self.window:
@@ -379,7 +385,6 @@ class AnnotatedGenomeDataset:
                 pad = win_len - cur_len
                 if pad > 0:
                     seq = seq + ('N' * pad)
-                    # Use INTERGENIC for padded targets
                     tgt = np.concatenate([tgt, np.full((pad,), P.INTERGENIC, dtype=tgt.dtype)])
                     if aux is not None:
                         C = int(aux.shape[1])
@@ -399,6 +404,7 @@ class AnnotatedGenomeDataset:
 
     def _build(self, num_contigs: Optional[int] = 0):
 
+        by_contig_aux: Optional[List[np.ndarray]] = [] if self._num_stream is not None else None
         for ann in self.annotations:
             if ann.sequence_id not in self.fasta_records:
                 continue
@@ -424,15 +430,28 @@ class AnnotatedGenomeDataset:
                 enabled=self._random_prefix_ns,
             )
 
+            if by_contig_aux is not None:
+                # Validate aux length equals original FASTA length
+                raw_len = len(self.fasta_records.get(ann.sequence_id, ""))
+                aux_raw = self._num_stream.get(ann.sequence_id)
+                if int(aux_raw.shape[0]) != int(raw_len):
+                    raise ValueError(f"aux stream length mismatch for {ann.sequence_id}: aux={int(aux_raw.shape[0])} vs original_fasta={int(raw_len)}")
+                arr = self._num_stream.pad(ann.sequence_id, pad_len)
+                by_contig_aux.append(arr.astype(np.float32, copy=False))
+
             self.sequences.append(seq)
             self.targets.append(tgt)
             self.contig_ids.append(ann.sequence_id)
-            # No need to record pad_len; will derive from (len(seq) - len(raw_aux))
 
         if num_contigs and num_contigs > 0:
             self.sequences = self.sequences[0:num_contigs]
             self.targets = self.targets[0:num_contigs]
             self.contig_ids = self.contig_ids[0:num_contigs]
+            if by_contig_aux is not None:
+                by_contig_aux = by_contig_aux[0:num_contigs]
+
+        if by_contig_aux is not None:
+            self.aux_by_contig = by_contig_aux
 
         print(len(self.sequences), "sequences")
         # If windowing is enabled, precompute windows over each contig
@@ -550,93 +569,6 @@ class AnnotatedGenomeDataset:
         rng.shuffle(selected_list)
         self._selected_window_indices = selected_list[:target_num]
 
-    def _load_aux_raw_map(self, aux_path: str) -> None:
-        """Load aux stream pickle to raw per-contig arrays and channel list (no alignment yet)."""
-        path = Path(aux_path)
-        if not path.exists():
-            raise FileNotFoundError(f"aux stream file not found: {aux_path}")
-        with open(aux_path, 'rb') as f:
-            items = pickle.load(f)
-        if not isinstance(items, list) or len(items) == 0:
-            raise ValueError("aux stream pickle must be a non-empty list of objects")
-
-        # Build map and validate channel consistency
-        channel_list: Optional[List[str]] = None
-        data_map: Dict[str, np.ndarray] = {}
-        for it in items:
-            if not isinstance(it, dict):
-                # Support simple objects via attribute access
-                seq_id = getattr(it, 'sequence_id', None)
-                channels = getattr(it, 'channels', None)
-                data = getattr(it, 'data', None)
-            else:
-                seq_id = it.get('sequence_id')
-                channels = it.get('channels')
-                data = it.get('data')
-            if not isinstance(seq_id, str):
-                raise ValueError("aux stream item missing sequence_id")
-            if not isinstance(channels, (list, tuple)) or len(channels) == 0:
-                raise ValueError(f"aux stream channels invalid for {seq_id}")
-            if not isinstance(data, np.ndarray) or data.ndim != 2:
-                raise ValueError(f"aux stream data must be 2D ndarray for {seq_id}")
-            if channel_list is None:
-                channel_list = list(channels)
-            elif list(channels) != channel_list:
-                raise ValueError("aux stream channels mismatch across items")
-            data_map[seq_id] = np.array(data, dtype=np.float32)
-
-        self.aux_channels = channel_list
-        self._aux_raw_map = data_map
-
-    def _finalize_aux_alignment_and_norm(self) -> None:
-        if self._aux_raw_map is None or self.aux_channels is None:
-            return
-        # Validate coverage matches contigs actually included in the dataset
-        expected_ids = set(self.contig_ids)
-        aux_ids = set(self._aux_raw_map.keys())
-        if expected_ids != aux_ids:
-            missing = expected_ids - aux_ids
-            extra = aux_ids - expected_ids
-            raise ValueError(f"aux stream sequences must match dataset contigs exactly; missing={sorted(list(missing))}, extra={sorted(list(extra))}")
-        # Build list of raw arrays for selected contigs
-        raw_list: List[np.ndarray] = []
-        for sid in self.contig_ids:
-            if sid not in self._aux_raw_map:
-                raise ValueError(f"aux stream missing sequence_id {sid}")
-            arr = self._aux_raw_map[sid]
-            # sanitize NaN/inf
-            arr = np.where(np.isfinite(arr), arr, 0.0).astype(np.float32, copy=False)
-            raw_list.append(arr)
-        C = int(len(self.aux_channels))
-        # Compute stats over raw rows if requested
-        if self.aux_normalize and C > 0:
-            cat = np.concatenate(raw_list, axis=0) if len(raw_list) > 0 else np.zeros((0, C), dtype=np.float32)
-            mean = (cat.mean(axis=0) if cat.size > 0 else np.zeros((C,), dtype=np.float32))
-            std = (cat.std(axis=0) if cat.size > 0 else np.ones((C,), dtype=np.float32))
-            std = np.where(std <= 1e-8, 1.0, std).astype(np.float32)
-            self.aux_mean = mean.astype(np.float32)
-            self.aux_std = std.astype(np.float32)
-        # Align to sequences with left zero-pad for prefix
-        by_contig: List[np.ndarray] = []
-        for idx, sid in enumerate(self.contig_ids):
-            raw_arr = self._aux_raw_map[sid]
-            seq_len_post = len(self.sequences[idx])
-            L_raw = int(raw_arr.shape[0])
-            # Expect aux length to match original fasta length (before any prefix)
-            original_len = len(self.fasta_records.get(sid, ""))
-            if L_raw != original_len:
-                raise ValueError(f"aux stream length mismatch for {sid}: aux={L_raw} vs original_fasta={original_len}")
-            pad_len = seq_len_post - original_len
-            if pad_len < 0:
-                raise ValueError(f"aux stream length longer than sequence (after prefix) for {sid}: aux={L_raw} seq={seq_len_post}")
-            arr = raw_arr.astype(np.float32, copy=False)
-            if self.aux_normalize and self.aux_mean is not None and self.aux_std is not None:
-                arr = (arr - self.aux_mean) / self.aux_std
-            if pad_len > 0:
-                arr = np.concatenate([np.zeros((pad_len, arr.shape[1]), dtype=np.float32), arr], axis=0)
-            by_contig.append(arr)
-        self.aux_by_contig = by_contig
-
     def split(self, train_size: int, val_size: int):
         total = len(self)
         if train_size + val_size != total:
@@ -677,3 +609,5 @@ class AnnotatedGenomeDataset:
             train_idx = idxs[:train_size]
             val_idx = idxs[train_size:train_size + val_size]
             return Subset(self, train_idx), Subset(self, val_idx)
+
+
