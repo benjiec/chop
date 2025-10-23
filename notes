@@ -26,8 +26,12 @@ PYTHONPATH=. python gene_predictor/train.py \
 PYTHONPATH=. python gene_predictor/train.py \
   --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz \
   --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv \
-  --attention-masks "0:4,1:12,2:60:12:60,3:140:40:140,4:220:120:0" \
-  --num-windows 20000 --stride 330 --enable-cc --dss-motifs standard
+  --attention-masks "0:4,1:12,2:60:12:0,3:140:40:0,4:220:120:0,5:0:12:60,6:0:40:140" \
+  --dss-motifs standard --num-windows 0 --stride 330 \
+  --loss-type event-head-bce \
+  --start-weight 16 --start-neg-weight 1 --stop-weight 8 --stop-neg-weight 1 \
+  --dss-weight 2 --dss-neg-weight 2 --ass-weight 2 --ass-neg-weight 2 \
+  --start-alpha 1 --stop-alpha 2 --dss-alpha 3 --ass-alpha 3
 
 PYTHONPATH=. python gene_predictor/list-class-windows.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv \
   --max-seq-length 1000 --num-windows 1000 --class DSS
