@@ -193,6 +193,21 @@ class TestNumericalStreamIntegration(unittest.TestCase):
                 self.assertEqual(arr.shape, (len(seqs[sid]), 1))
 
 
+class TestViennaDG(unittest.TestCase):
+    def test_vienna_dg_generator_import_and_shape(self):
+        # Skip if ViennaRNA is not installed
+        try:
+            import RNA  # noqa: F401
+        except Exception:
+            self.skipTest("ViennaRNA 'RNA' bindings not installed")
+        from utils.stream import build_vienna_dg_generator
+        gen = build_vienna_dg_generator(5, temp_celsius=37.0, mode='mfe')
+        seq = 'ATGCAU'  # includes U; DNA T->U conversion is handled in generator
+        out = gen(seq)
+        self.assertEqual(out.shape, (len(seq),))
+        self.assertEqual(out.dtype, np.float32)
+
+
 if __name__ == '__main__':
     unittest.main()
 

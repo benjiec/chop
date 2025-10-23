@@ -142,5 +142,22 @@ PYTHONPATH=. python scripts/stream-add-targets.py \
 
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 50 \
+  --win 20 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+
+PYTHONPATH=. python scripts/stream-add-gc.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 100 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 20 \
+  --temp 25 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 100 \
+  --temp 25 \
   --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl

@@ -59,6 +59,55 @@ def build_gc_generator(window_size: int):
     return gc_generator
 
 
+def build_vienna_dg_generator(window_size: int, temp_celsius: float = 25.0, mode: str = 'mfe'):
+    """Return a generator that computes per-position RNA ΔG using ViennaRNA.
+
+    - window_size: centered window size N. If even, uses X=Y-1 per GC rule.
+    - temp_celsius: folding temperature in Celsius (default 25).
+    - mode: 'mfe' (minimum free energy) or 'pf' (ensemble free energy).
+    """
+    w = int(window_size)
+    if w <= 0:
+        raise ValueError("window size must be positive")
+    mode = str(mode).lower()
+    if mode not in ('mfe', 'pf'):
+        raise ValueError("mode must be 'mfe' or 'pf'")
+    if w % 2 == 1:
+        x = y = w // 2
+    else:
+        y = w // 2
+        x = y - 1
+
+    # Lazy import to avoid hard dependency at module import time
+    try:
+        import RNA  # type: ignore
+    except Exception as e:  # pragma: no cover - exercised in script/skip test
+        raise ImportError("ViennaRNA Python bindings 'RNA' are required for build_vienna_dg_generator") from e
+
+    def dg_generator(seq: str) -> np.ndarray:
+        L = len(seq)
+        # Convert DNA to RNA for ViennaRNA (T->U). Replace unknowns with A.
+        seq_u = seq.upper().replace('T', 'U').replace('N', 'A')
+        md = RNA.md()
+        md.temperature = float(temp_celsius)
+        out = np.zeros(L, dtype=np.float32)
+        for i in range(L):
+            s = max(0, i - x)
+            e = min(L, i + y + 1)
+            win_seq = seq_u[s:e]
+            fc = RNA.fold_compound(win_seq, md)
+            if mode == 'mfe':
+                _, energy = fc.mfe()
+                val = float(energy)
+            else:
+                fc.pf()
+                val = float(fc.energy)
+            out[i] = val
+        return out
+
+    return dg_generator
+
+
 class NumericalStream:
     """Loader and normalizer for per-sequence numerical streams.
 
