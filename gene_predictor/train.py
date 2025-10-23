@@ -276,7 +276,7 @@ def main():
 
             cbs = [
                 metrics_cb,
-                pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
+                pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=8),
             ]
             return cbs
 
