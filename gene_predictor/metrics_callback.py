@@ -264,3 +264,54 @@ def _safe_float(x):
             return float(getattr(x, 'item')())
         except Exception:
             return ''
+
+
+class AlphaTargetAdjustCallback(pl.Callback):
+    """Reduce alpha for a class to alpha_min when its head's val loss hits target.
+
+    This callback is intended for event-head mode. It reads aggregated epoch
+    metrics (val_loss_head_{i}) and, when a specified class's corresponding head
+    achieves a validation loss less than or equal to the provided target, it
+    updates the shared alpha mapping for that class down to alpha_min.
+
+    Args:
+        alpha_by_class: Shared dict[int->float] used by the loss to weight heads
+        head_class_ids: List[int] mapping head index -> class id
+        alpha_targets_by_class: Dict[int->float] class id -> target val loss
+        alpha_min: Minimum alpha to reduce to when condition is met (default 0.1)
+    """
+
+    def __init__(self, alpha_by_class: dict, head_class_ids: list[int], alpha_targets_by_class: dict[int, float], alpha_min: float = 0.1):
+        super().__init__()
+        self._alpha_by_class = alpha_by_class
+        self._head_class_ids = list(head_class_ids) if head_class_ids is not None else []
+        # filter to int keys
+        self._targets = {int(k): float(v) for k, v in (alpha_targets_by_class or {}).items() if v is not None}
+        self._alpha_min = float(alpha_min)
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        if trainer is None or not hasattr(trainer, 'callback_metrics'):
+            return
+        metrics = trainer.callback_metrics
+        # Iterate heads and check if any mapped class has a target
+        for h, cls_id in enumerate(self._head_class_ids):
+            if int(cls_id) not in self._targets:
+                continue
+            key = f"val_loss_head_{int(h)}"
+            if key not in metrics:
+                name = P.idx_to_cls.get(int(cls_id), str(int(cls_id)))
+                raise RuntimeError(f"AlphaTargetAdjustCallback expected metric '{key}' for class {name} but it was not logged.")
+            try:
+                val = float(metrics[key])
+            except Exception:
+                name = P.idx_to_cls.get(int(cls_id), str(int(cls_id)))
+                raise RuntimeError(f"AlphaTargetAdjustCallback metric '{key}' for class {name} is not numeric: {metrics[key]}")
+            target = float(self._targets[int(cls_id)])
+            if val <= target:
+                # Reduce alpha to alpha_min if higher; never increase
+                cur = self._alpha_by_class.get(int(cls_id))
+                if cur is None or float(cur) > self._alpha_min + 1e-12:
+                    name = P.idx_to_cls.get(int(cls_id), str(int(cls_id)))
+                    before = float(cur) if cur is not None else None
+                    self._alpha_by_class[int(cls_id)] = float(self._alpha_min)
+                    print(f"AlphaTargetAdjust: {name} alpha -> {self._alpha_min:.3f} (was {before}) due to {key}={val:.6f} <= target {target:.6f}")

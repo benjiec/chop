@@ -27,7 +27,6 @@ project_root = Path(__file__).parent.parent
 sys.path.append(str(project_root))
 
 from dna_learner.trainer import train
-from synthetic.start_detection.layer_analysis import LayerAnalyzer
 import argparse
 from datetime import datetime
 import numpy as np
@@ -122,7 +121,8 @@ def run_comprehensive_layer_analysis(model, val_loader, output_dir):
     analysis_dir = output_dir / "layer_analysis"
     analysis_dir.mkdir(exist_ok=True)
     
-    analyzer = LayerAnalyzer(model)
+    # Lazy import to avoid optional matplotlib dependency during tests
+    from synthetic.start_detection.layer_analysis import LayerAnalyzer
     analyzer.analyze_all(val_loader, analysis_dir, max_samples=20)
 
 

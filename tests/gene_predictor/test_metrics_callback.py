@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import TensorDataset, DataLoader
 
 from gene_predictor.metrics_callback import MetricsCallback
+from gene_predictor.metrics_callback import AlphaTargetAdjustCallback
 from pathlib import Path
 import gene_predictor.metrics_callback as mc
 from utils.metrics import event_based_generic_metrics_factory, event_based_brier_factory, SequenceResult
@@ -184,6 +185,35 @@ class TestMetricsCallback(unittest.TestCase):
         self.assertIn('val_f1', mod.logged)
         self.assertGreaterEqual(mod.logged['val_f1'], 0.0)
         self.assertLessEqual(mod.logged['val_f1'], 1.0)
+
+    def test_alpha_target_adjust_reduces_alpha_on_hit(self):
+        # Minimal fake trainer metrics with a per-head val loss
+        class DummyTrainer:
+            def __init__(self, metrics):
+                self.callback_metrics = metrics
+                self.current_epoch = 1
+        # Map heads -> classes
+        head_class_ids = [2, 4, 6, 7]
+        # Shared alpha dict
+        alpha_by_class = {2: 1.0, 4: 1.0, 6: 1.0, 7: 1.0}
+        # Targets: trigger class 2 when head 0 val loss <= 0.5
+        targets = {2: 0.5}
+        cb = AlphaTargetAdjustCallback(alpha_by_class=alpha_by_class, head_class_ids=head_class_ids, alpha_targets_by_class=targets, alpha_min=0.1)
+        # Prepare module stub with required API
+        class DummyModule:
+            def __init__(self):
+                self._param = torch.nn.Parameter(torch.zeros(1))
+            def parameters(self):
+                return iter([self._param])
+        mod = DummyModule()
+        # Case 1: loss below target -> reduce
+        trainer = DummyTrainer({'val_loss_head_0': 0.49})
+        cb.on_validation_epoch_end(trainer, mod)
+        self.assertAlmostEqual(alpha_by_class[2], 0.1, places=6)
+        # Case 2: ensure targeted head metric is present (strict mode); also log another head
+        trainer2 = DummyTrainer({'val_loss_head_0': 0.6, 'val_loss_head_1': 0.6})
+        cb.on_validation_epoch_end(trainer2, mod)
+        self.assertAlmostEqual(alpha_by_class[4], 1.0, places=6)
 
 
 if __name__ == '__main__':
