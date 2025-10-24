@@ -112,7 +112,7 @@ def print_event_metrics_report(
             tn_m = prob_metrics[cls_idx]['tn']['mean']*100
             tn_s = prob_metrics[cls_idx]['tn']['std']*100
             # Estimate min-prob to (tn_m/100)+2*(tn_s/100)
-            min_prob=round(tn_m+2*tn_s,2)
+            min_prob=round((tn_m/100)+2*(tn_s/100),2)
             # Equal Tail Robust Effect Size using medians and IQR: (median_tp - median_tn) / ((iqr_tp + iqr_tn)/2)
             ttp_med = prob_metrics[cls_idx]['tail']['tp']['median'] * 100
             ttp_iqr = prob_metrics[cls_idx]['tail']['tp']['iqr'] * 100

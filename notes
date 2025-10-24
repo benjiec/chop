@@ -196,3 +196,6 @@ PYTHONPATH=. python scripts/stream-add-dg.py \
   --win 50 \
   --temp 25 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-summarize.py \
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
