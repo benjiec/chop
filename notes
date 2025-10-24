@@ -147,24 +147,24 @@ PYTHONPATH=. python scripts/stream-add-targets.py \
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --win 20 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --win 100 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 20 \
+  --win 10 \
   --temp 25 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 100 \
+  --win 50 \
   --temp 25 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-random.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
@@ -178,21 +178,21 @@ PYTHONPATH=. python scripts/stream-add-targets.py \
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 20 \
-  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 100 \
-  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
-  --win 20 \
+  --win 10 \
   --temp 25 \
-  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
-  --win 100 \
+  --win 50 \
   --temp 25 \
-  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
