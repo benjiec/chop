@@ -22,6 +22,7 @@ from utils.metrics import event_based_generic_metrics_factory, event_based_brier
 from dna_learner.model import GenePredictorModule, create_base_config
 from gene_predictor.metrics_callback import MetricsCallback
 from gene_predictor.metrics_callback import DualMetricEarlyStopping
+from gene_predictor.metrics_callback import AlphaTargetAdjustCallback
 from utils.genome import AnnotatedGenomeDataset
 
 
@@ -62,6 +63,13 @@ def main():
     parser.add_argument('--stop-alpha', type=float, default=1.0, help='Alpha weight for STOP head (event-head-bce)')
     parser.add_argument('--dss-alpha', type=float, default=1.0, help='Alpha weight for DSS head (event-head-bce)')
     parser.add_argument('--ass-alpha', type=float, default=1.0, help='Alpha weight for ASS head (event-head-bce)')
+
+    # Optional alpha targets for event-head mode to reduce alpha to alpha_min
+    parser.add_argument('--start-alpha-target', type=float, default=None, help='Target val loss for START head to reduce alpha to min')
+    parser.add_argument('--stop-alpha-target', type=float, default=None, help='Target val loss for STOP head to reduce alpha to min')
+    parser.add_argument('--dss-alpha-target', type=float, default=None, help='Target val loss for DSS head to reduce alpha to min')
+    parser.add_argument('--ass-alpha-target', type=float, default=None, help='Target val loss for ASS head to reduce alpha to min')
+    parser.add_argument('--alpha-min', type=float, default=0.1, help='Minimum alpha to set when target is reached')
 
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
@@ -271,11 +279,21 @@ def main():
             metrics_cb = MetricsCallback(val_loader, margin_bp=margin_bp, calculate_metrics_fn=calc_metrics, compute_brier_fn=calc_brier, run_dir=output_dir,
                                          event_logits_conversion_fn=event_logits_conversion_fn, event_motifs_by_class=event_motifs_by_class, head_class_ids=head_class_ids,
                                          alpha_by_class=alpha_by_class)
+            # Optional alpha target adjustment callback
+            alpha_targets = {}
+            if args.start_alpha_target is not None:
+                alpha_targets[int(P.START)] = float(args.start_alpha_target)
+            if args.stop_alpha_target is not None:
+                alpha_targets[int(P.STOP)] = float(args.stop_alpha_target)
+            if args.dss_alpha_target is not None:
+                alpha_targets[int(P.DSS)] = float(args.dss_alpha_target)
+            if args.ass_alpha_target is not None:
+                alpha_targets[int(P.ASS)] = float(args.ass_alpha_target)
 
-            cbs = [
-                metrics_cb,
-                pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4),
-            ]
+            cbs = [metrics_cb]
+            if alpha_targets:
+                cbs.append(AlphaTargetAdjustCallback(alpha_by_class=alpha_by_class, head_class_ids=head_class_ids, alpha_targets_by_class=alpha_targets, alpha_min=float(args.alpha_min)))
+            cbs.append(pl.callbacks.EarlyStopping(monitor='val_loss', mode='min', patience=4))
             return cbs
 
         # Default: include F1 checkpoint and dual-metric early stopping

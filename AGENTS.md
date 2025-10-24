@@ -14,7 +14,7 @@ communicate messages with user.
 answer with possibilities and providing lots of text to read.
 
 5. Run unit tests using `scripts/run-unit-tests` whenever you update something
-not in the tests/ directory.
+not in the tests/ directory. Feel free to run this in the Sandbox setting.
 
 6. Please add new unit tests whenever you are adding new features. New tests
 should follow Python unittest module convention (e.g. subclass from
