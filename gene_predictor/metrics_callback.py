@@ -186,13 +186,25 @@ class MetricsCallback(pl.Callback):
                         cls_id = int(self._head_class_ids[head_idx])
                         if int(cls_id) not in per_class:
                             per_class[int(cls_id)] = {}
-                        per_class[int(cls_id)]['event_head_loss'] = float(mv)
+                        per_class[int(cls_id)]['loss'] = float(mv)
+                if isinstance(mk, str) and mk.startswith('val_loss_class_'):
+                    # map to components key name used elsewhere
+                    suffix = mk[len('val_'):]
+                    # Also store into per_class when mapping available
+                    try:
+                        cls_id = int(suffix.split('_')[-1])
+                    except Exception:
+                        cls_id = None
+                    if cls_id is not None:
+                        if int(cls_id) not in per_class:
+                            per_class[int(cls_id)] = {}
+                        per_class[int(cls_id)]['loss'] = float(mv)
 
         if self.verbose:
             for cls_idx, vals in per_class.items():
                 name = P.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
                 print(name,
-                      "%.4f" % vals.get('event_head_loss', 0.0),
+                      "%.4f" % vals.get('loss', 0.0),
                       "%d/%d-%d/%d" % (vals.get('pos_prob_mean', 0.0)*100, vals.get('pos_prob_std', 0.0)*100,
                                        vals.get('neg_prob_mean', 0.0*100), vals.get('neg_prob_std', 0.0)*100),
                       "%.4f" % vals.get('brier', 0.0),

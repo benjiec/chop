@@ -443,6 +443,8 @@ class GenePredictorModule(pl.LightningModule):
             key = str(k)
             if key.startswith('loss_head_') and not key.endswith('_weighted'):
                 self.log(f"val_{key}", float(v), prog_bar=False, on_step=False, on_epoch=True)
+            elif key.startswith('loss_class_') and not key.endswith('_weighted'):
+                self.log(f"val_{key}", float(v), prog_bar=False, on_step=False, on_epoch=True)
         
         # Collect batch results for metrics callback conversion later
         coll = self.validation_epoch_results
