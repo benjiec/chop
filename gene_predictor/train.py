@@ -198,6 +198,7 @@ def main():
             event_motifs_by_class,
             pos_weights=bce_pos_weight_map,
             neg_weights=bce_neg_weight_map,
+            alpha_weights=bce_alpha_weight_map,
             loss_window_margin_bp=margin_bp,
         )
 

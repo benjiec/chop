@@ -162,7 +162,7 @@ def event_based_ce_loss_factory(
     """
     normalized_motifs = normalize_event_motifs_map(event_motifs_by_class)
 
-    def event_based_ce_loss(sequences, targets, logits, *args, components_out: Dict[str, Any]):
+    def event_based_ce_loss(sequences, targets, logits, _, components_out: Dict[str, Any]):
         # sequences: (B, L) int tokens
         # targets: (B, L) long class ids
         # logits: (B, L, C)
@@ -220,6 +220,7 @@ def event_based_bce_loss_factory(
     *,
     pos_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     neg_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
+    alpha_weights: Optional[Union[Sequence[Optional[float]], Dict[Union[int, str], Optional[float]]]] = None,
     loss_window_margin_bp: Optional[int] = None,
 ):
     """
@@ -237,7 +238,7 @@ def event_based_bce_loss_factory(
     pos_vec = normalize_class_weight_mapping(pos_weights)
     neg_vec = normalize_class_weight_mapping(neg_weights)
 
-    def event_based_bce_loss(sequences, targets, logits, *args, components_out: Dict[str, Any]):
+    def event_based_bce_loss(sequences, targets, logits, _, components_out: Dict[str, Any]):
         device = logits.device
         B, L = sequences.shape
         C = logits.size(-1)
@@ -285,16 +286,24 @@ def event_based_bce_loss_factory(
             pos_w = default_pos[int(cls)]
             neg_w = default_neg[int(cls)]
             token_w = torch.where(y_c > 0.5, pos_w, neg_w)  # (B, L)
+            # alpha weights to balance between classes
+            alpha_w = alpha_weights[int(cls)] if alpha_weights and int(cls) in alpha_weights else 1
 
             # BCE
             eps = 1e-12
             bce = -(y_c * torch.log(torch.clamp(p_c, min=eps)) + (1.0 - y_c) * torch.log(torch.clamp(1.0 - p_c, min=eps)))
             w = token_w * mask.to(token_w.dtype)
             denom = torch.clamp(w.sum(), min=1.0)
-            total_weighted_loss = total_weighted_loss + (bce * w).sum() / denom
-            total_weight = total_weight + 1.0
+            cls_loss = (bce * w).sum() / denom
 
-        # Average over classes with events
+            total_weighted_loss = total_weighted_loss + cls_loss * alpha_w
+            total_weight = total_weight + alpha_w
+
+            if components_out is not None:
+                key = f"loss_class_{int(cls)}"
+                components_out[key] = cls_loss
+
+        # Weighted average over classes with events
         loss = total_weighted_loss / torch.clamp(total_weight, min=1.0)
 
         if components_out is not None:
