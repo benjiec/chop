@@ -579,7 +579,7 @@ class GenePredictorModule(pl.LightningModule):
         
         comp = {}
         # Call custom loss always with event_logits (may be None)
-        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, components_out=comp)
+        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
         
         # Log metrics - average across epoch not just last batch
         self.log('train_loss', loss, prog_bar=True, on_step=False, on_epoch=True)
@@ -595,7 +595,7 @@ class GenePredictorModule(pl.LightningModule):
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
         
         comp = {}
-        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, components_out=comp)
+        loss = self.custom_loss_fn(sequences, targets, logits, event_logits, comp)
         
         # Log metrics - average across epoch not just last batch
         self.log('val_loss', loss, prog_bar=True, on_step=False, on_epoch=True)

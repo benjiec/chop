@@ -68,7 +68,7 @@ class TestGenePredictorTrainer(unittest.TestCase):
                 cb_gen,
                 monitor_metric='val_loss',
                 monitor_mode='min',
-                custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
+                custom_loss_fn=lambda s,t,l,ev,comp: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=cfg.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=comp),
             )
             self.assertIsNotNone(model)
             self.assertTrue(hasattr(val_loader, '__iter__'))
@@ -114,7 +114,7 @@ class TestTrainerSamplerIntegration(unittest.TestCase):
                 additional_callback_generator=lambda v: [],
                 monitor_metric='val_loss',
                 monitor_mode='min',
-                custom_loss_fn=lambda s,t,l,ev,c: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=c),
+                custom_loss_fn=lambda s,t,l,ev,comp: adjusted_ce_entropy_loss(l, t, loss_window_margin_bp=0, class_weights=config.get('loss',{}).get('class_weights'), entropy_lambda=0.0, fp_beta=0.0, components_out=comp),
             )
             self.assertIsNotNone(model)
             self.assertTrue(hasattr(val_loader, '__iter__'))
