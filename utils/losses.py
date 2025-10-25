@@ -162,7 +162,7 @@ def event_based_ce_loss_factory(
     """
     normalized_motifs = normalize_event_motifs_map(event_motifs_by_class)
 
-    def event_based_ce_loss(sequences, targets, logits, components_out: Dict[str, Any]):
+    def event_based_ce_loss(sequences, targets, logits, *args, components_out: Dict[str, Any]):
         # sequences: (B, L) int tokens
         # targets: (B, L) long class ids
         # logits: (B, L, C)
@@ -237,7 +237,7 @@ def event_based_bce_loss_factory(
     pos_vec = normalize_class_weight_mapping(pos_weights)
     neg_vec = normalize_class_weight_mapping(neg_weights)
 
-    def event_based_bce_loss(sequences, targets, logits, components_out: Dict[str, Any]):
+    def event_based_bce_loss(sequences, targets, logits, *args, components_out: Dict[str, Any]):
         device = logits.device
         B, L = sequences.shape
         C = logits.size(-1)
