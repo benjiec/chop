@@ -500,6 +500,128 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
             self.assertEqual(x_full.shape[0], 50)
             self.assertEqual(y_full.shape[0], 50)
 
+    def test_windowing_returns_aux_when_present(self):
+        # Build a small contig and an aux stream with a simple channel (e.g., ones)
+        seq_list = list('N' * 24)
+        seq_list[3:6] = list('ATG')
+        seq_list[18:21] = list('TAA')
+        fasta = f">ctgA\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctgA\tg\t4\t21\t4\t21\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "s.fna.gz"
+            tsv_path = fp / "a.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            # Create a simple stream: one channel of ones per base
+            from utils.stream import NumericalStream
+            stream_path = fp / 'aux.pkl.gz'
+            ns = NumericalStream.create_empty(str(stream_path))
+            def gen(seq: str):
+                return np.ones(len(seq), dtype=np.float32)
+            ns.add_channel(str(fasta_path), 'ones', gen)
+            ns.save()
+
+            # Windowed dataset should return (x, y, aux)
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=8, stride=8, random_prefix_ns=False,
+                                        aux_stream_path=str(stream_path), aux_normalize=False)
+            self.assertGreater(len(ds), 0)
+            x0, y0, a0 = ds[0]
+            self.assertIsNotNone(a0)
+            self.assertEqual(a0.shape[0], x0.shape[0])
+            self.assertEqual(a0.shape[1], 1)  # single channel
+            # Values should be ones (no normalization)
+            self.assertTrue(np.allclose(a0, 1.0))
+
+    def test_windowing_aux_alignment_no_prefix(self):
+        # Sequence length 24, full exon so dataset is valid
+        seq_list = list('N' * 24)
+        seq_list[3:6] = list('ATG')
+        seq_list[18:21] = list('TAA')
+        fasta = f">ctgW\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctgW\tg\t4\t21\t4\t21\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "w.fna.gz"
+            tsv_path = fp / "w.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            # Build a random channel to better detect any slicing shift
+            from utils.stream import NumericalStream
+            stream_path = fp / 'aux_rand.pkl.gz'
+            ns = NumericalStream.create_empty(str(stream_path))
+            rng = np.random.RandomState(12345)
+            def gen_rand(seq: str):
+                return rng.rand(len(seq)).astype(np.float32)
+            ns.add_channel(str(fasta_path), 'rand', gen_rand)
+            ns.save()
+
+            win = 8
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=win, stride=8,
+                                        random_prefix_ns=False,
+                                        aux_stream_path=str(stream_path), aux_normalize=False)
+            self.assertGreater(len(ds), 0)
+            # For each window, aux slice must match padded-per-contig aux_by_contig slice
+            for wpos, (cid, s, e) in enumerate(ds.windows):
+                x, y, a = ds[wpos]
+                a_full = ds.aux_by_contig[cid]
+                expected = a_full[s:e, :]
+                # Pad to fixed window length
+                if (e - s) < win:
+                    pad = win - (e - s)
+                    C = expected.shape[1]
+                    expected = np.concatenate([expected, np.zeros((pad, C), dtype=expected.dtype)], axis=0)
+                np.testing.assert_array_equal(a, expected)
+
+    def test_windowing_aux_alignment_with_random_prefix(self):
+        # Same as above but enable random prefix; alignment must still hold
+        seq_list = list('N' * 24)
+        seq_list[3:6] = list('ATG')
+        seq_list[18:21] = list('TAA')
+        fasta = f">ctgWP\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctgWP\tg\t4\t21\t4\t21\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "wp.fna.gz"
+            tsv_path = fp / "wp.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            from utils.stream import NumericalStream
+            stream_path = fp / 'aux_rand2.pkl.gz'
+            ns = NumericalStream.create_empty(str(stream_path))
+            rng = np.random.RandomState(54321)
+            def gen_rand(seq: str):
+                return rng.rand(len(seq)).astype(np.float32)
+            ns.add_channel(str(fasta_path), 'rand', gen_rand)
+            ns.save()
+
+            win = 8
+            ds = AnnotatedGenomeDataset(str(fasta_path), str(tsv_path), window=win, stride=8,
+                                        random_prefix_ns=True,
+                                        aux_stream_path=str(stream_path), aux_normalize=False)
+            self.assertGreater(len(ds), 0)
+            for wpos, (cid, s, e) in enumerate(ds.windows):
+                x, y, a = ds[wpos]
+                a_full = ds.aux_by_contig[cid]
+                expected = a_full[s:e, :]
+                if (e - s) < win:
+                    pad = win - (e - s)
+                    C = expected.shape[1]
+                    expected = np.concatenate([expected, np.zeros((pad, C), dtype=expected.dtype)], axis=0)
+                np.testing.assert_array_equal(a, expected)
+
     def test_windowing_pads_last_short_window_to_fixed_length(self):
         seq_list = list('N' * 30)
         seq_list[0:3] = list('ATG')

@@ -45,6 +45,8 @@ def main():
     parser.add_argument('--accumulate-grad-batches', type=int, default=1, help='Accumulate gradients over this many steps')
     parser.add_argument('--boost-start-stop', action='store_true')
     parser.add_argument('--aux-stream', type=str, default=None, help='Path to aux stream pickle file (per-sequence [L,C] features)')
+    parser.add_argument('--aux-normalize', dest='aux_normalize', action='store_true', default=True, help='Normalize aux stream channels (z-score)')
+    parser.add_argument('--disable-aux-normalize', dest='aux_normalize', action='store_false', help='Disable aux stream normalization')
 
     # class weights
     parser.add_argument('--disable-class-weights-for-loss', action='store_true', help='Disable class weights in loss function (still used for dataset)')
@@ -237,6 +239,7 @@ def main():
             num_windows=args.num_windows,
             class_weights=class_weights,
             aux_stream_path=args.aux_stream,
+            aux_normalize=bool(args.aux_normalize),
         )
     else:
         if args.boost_start_stop:
@@ -252,6 +255,7 @@ def main():
             class_weights=class_weights,
             window_boost_classes = window_boost_classes,
             aux_stream_path=args.aux_stream,
+            aux_normalize=bool(args.aux_normalize),
         )
 
     # Create output directory
