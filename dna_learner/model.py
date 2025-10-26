@@ -420,7 +420,7 @@ class GenePredictorModel(nn.Module):
                     dropout=aux_cross_attn_dropout,
                     relpos_max_distance=int(aux_relpos_max_distance),
                     init_gate=float(aux_init_gate),
-                    diag_bias_init=6.0,
+                    diag_bias_init=8.0,
                 ) for _ in range(self.aux_cross_attn_layers)
             ])
         else:
