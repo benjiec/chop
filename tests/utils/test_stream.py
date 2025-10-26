@@ -5,6 +5,8 @@ import tempfile
 import pickle
 from pathlib import Path
 import numpy as np
+import sys
+from importlib.machinery import SourceFileLoader
 
 from utils.genome import AnnotatedGenomeDataset
 from utils.stream import NumericalStream, build_gc_generator
@@ -191,6 +193,63 @@ class TestNumericalStreamIntegration(unittest.TestCase):
             for sid in ['ctg1', 'ctg2']:
                 arr = ns2.get(sid)
                 self.assertEqual(arr.shape, (len(seqs[sid]), 1))
+
+
+class TestStreamAddTargetsScript(unittest.TestCase):
+    def _write_simple_fasta(self, path: Path, seqs):
+        with open(path, 'w') as f:
+            for sid, s in seqs.items():
+                f.write(f">{sid}\n")
+                f.write(s + "\n")
+
+    def _write_simple_tsv(self, path: Path, rows):
+        with open(path, 'w') as f:
+            f.write("sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n")
+            for r in rows:
+                f.write("\t".join(map(str, r)) + "\n")
+
+    def test_stream_add_targets_end_to_end(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            # Build a simple gene: ATG.....TAA over full length
+            sid = 'contig1'
+            seq = 'T'*10+'ATG'+'CTC'*4+'GTTTTTAG'+'GGG'+'TAA'+'C'*50
+            fna = td / 'seq.fa'
+            self._write_simple_fasta(fna, {sid: seq})
+            tsv = td / 'ann.tsv'
+            # 1-based inclusive
+            rows = [
+              (sid, 'g1', 11, 39, 11, 25, '+'),
+              (sid, 'g1', 11, 39, 34, 39, '+'),
+            ]
+            self._write_simple_tsv(tsv, rows)
+
+            # Target stream path
+            pkl = td / 'stream.pkl.gz'
+
+            # Load and run the script via importlib
+            script_path = str((Path(__file__).parents[2] / 'scripts' / 'stream-add-targets.py').resolve())
+            mod = SourceFileLoader('stream_add_targets', script_path).load_module()
+            argv_backup = sys.argv
+            try:
+                sys.argv = ['stream-add-targets.py', '--stream', str(pkl), '--fna', str(fna), '--tsv', str(tsv)]
+                mod.main()
+            finally:
+                sys.argv = argv_backup
+
+            # Verify stream has the target channel and matches dataset targets
+            from utils.stream import NumericalStream
+            ns = NumericalStream(str(pkl))
+            self.assertIn('target', ns.channels)
+            arr = ns.get(sid)
+            self.assertEqual(arr.shape[0], len(seq))
+            # Rebuild dataset to compare
+            from utils.genome import AnnotatedGenomeDataset
+            ds = AnnotatedGenomeDataset(str(fna), str(tsv), random_prefix_ns=False)
+            # Only one contig
+            tgt = ds.targets[0].astype(np.float32)
+            # Only channel should be target
+            np.testing.assert_array_equal(arr[:, 0], tgt)
 
 
 class TestViennaDG(unittest.TestCase):

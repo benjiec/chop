@@ -134,7 +134,9 @@ class NumericalStream:
         """
         path_obj = Path(pickle_path)
         path_obj.parent.mkdir(parents=True, exist_ok=True)
-        with open(path_obj, 'wb') as f:
+        is_gz = any(suf == '.gz' for suf in path_obj.suffixes)
+        opener = gzip.open if is_gz else open
+        with opener(path_obj, 'wb') as f:
             pickle.dump([], f)
         return NumericalStream(str(path_obj))
 
