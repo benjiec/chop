@@ -74,7 +74,7 @@ def main():
     # required DSS motifs choice
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based loss: standard or dino')
     # loss selection
-    parser.add_argument('--loss-type', type=str, default='event-ce', choices=['event-ce', 'event-bce', 'event-head-bce'],
+    parser.add_argument('--loss-type', type=str, default='event-head-bce', choices=['event-ce', 'event-bce', 'event-head-bce'],
                         help='Loss type: event-ce (masked cross-entropy), event-bce (masked BCE), or event-head-bce (masked BCE on separate event heads)')
 
     args = parser.parse_args()
