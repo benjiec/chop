@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import torch
+import numpy as np
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split
 from pathlib import Path
@@ -45,7 +46,12 @@ def _triple_collate(batch):
         # Replace Nones with zeros of appropriate shape before collate, then mask downstream if needed
         # Infer first non-None tensor shape
         ref = next(a for a in auxs if a is not None)
-        zeros = torch.zeros_like(ref)
+        if isinstance(ref, torch.Tensor):
+            zeros = torch.zeros_like(ref)
+        elif isinstance(ref, np.ndarray):
+            zeros = np.zeros_like(ref)
+        else:
+            raise TypeError(f"Unsupported aux type for collate: {type(ref)}")
         aux_norm = [zeros if a is None else a for a in auxs]
         aux_stream = torch.utils.data.default_collate(aux_norm)
     return sequences, targets, aux_stream

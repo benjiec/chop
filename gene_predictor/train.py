@@ -142,6 +142,17 @@ def main():
 
     config.setdefault('custom', {})
     config['custom'].setdefault('loss', {})
+    # Auto-enable aux cross-attention defaults if --aux-stream provided
+    if args.aux_stream:
+        mc = config.setdefault('model', {})
+        cc = config.setdefault('custom', {})
+        # Only set if not already specified
+        mc.setdefault('enable_aux_stream', True)
+        mc.setdefault('aux_cross_attn_layers', 1)
+        mc.setdefault('aux_cross_attn_heads', 4)
+        mc.setdefault('aux_cross_attn_dropout', 0.1)
+        mc.setdefault('aux_relpos_max_distance', 256)
+        mc.setdefault('aux_init_gate', -2.0)
 
     ce_weight_map = None
     bce_pos_weight_map = None
@@ -224,7 +235,8 @@ def main():
             window=args.max_seq_length,
             stride=args.stride,
             num_windows=args.num_windows,
-            class_weights=class_weights
+            class_weights=class_weights,
+            aux_stream_path=args.aux_stream,
         )
     else:
         if args.boost_start_stop:

@@ -410,6 +410,7 @@ class GenePredictorModel(nn.Module):
             # Aux encoder is channel-agnostic; instantiate lazily at first forward when C is known.
             self._aux_encoder_in_dim: Optional[int] = None
             self.aux_encoder: Optional[AuxStreamEncoder] = None
+            print("Building cross attention mechanism:", self.aux_cross_attn_layers, "layers,", self.aux_cross_attn_heads, "heads")
             self.cross_attn_blocks = nn.ModuleList([
                 BiasedGlobalCrossAttention(
                     d_model=d_model,
@@ -454,12 +455,19 @@ class GenePredictorModel(nn.Module):
 
         # Optional aux-stream fusion via biased-global cross-attention
         if self.enable_aux_stream and (self.cross_attn_blocks is not None) and (self.aux_cross_attn_layers > 0) and (aux_stream is not None):
+
+            # Ensure aux tensor is on same device as model hidden states
+            if aux_stream.device != x.device:
+                aux_stream = aux_stream.to(x.device)
             # Lazy-init aux encoder based on channel count C
             if self.aux_encoder is None:
                 if aux_stream.dim() != 3:
                     raise ValueError("aux_stream must have shape [B, L, C]")
                 self._aux_encoder_in_dim = int(aux_stream.size(-1))
+                print("Building aux stream encoder")
                 self.aux_encoder = AuxStreamEncoder(in_channels=self._aux_encoder_in_dim, d_model=int(x.size(-1)), dropout=self.dropout.p)
+                # Ensure the lazily-created module is on the same device as the model
+                self.aux_encoder = self.aux_encoder.to(x.device)
             aux_repr = self.aux_encoder(aux_stream)
             for block in self.cross_attn_blocks:
                 x = block(x, aux_repr, key_padding_mask=aux_key_padding_mask)
@@ -573,6 +581,9 @@ class GenePredictorModule(pl.LightningModule):
         if not (isinstance(batch, (list, tuple)) and len(batch) == 3):
             raise ValueError("Batch must be a 3-tuple: (sequences, targets, aux_stream)")
         sequences, targets, aux_stream = batch
+        # Ensure aux tensor follows sequences device
+        if isinstance(aux_stream, torch.Tensor) and aux_stream.device != sequences.device:
+            aux_stream = aux_stream.to(sequences.device)
         extras: Dict[str, Any] = {}
         logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
@@ -590,6 +601,8 @@ class GenePredictorModule(pl.LightningModule):
         if not (isinstance(batch, (list, tuple)) and len(batch) == 3):
             raise ValueError("Batch must be a 3-tuple: (sequences, targets, aux_stream)")
         sequences, targets, aux_stream = batch
+        if isinstance(aux_stream, torch.Tensor) and aux_stream.device != sequences.device:
+            aux_stream = aux_stream.to(sequences.device)
         extras: Dict[str, Any] = {}
         logits = self.model(sequences, extras=extras, return_event_logits='event_logits', aux_stream=aux_stream)
         event_logits = extras['event_logits'] if 'event_logits' in extras else None
