@@ -258,15 +258,16 @@ class AuxStreamEncoder(nn.Module):
 
     def __init__(self, in_channels: int, d_model: int, dropout: float = 0.1):
         super().__init__()
-        self.norm = nn.LayerNorm(in_channels)
+        # Normalize after projection so single-channel inputs aren't zeroed out
         self.proj = nn.Linear(in_channels, d_model)
+        self.norm = nn.LayerNorm(d_model)
         self.act = nn.GELU()
         self.drop = nn.Dropout(dropout)
 
     def forward(self, aux_stream: torch.Tensor) -> torch.Tensor:
         # aux_stream: (B, L, C)
-        x = self.norm(aux_stream)
-        x = self.proj(x)
+        x = self.proj(aux_stream)
+        x = self.norm(x)
         x = self.act(x)
         x = self.drop(x)
         return x  # (B, L, D)
@@ -281,7 +282,7 @@ class BiasedGlobalCrossAttention(nn.Module):
     - Adds gated residual: output = x + sigmoid(gate) * attn_out
     """
 
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1, relpos_max_distance: int = 256, init_gate: float = -2.0):
+    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1, relpos_max_distance: int = 256, init_gate: float = -2.0, diag_bias_init: float = 0.0):
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError(f"d_model ({d_model}) must be divisible by n_heads ({n_heads}) for cross-attn")
@@ -300,6 +301,9 @@ class BiasedGlobalCrossAttention(nn.Module):
 
         K = int(self.relpos_max_distance)
         self.relpos_bias = nn.Parameter(torch.zeros(self.n_heads, 2 * K + 1))
+        if float(diag_bias_init) != 0.0:
+            with torch.no_grad():
+                self.relpos_bias[:, K] = float(diag_bias_init)
         # Gate initialized near zero contribution
         self.gate = nn.Parameter(torch.tensor(float(init_gate)))
 
@@ -335,9 +339,7 @@ class BiasedGlobalCrossAttention(nn.Module):
         attn_logits = attn_logits + bias.unsqueeze(0)
 
         if key_padding_mask is not None:
-            # Mask: True for keep, False for pad → we need to -inf where pad
-            # key_padding_mask: [B,Lk] with True=valid expected? Our datasets often use Bool mask; assume True means keep
-            # Build broadcast mask [B,1,1,Lk]
+            # Expect mask True=valid positions, False=pad; broadcast to [B,1,1,Lk]
             keep = key_padding_mask.to(dtype=torch.bool).unsqueeze(1).unsqueeze(1)
             attn_logits = attn_logits.masked_fill(~keep, float('-inf'))
 
@@ -385,7 +387,7 @@ class GenePredictorModel(nn.Module):
         self.max_seq_length = max_seq_length
         self.num_event_heads = int(num_event_heads) if num_event_heads is not None else 0
         self.enable_aux_stream = bool(enable_aux_stream)
-        
+
         # DNA embedding
         self.embedding = DNAEmbedding(vocab_size=vocab_size, d_model=d_model, max_seq_length=max_seq_length, kmer_size=kmer_size)
         
@@ -418,6 +420,7 @@ class GenePredictorModel(nn.Module):
                     dropout=aux_cross_attn_dropout,
                     relpos_max_distance=int(aux_relpos_max_distance),
                     init_gate=float(aux_init_gate),
+                    diag_bias_init=6.0,
                 ) for _ in range(self.aux_cross_attn_layers)
             ])
         else:
@@ -454,11 +457,12 @@ class GenePredictorModel(nn.Module):
         x = self.dropout(x)
 
         # Optional aux-stream fusion via biased-global cross-attention
-        if self.enable_aux_stream and (self.cross_attn_blocks is not None) and (self.aux_cross_attn_layers > 0) and (aux_stream is not None):
+        if self.enable_aux_stream and (aux_stream is not None):
 
             # Ensure aux tensor is on same device as model hidden states
             if aux_stream.device != x.device:
                 aux_stream = aux_stream.to(x.device)
+
             # Lazy-init aux encoder based on channel count C
             if self.aux_encoder is None:
                 if aux_stream.dim() != 3:
@@ -469,8 +473,11 @@ class GenePredictorModel(nn.Module):
                 # Ensure the lazily-created module is on the same device as the model
                 self.aux_encoder = self.aux_encoder.to(x.device)
             aux_repr = self.aux_encoder(aux_stream)
-            for block in self.cross_attn_blocks:
-                x = block(x, aux_repr, key_padding_mask=aux_key_padding_mask)
+            # Do not infer mask from aux content; zeros can be valid class indices
+            key_mask = aux_key_padding_mask.to(x.device) if isinstance(aux_key_padding_mask, torch.Tensor) else None
+            if (self.cross_attn_blocks is not None) and (self.aux_cross_attn_layers > 0):
+                for block in self.cross_attn_blocks:
+                    x = block(x, aux_repr, key_padding_mask=key_mask)
 
         # Determine what to return
         want_attention_key: Optional[str] = None
@@ -544,9 +551,9 @@ class GenePredictorModule(pl.LightningModule):
             enable_aux_stream=bool(model_config.get('enable_aux_stream', False)),
             aux_cross_attn_layers=int(model_config.get('aux_cross_attn_layers', 0) or 0),
             aux_cross_attn_heads=(int(model_config.get('aux_cross_attn_heads')) if model_config.get('aux_cross_attn_heads') is not None else None),
-            aux_cross_attn_dropout=float(model_config.get('aux_cross_attn_dropout', 0.1)),
+            aux_cross_attn_dropout=float(model_config.get('aux_cross_attn_dropout', 0.0)),
             aux_relpos_max_distance=int(model_config.get('aux_relpos_max_distance', 256)),
-            aux_init_gate=float(model_config.get('aux_init_gate', -2.0)),
+            aux_init_gate=float(model_config.get('aux_init_gate', 1.0))
         )
 
         # Loss function configuration (class weights remain in config for datasets/metrics)

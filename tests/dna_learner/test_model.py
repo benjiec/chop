@@ -723,3 +723,16 @@ class TestModuleForwardAPI(unittest.TestCase):
         # Validation with dict batch
         loss2 = mod.validation_step((x, y, aux), 0)
         self.assertTrue(torch.is_tensor(loss2))
+
+
+class TestAuxStreamEncoderNormalization(unittest.TestCase):
+    def test_single_channel_not_zeroed(self):
+        B, L, C = 1, 4, 1
+        aux = torch.tensor([[[0.0], [1.0], [0.0], [1.0]]], dtype=torch.float32)
+        enc = AuxStreamEncoder(in_channels=C, d_model=16, dropout=0.0)
+        enc.eval()
+        out = enc(aux)  # [B,L,D]
+        # Rows corresponding to different inputs should differ
+        self.assertFalse(torch.allclose(out[0, 0], out[0, 1]))
+        # Output should not be all zeros
+        self.assertGreater(torch.abs(out).sum().item(), 0.0)
