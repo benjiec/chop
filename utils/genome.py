@@ -332,6 +332,7 @@ class AnnotatedGenomeDataset:
                 if int(ns.get(sid).shape[0]) != int(orig):
                     raise ValueError(f"aux stream length mismatch for {sid}: aux={int(ns.get(sid).shape[0])} vs original_fasta={int(orig)}")
             if self.aux_normalize:
+                print("Normalizing aux stream")
                 ns.normalize()
             self._num_stream = ns
             self._has_any_aux = True

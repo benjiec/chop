@@ -40,20 +40,22 @@ def print_event_metrics_report(
         GenePredictionClass.DSS,
         GenePredictionClass.ASS,
     ),
+    summary_only = False
 ) -> None:
     brier_overall = metrics.get('brier_overall', 0.0)
     brier_by_class = metrics.get('brier_by_class', {})
     generic = metrics.get('generic', {})
     prob_metrics = metrics.get('prob_metrics', {})
 
-    print(f"Brier (overall): {float(brier_overall):.4f}")
-    if brier_by_class:
-        print("\nBrier by class:")
-        for cls_idx in sorted(brier_by_class.keys()):
-            name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-            print(f"  {name:>10s}: {float(brier_by_class[cls_idx]):.4f}")
+    if summary_only is False:
+        print(f"Brier (overall): {float(brier_overall):.4f}")
+        if brier_by_class:
+            print("\nBrier by class:")
+            for cls_idx in sorted(brier_by_class.keys()):
+                name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+                print(f"  {name:>10s}: {float(brier_by_class[cls_idx]):.4f}")
 
-    if generic:
+    if generic and summary_only is False:
         print("\nPer-class metrics:")
         for cls_idx in sorted(generic.keys()):
             name = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(cls_idx))
@@ -63,45 +65,47 @@ def print_event_metrics_report(
                 f"Sensitivity={m['sensitivity']:.1%} Precision={m['precision']:.1%} Specificity={m['specificity']:.1%}"
             )
 
-    print("\nEvent-only probability distribution metrics (decoder span-mean, aggregated):")
-    for cls_idx in classes_for_beta:
-        cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
-        fits = prob_metrics.get(int(cls_idx)) if isinstance(prob_metrics, dict) else None
-        if fits:
-            tp = fits['tp']
-            tn = fits['tn']
-            tail = fits.get('tail', {})
-            print(
-                f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} "
-                f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f}) median={tp.get('median',0.0):.4f} iqr={tp.get('iqr',0.0):.4f}"
-            )
-            print(
-                f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} "
-                f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f}) median={tn.get('median',0.0):.4f} iqr={tn.get('iqr',0.0):.4f}"
-            )
-            if tail and int(tail.get('n', 0)) > 0:
-                n = int(tail.get('n', 0))
-                tp_tail = tail.get('tp', {})
-                tn_tail = tail.get('tn', {})
-                # Recompute robust on reported med/iqr for display consistency
-                tp_med = float(tp_tail.get('median', 0.0))
-                tp_iqr = float(tp_tail.get('iqr', 0.0))
-                tn_med = float(tn_tail.get('median', 0.0))
-                tn_iqr = float(tn_tail.get('iqr', 0.0))
-                den = (tp_iqr + tn_iqr) / 2.0 if (tp_iqr > 0.0 or tn_iqr > 0.0) else 0.0
-                tres = (tp_med - tn_med) / den if den > 0.0 else 0.0
-                tauc = float(tail.get('auc', 0.0))
+    if summary_only is False:
+        print("\nEvent-only probability distribution metrics (decoder span-mean, aggregated):")
+        for cls_idx in classes_for_beta:
+            cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
+            fits = prob_metrics.get(int(cls_idx)) if isinstance(prob_metrics, dict) else None
+            if fits:
+                tp = fits['tp']
+                tn = fits['tn']
+                tail = fits.get('tail', {})
                 print(
-                    f"    tails (equal count): n={n} tp_tail(med/iqr)={tp_med:.4f}/{tp_iqr:.4f} "
-                    f"tn_tail(med/iqr)={tn_med:.4f}/{tn_iqr:.4f} robust={tres:.2f} auc={tauc:.3f}"
+                    f"  {cname:>5s} TP: n={int(tp['n'])} mean={tp['mean']:.4f} std={tp['std']:.4f} "
+                    f"beta(alpha={tp['beta_alpha']:.2f}, beta={tp['beta_beta']:.2f}) median={tp.get('median',0.0):.4f} iqr={tp.get('iqr',0.0):.4f}"
                 )
-        else:
-            print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
-            print(f"  {cname:>5s} TN: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
+                print(
+                    f"  {cname:>5s} TN: n={int(tn['n'])} mean={tn['mean']:.4f} std={tn['std']:.4f} "
+                    f"beta(alpha={tn['beta_alpha']:.2f}, beta={tn['beta_beta']:.2f}) median={tn.get('median',0.0):.4f} iqr={tn.get('iqr',0.0):.4f}"
+                )
+                if tail and int(tail.get('n', 0)) > 0:
+                    n = int(tail.get('n', 0))
+                    tp_tail = tail.get('tp', {})
+                    tn_tail = tail.get('tn', {})
+                    # Recompute robust on reported med/iqr for display consistency
+                    tp_med = float(tp_tail.get('median', 0.0))
+                    tp_iqr = float(tp_tail.get('iqr', 0.0))
+                    tn_med = float(tn_tail.get('median', 0.0))
+                    tn_iqr = float(tn_tail.get('iqr', 0.0))
+                    den = (tp_iqr + tn_iqr) / 2.0 if (tp_iqr > 0.0 or tn_iqr > 0.0) else 0.0
+                    tres = (tp_med - tn_med) / den if den > 0.0 else 0.0
+                    tauc = float(tail.get('auc', 0.0))
+                    print(
+                        f"    tails (equal count): n={n} tp_tail(med/iqr)={tp_med:.4f}/{tp_iqr:.4f} "
+                        f"tn_tail(med/iqr)={tn_med:.4f}/{tn_iqr:.4f} robust={tres:.2f} auc={tauc:.3f}"
+                    )
+            else:
+                print(f"  {cname:>5s} TP: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
+                print(f"  {cname:>5s} TN: n=0 mean=0.0000 std=0.0000 beta(alpha=0.00, beta=0.00)")
 
     if generic and prob_metrics and brier_by_class:
-        import math
-        print("\nSummary\ncls,sen/pre,brier,tp_tail_med/iqr-tn_tail_med/iqr,tail_robust,tn_m+2*tn_s")
+        if summary_only is False:
+            print("\nSummary\n")
+        print("cls,sen/pre,brier,tp_tail_med/iqr-tn_tail_med/iqr,tail_robust,tn_m+2*tn_s")
         for cls_idx in classes_for_beta:
             cname = GenePredictionClass.idx_to_cls.get(int(cls_idx), str(int(cls_idx)))
             sen = generic[cls_idx]['sensitivity'] * 100

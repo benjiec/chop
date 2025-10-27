@@ -30,11 +30,10 @@ scripts/predict-layout-aux GCF_002042975.1 253 gene_predictor/gene_predictor_run
 PYTHONPATH=. python gene_predictor/predict_and_analyze_inspect.py \
   --fna-fn data/GCF_002042975.1_round0_test_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_test_annotations.tsv  \
   --aux-stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz \
-  --write-decoder-input-pkl \
   --dss-motifs standard \
   --num-contigs 20 \
-  --run-dir gene_predictor/gene_predictor_run_20250930_202314 \
-  --model-path model_epoch=22_val_f1=0.713.ckpt
+  --run-dir gene_predictor/gene_predictor_run_20251026_212218 \
+  --model-path model_epoch=03_val_loss=0.017.ckpt
 
 # additional flags to look at more cross attention metrics
   --channel-ablation
