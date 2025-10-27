@@ -10,6 +10,9 @@ PYTHONPATH=. python gene_predictor/train.py \
   --dss-weight 2 --dss-neg-weight 2 --ass-weight 2 --ass-neg-weight 2 \
   --start-alpha 1 --stop-alpha 2 --dss-alpha 3 --ass-alpha 3
 
+# add for cross attention
+  --aux-stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
+
 PYTHONPATH=. python gene_predictor/list-class-windows.py --fna-fn data/GCF_002042975.1_round0_train_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_train_annotations.tsv \
   --max-seq-length 1000 --num-windows 1000 --class DSS
 
@@ -21,7 +24,21 @@ PYTHONPATH=. python gene_predictor/window_validation.py --fna-fn data/GCF_002042
 
 # prediction using trained model
 
-scripts/predict-layout GCF_002042975.1 253 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt
+scripts/predict-layout GCF_002042975.1 253 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt standard
+scripts/predict-layout-aux GCF_002042975.1 253 gene_predictor/gene_predictor_run_20250930_202314 model_epoch=22_val_f1=0.713.ckpt standard thermo
+
+PYTHONPATH=. python gene_predictor/predict_and_analyze_inspect.py \
+  --fna-fn data/GCF_002042975.1_round0_test_query.fna.gz --tsv-fn data/GCF_002042975.1_round0_test_annotations.tsv  \
+  --aux-stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz \
+  --write-decoder-input-pkl \
+  --dss-motifs standard \
+  --num-contigs 20 \
+  --run-dir gene_predictor/gene_predictor_run_20250930_202314 \
+  --model-path model_epoch=22_val_f1=0.713.ckpt
+
+# additional flags to look at more cross attention metrics
+  --channel-ablation
+  --grad-attr
 
 
 # viterbi decoder
