@@ -153,9 +153,9 @@ def main():
         # Only set if not already specified
         mc.setdefault('enable_aux_stream', True)
         mc.setdefault('aux_cross_attn_layers', 2)
-        mc.setdefault('aux_cross_attn_heads', 4)
+        mc.setdefault('aux_cross_attn_heads', 8)
         mc.setdefault('aux_cross_attn_dropout', 0.1)
-        mc.setdefault('aux_relpos_max_distance', 256)
+        mc.setdefault('aux_relpos_max_distance', 64)
         mc.setdefault('aux_init_gate', 1.0)
         if args.aux_init_gate is not None:
             mc['aux_init_gate'] = float(args.aux_init_gate)
