@@ -25,6 +25,7 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
         if trainer is not None and getattr(trainer, 'sanity_checking', False):
             return
         rows.append([
+            run_dir,
             int(trainer.current_epoch) if trainer is not None else 0,
             ('sanity' if (trainer is not None and getattr(trainer, 'sanity_checking', False)) else 'val'),
             metric_name,
@@ -47,7 +48,7 @@ def write_epoch_csv_tall(run_dir: Path | None, trainer: pl.Trainer, macro_f1: fl
     with csv_path.open('a', newline='') as f:
         writer = csv.writer(f)
         if not exists:
-            writer.writerow(['epoch', 'batch', 'metric', 'class', 'value'])
+            writer.writerow(['run', 'epoch', 'batch', 'metric', 'class', 'value'])
         writer.writerows(rows)
 
 
