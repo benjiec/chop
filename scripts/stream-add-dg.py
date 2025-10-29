@@ -12,7 +12,7 @@ def main():
     p.add_argument('--fna', required=True, help='FASTA/FNA file to compute sequences from')
     p.add_argument('--win', type=int, required=True, help='Sliding window size (centered)')
     p.add_argument('--temp', type=float, default=25.0, help='Temperature in Celsius (default 25)')
-    p.add_argument('--mode', choices=['mfe', 'pf'], default='mfe', help='Energy mode: mfe (default) or pf')
+    p.add_argument('--mode', choices=['mfe', 'pf'], default='pf', help='Energy mode: mfe or pf (default)')
     args = p.parse_args()
 
     stream_path = Path(args.stream)

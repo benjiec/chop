@@ -100,8 +100,30 @@ def build_vienna_dg_generator(window_size: int, temp_celsius: float = 25.0, mode
                 _, energy = fc.mfe()
                 val = float(energy)
             else:
-                fc.pf()
-                val = float(fc.energy)
+                # Partition function; extract ensemble free energy robustly across API variants
+                pf_ret = fc.pf()
+                val = None
+                if isinstance(pf_ret, (list, tuple)):
+                    # Prefer index 1 when numeric (common convention), fallback to last/first numeric
+                    cand = None
+                    if len(pf_ret) >= 2 and isinstance(pf_ret[1], (float, int, np.floating)):
+                        cand = pf_ret[1]
+                    else:
+                        # search last numeric, then first numeric
+                        for item in reversed(pf_ret):
+                            if isinstance(item, (float, int, np.floating)):
+                                cand = item
+                                break
+                        if cand is None:
+                            for item in pf_ret:
+                                if isinstance(item, (float, int, np.floating)):
+                                    cand = item
+                                    break
+                    if cand is None:
+                        raise TypeError("ViennaRNA pf() did not return a numeric free energy component")
+                    val = float(cand)
+                else:
+                    val = float(pf_ret)
             out[i] = val
         return out
 
