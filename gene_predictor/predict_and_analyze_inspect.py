@@ -5,12 +5,14 @@ from pathlib import Path
 import torch
 import numpy as np
 import argparse
+from copy import deepcopy
 from typing import List, Dict, Tuple, Optional, Set, Any
 
 from utils.constants import GenePredictionClass
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.events import build_event_motifs
 from dna_learner.model import GenePredictorModule as ModelModule
+from dna_learner.model import AuxStreamEncoder
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import SequenceResult, convert_tokens_to_sequence
@@ -192,7 +194,6 @@ def main():
                 aux_c = int(arr.shape[1])
                 break
         if aux_c is not None and aux_c > 0:
-            from dna_learner.model import AuxStreamEncoder
             d_model = int(getattr(m.embedding, 'd_model'))
             dropout = float(getattr(model, 'config', {}).get('model', {}).get('dropout', 0.1)) if isinstance(getattr(model, 'config', {}), dict) else 0.1
             m.aux_encoder = AuxStreamEncoder(in_channels=aux_c, d_model=d_model, dropout=dropout)
@@ -202,7 +203,12 @@ def main():
             sd = ckpt.get('state_dict', {}) if isinstance(ckpt, dict) else {}
             sub = {k[len('model.aux_encoder.'):]: v for k, v in sd.items() if k.startswith('model.aux_encoder.')}
             if sub:
+                print("Augmenting AuxStreamEncoder,", aux_c, "channels, with loaded state", list(sub.keys()))
                 m.aux_encoder.load_state_dict(sub, strict=False)
+            else:
+                print("Created AuxStreamEncoder with", aux_c, "channels, but cannot load state")
+        else:
+            print("Not creating AuxStreamEncoder eagerly - AuxStreamEncoder will be created later with random starting weights")
 
     # Motifs map
     cfg = getattr(model, 'config', {})
@@ -267,7 +273,6 @@ def main():
         # Build a single pass cache of logits WITH aux for baseline
         # Reuse res_with as baseline
         # Now rerun with per-channel ablation by wrapping dataset loader
-        from copy import deepcopy
         # Load raw aux to inspect channel count
         ds = loader.dataset
         # Peek one sample's aux to get C
