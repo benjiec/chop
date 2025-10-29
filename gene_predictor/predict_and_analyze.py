@@ -719,7 +719,7 @@ def main():
             sd = ckpt.get('state_dict', {}) if isinstance(ckpt, dict) else {}
             sub = {k[len('model.aux_encoder.'):]: v for k, v in sd.items() if k.startswith('model.aux_encoder.')}
             if sub:
-                print("Augmenting AuxStreamEncoder,", aux_c, "channels, with loaded state")
+                print("Augmenting AuxStreamEncoder,", aux_c, "channels, with loaded state", list(sub.keys()))
                 m.aux_encoder.load_state_dict(sub, strict=False)
             else:
                 print("Created AuxStreamEncoder with", aux_c, "channels, but cannot load state")
