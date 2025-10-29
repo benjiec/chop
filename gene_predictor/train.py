@@ -48,7 +48,7 @@ def main():
     parser.add_argument('--aux-normalize', dest='aux_normalize', action='store_true', default=True, help='Normalize aux stream channels (z-score)')
     parser.add_argument('--disable-aux-normalize', dest='aux_normalize', action='store_false', help='Disable aux stream normalization')
     parser.add_argument('--aux-channels', type=str, default=None, help='Comma-separated channel indices to include (zero-based)')
-    parser.add_argument('--aux-init-gate', type=float, default=None, help='Init gate for aux fusion (sigmoid applied inside). Default 1.0 when --aux-stream provided')
+    parser.add_argument('--aux-init-gate', type=float, default=None, help='Init gate for aux fusion (sigmoid applied inside).')
     parser.add_argument('--aux-cross-attn-dropout', type=float, default=None, help='Dropout for aux cross-attn. Default 0.0 when --aux-stream provided')
 
     # class weights
@@ -155,9 +155,9 @@ def main():
         mc.setdefault('enable_aux_stream', True)
         mc.setdefault('aux_cross_attn_layers', 2)
         mc.setdefault('aux_cross_attn_heads', 8)
-        mc.setdefault('aux_cross_attn_dropout', 0.1)
+        mc.setdefault('aux_cross_attn_dropout', 0.2)
         mc.setdefault('aux_relpos_max_distance', 64)
-        mc.setdefault('aux_init_gate', 1.0)
+        mc.setdefault('aux_init_gate', 0.0)
         if args.aux_init_gate is not None:
             mc['aux_init_gate'] = float(args.aux_init_gate)
         if args.aux_cross_attn_dropout is not None:
