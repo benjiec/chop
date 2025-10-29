@@ -37,6 +37,10 @@ def main():
         for sid, shape in mismatches:
             print(f"  {sid}: shape={shape}, expected channel dim={len(channels)}")
 
+    for sid in seq_ids[0:10]:
+        print(sid)
+        arr = ns.get(sid)
+        print(arr[0:100,])
 
 if __name__ == '__main__':
     main()

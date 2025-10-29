@@ -289,6 +289,7 @@ class AnnotatedGenomeDataset:
                  allow_nonconforming_dss: bool = False,
                  aux_stream_path: Optional[str] = None,
                  aux_normalize: bool = True,
+                 aux_channels: Optional[List[int]] = None,
                  ):
         self.fasta_records = load_fasta(fasta_path)
         self.annotations = _parse_tsv_annotations(annotations_tsv_path)
@@ -320,6 +321,8 @@ class AnnotatedGenomeDataset:
         self.aux_by_contig: List[Optional[np.ndarray]] = []
         self._num_stream: Optional[NumericalStream] = None
         self._has_any_aux: bool = False
+        # Optional channel selection (zero-based indices, preserve order)
+        self._aux_channels_selected: Optional[List[int]] = (list(aux_channels) if aux_channels is not None else None)
 
         # Load aux raw first
         if self.aux_stream_path:
@@ -334,6 +337,15 @@ class AnnotatedGenomeDataset:
             if self.aux_normalize:
                 print("Normalizing aux stream")
                 ns.normalize()
+            # If aux channel selection provided, validate indices against channel count and update channel names
+            if self._aux_channels_selected is not None:
+                # Determine channel count C from metadata
+                ch_names = ns.channels if ns.channels is not None else None
+                C = int(len(ch_names)) if ch_names is not None else int(ns.get(ns.sequence_ids[0]).shape[1]) if len(ns.sequence_ids) > 0 else 0
+                if any((i < 0 or i >= C) for i in self._aux_channels_selected):
+                    raise ValueError(f"aux_channels indices out of range for C={C}: {self._aux_channels_selected}")
+                if ch_names is not None:
+                    ns.channels = [ch_names[i] for i in self._aux_channels_selected]
             self._num_stream = ns
             self._has_any_aux = True
 
@@ -417,13 +429,18 @@ class AnnotatedGenomeDataset:
                     arr = self._num_stream.pad(ann.sequence_id, pad_len)
                 except KeyError:
                     # Missing contig in stream: create zeros with same channels and apply left prefix padding
-                    C = int(len(self._num_stream.channels)) if self._num_stream.channels is not None else 0
+                    C_full = int(len(self._num_stream.channels)) if self._num_stream.channels is not None else 0
+                    # Apply channel selection count if provided
+                    C = (len(self._aux_channels_selected) if self._aux_channels_selected is not None else C_full)
                     base = np.zeros((raw_len, C), dtype=np.float32)
                     if pad_len > 0:
                         pad = np.zeros((pad_len, C), dtype=np.float32)
                         arr = np.concatenate([pad, base], axis=0)
                     else:
                         arr = base
+                # Apply channel selection if requested
+                if self._aux_channels_selected is not None and arr is not None:
+                    arr = arr[:, self._aux_channels_selected]
                 by_contig_aux.append(arr.astype(np.float32, copy=False))
             else:
                 by_contig_aux.append(None)

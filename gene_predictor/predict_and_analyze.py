@@ -198,7 +198,8 @@ def load_trained_model(model_path: Path, device='cpu'):
 
 def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0,
                        aux_stream: Optional[str] = None,
-                       aux_normalize: bool = True):
+                       aux_normalize: bool = True,
+                       aux_channels: Optional[List[int]] = None):
     # not windowing in the dataset class, but rely on windowing here and then blending the results here
     dataset = AnnotatedGenomeDataset(
         fna_fn,
@@ -208,6 +209,7 @@ def generate_test_data(fna_fn: str, tsv_fn: str, num_contigs: int = 0,
         random_prefix_ns=False,
         aux_stream_path=aux_stream,
         aux_normalize=bool(aux_normalize),
+        aux_channels=aux_channels,
     )
     data_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     print(f"✓ Generated {len(dataset)} test samples - windowing and blending results...")
@@ -671,6 +673,7 @@ def main():
     parser.add_argument('--aux-stream', type=str, default=None, help='Optional path to aux stream pickle (.pkl or .pkl.gz)')
     parser.add_argument('--aux-normalize', action='store_true', default=True, help='Normalize aux stream channels (z-score)')
     parser.add_argument('--no-aux-normalize', dest='aux_normalize', action='store_false', help='Disable aux stream normalization')
+    parser.add_argument('--aux-channels', type=str, default=None, help='Comma-separated channel indices to include (zero-based)')
     # Removed dss-motifs override; use motifs saved in model config
     
     args = parser.parse_args()
@@ -692,12 +695,18 @@ def main():
     print(config)
     cw = config['loss']['class_weights']
 
+    # Parse aux channel selection
+    aux_channels = None
+    if args.aux_channels:
+        aux_channels = [int(x) for x in str(args.aux_channels).split(',') if str(x).strip() != '']
+
     data_loader, dataset = generate_test_data(
         args.fna_fn,
         args.tsv_fn,
         args.num_contigs,
         aux_stream=args.aux_stream,
         aux_normalize=bool(args.aux_normalize),
+        aux_channels=aux_channels,
     )
 
     # Backward-compat: if checkpoint had aux_encoder weights but model didn't eagerly build, construct and load them

@@ -47,6 +47,7 @@ def main():
     parser.add_argument('--aux-stream', type=str, default=None, help='Path to aux stream pickle file (per-sequence [L,C] features)')
     parser.add_argument('--aux-normalize', dest='aux_normalize', action='store_true', default=True, help='Normalize aux stream channels (z-score)')
     parser.add_argument('--disable-aux-normalize', dest='aux_normalize', action='store_false', help='Disable aux stream normalization')
+    parser.add_argument('--aux-channels', type=str, default=None, help='Comma-separated channel indices to include (zero-based)')
     parser.add_argument('--aux-init-gate', type=float, default=None, help='Init gate for aux fusion (sigmoid applied inside). Default 1.0 when --aux-stream provided')
     parser.add_argument('--aux-cross-attn-dropout', type=float, default=None, help='Dropout for aux cross-attn. Default 0.0 when --aux-stream provided')
 
@@ -236,6 +237,11 @@ def main():
             loss_window_margin_bp=margin_bp,
         )
 
+    # Parse aux channel selection once
+    aux_channels = None
+    if args.aux_channels:
+        aux_channels = [int(x) for x in str(args.aux_channels).split(',') if str(x).strip() != '']
+
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
@@ -246,6 +252,7 @@ def main():
             class_weights=class_weights,
             aux_stream_path=args.aux_stream,
             aux_normalize=bool(args.aux_normalize),
+            aux_channels=aux_channels,
         )
     else:
         if args.boost_start_stop:
@@ -262,6 +269,7 @@ def main():
             window_boost_classes = window_boost_classes,
             aux_stream_path=args.aux_stream,
             aux_normalize=bool(args.aux_normalize),
+            aux_channels=aux_channels,
         )
 
     # If aux stream is present, record channel count in model config for eager aux encoder construction

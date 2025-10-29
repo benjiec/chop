@@ -159,6 +159,7 @@ def main():
     p.add_argument('--device', default='mps')
     p.add_argument('--aux-stream', type=str, default=None)
     p.add_argument('--aux-normalize', action='store_true', default=True)
+    p.add_argument('--aux-channels', type=str, default=None, help='Comma-separated channel indices to include (zero-based)')
     p.add_argument('--channel-ablation', action='store_true', help='Run per-channel ablation and rank channels by Δ metrics')
     # removed: gradient-based attribution option
     p.add_argument('--num-contigs', type=int, default=0)
@@ -172,6 +173,11 @@ def main():
     model = load_trained_model(ckpt_path, args.device)
 
     # Dataset
+    # Parse aux channel selection
+    aux_channels = None
+    if args.aux_channels:
+        aux_channels = [int(x) for x in str(args.aux_channels).split(',') if str(x).strip() != '']
+
     dataset = AnnotatedGenomeDataset(
         args.fna_fn,
         args.tsv_fn,
@@ -180,6 +186,7 @@ def main():
         random_prefix_ns=False,
         aux_stream_path=args.aux_stream,
         aux_normalize=bool(args.aux_normalize),
+        aux_channels=aux_channels,
     )
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 

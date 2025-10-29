@@ -647,6 +647,55 @@ class TestAnnotatedGenomeDatasetWindowing(unittest.TestCase):
             self.assertEqual(x1.shape[0], 16)
             self.assertEqual(y1.shape[0], 16)
 
+    def test_windowing_aux_channel_selection(self):
+        # Build a contig and a 4-channel aux stream with distinct random values per channel
+        seq_list = list('N' * 24)
+        seq_list[3:6] = list('ATG')
+        seq_list[18:21] = list('TAA')
+        fasta = f">ctgSel\n{''.join(seq_list)}\n"
+        tsv = (
+            "sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n"
+            "ctgSel\tg\t4\t21\t4\t21\t+\n"
+        )
+        with tempfile.TemporaryDirectory() as td:
+            fp = Path(td)
+            fasta_path = fp / "sel.fna.gz"
+            tsv_path = fp / "sel.tsv"
+            write_temp(fasta_path, fasta)
+            write_temp(tsv_path, tsv)
+
+            from utils.stream import NumericalStream
+            stream_path = fp / 'aux_multi.pkl.gz'
+            ns = NumericalStream.create_empty(str(stream_path))
+            rng = np.random.RandomState(111)
+            vals = [rng.rand(24).astype(np.float32) for _ in range(4)]
+            ns.add_channel(str(fasta_path), 'c0', lambda s: vals[0])
+            ns.add_channel(str(fasta_path), 'c1', lambda s: vals[1])
+            ns.add_channel(str(fasta_path), 'c2', lambda s: vals[2])
+            ns.add_channel(str(fasta_path), 'c3', lambda s: vals[3])
+            ns.save()
+
+            # Select channels [3,0] and verify ordering and values
+            win = 8
+            ds = AnnotatedGenomeDataset(
+                str(fasta_path), str(tsv_path), window=win, stride=8,
+                random_prefix_ns=False,
+                aux_stream_path=str(stream_path), aux_normalize=False,
+                aux_channels=[3, 0],
+            )
+            # Check at least one window
+            self.assertGreater(len(ds), 0)
+            # For each window, slice and compare against expected columns
+            for wpos, (cid, s, e) in enumerate(ds.windows):
+                x, y, a = ds[wpos]
+                # expected from full arrays, then selecting [3,0]
+                full = np.stack(vals, axis=1)  # [L, 4]
+                expected = full[s:e, :][:, [3, 0]]
+                if (e - s) < win:
+                    pad = win - (e - s)
+                    expected = np.concatenate([expected, np.zeros((pad, 2), dtype=expected.dtype)], axis=0)
+                np.testing.assert_array_equal(a, expected)
+
     def test_window_filter_skips_windows_without_weighted_targets(self):
         # Sequence with START and STOP present, but all class weights are 1.0
         seq_list = list('N' * 50)
