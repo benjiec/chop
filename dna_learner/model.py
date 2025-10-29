@@ -372,8 +372,9 @@ class GenePredictorModel(nn.Module):
                  aux_cross_attn_layers: int = 1,
                  aux_cross_attn_heads: Optional[int] = None,
                  aux_cross_attn_dropout: float = 0.1,
-                 aux_relpos_max_distance: int = 256,
-                 aux_init_gate: float = -2.0):
+                aux_relpos_max_distance: int = 256,
+                aux_init_gate: float = -2.0,
+                aux_in_channels: Optional[int] = None):
 
         super().__init__()
 
@@ -409,9 +410,13 @@ class GenePredictorModel(nn.Module):
         if self.enable_aux_stream and self.aux_cross_attn_layers > 0:
             if d_model % self.aux_cross_attn_heads != 0:
                 raise ValueError(f"d_model ({d_model}) must be divisible by aux_cross_attn_heads ({self.aux_cross_attn_heads})")
-            # Aux encoder is channel-agnostic; instantiate lazily at first forward when C is known.
+            # Aux encoder can be eagerly constructed if in-channels known; otherwise lazy on first forward
             self._aux_encoder_in_dim: Optional[int] = None
-            self.aux_encoder: Optional[AuxStreamEncoder] = None
+            if aux_in_channels is not None and int(aux_in_channels) > 0:
+                self._aux_encoder_in_dim = int(aux_in_channels)
+                self.aux_encoder = AuxStreamEncoder(in_channels=self._aux_encoder_in_dim, d_model=int(d_model), dropout=dropout)
+            else:
+                self.aux_encoder = None
             print("Building cross attention mechanism:", self.aux_cross_attn_layers, "layers,", self.aux_cross_attn_heads, "heads")
             self.cross_attn_blocks = nn.ModuleList([
                 BiasedGlobalCrossAttention(
@@ -553,7 +558,8 @@ class GenePredictorModule(pl.LightningModule):
             aux_cross_attn_heads=(int(model_config.get('aux_cross_attn_heads')) if model_config.get('aux_cross_attn_heads') is not None else None),
             aux_cross_attn_dropout=float(model_config.get('aux_cross_attn_dropout', 0.0)),
             aux_relpos_max_distance=int(model_config.get('aux_relpos_max_distance', 256)),
-            aux_init_gate=float(model_config.get('aux_init_gate', 1.0))
+            aux_init_gate=float(model_config.get('aux_init_gate', 1.0)),
+            aux_in_channels=(int(model_config.get('aux_in_channels')) if model_config.get('aux_in_channels') is not None else None),
         )
 
         # Loss function configuration (class weights remain in config for datasets/metrics)
@@ -688,6 +694,7 @@ def create_base_config(
     aux_cross_attn_dropout: Optional[float] = None,
     aux_relpos_max_distance: Optional[int] = None,
     aux_init_gate: Optional[float] = None,
+    aux_in_channels: Optional[int] = None,
 ) -> dict:
 
     # Validate d_model is divisible by n_heads
@@ -738,6 +745,8 @@ def create_base_config(
         cfg['model']['aux_relpos_max_distance'] = int(aux_relpos_max_distance)
     if aux_init_gate is not None:
         cfg['model']['aux_init_gate'] = float(aux_init_gate)
+    if aux_in_channels is not None:
+        cfg['model']['aux_in_channels'] = int(aux_in_channels)
 
     return cfg
 

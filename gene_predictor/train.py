@@ -264,6 +264,21 @@ def main():
             aux_normalize=bool(args.aux_normalize),
         )
 
+    # If aux stream is present, record channel count in model config for eager aux encoder construction
+    if args.aux_stream:
+        aux_c = None
+        # Prefer NumericalStream metadata when available
+        if getattr(dataset, '_num_stream', None) is not None and getattr(dataset._num_stream, 'channels', None) is not None:
+            aux_c = int(len(dataset._num_stream.channels))
+        else:
+            # Fallback: inspect first non-None aux array
+            for arr in getattr(dataset, 'aux_by_contig', []) or []:
+                if arr is not None and hasattr(arr, 'shape') and len(arr.shape) == 2:
+                    aux_c = int(arr.shape[1])
+                    break
+        if aux_c is not None and aux_c > 0:
+            config.setdefault('model', {})['aux_in_channels'] = aux_c
+
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = Path(f"gene_predictor/gene_predictor_run_{timestamp}")

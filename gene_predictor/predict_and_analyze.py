@@ -18,6 +18,7 @@ from utils.constants import GenePredictionClass, ConventionalStopCodons as stop_
 from utils.constants import StandardDonorDinucleotides, DinoDonorDinucleotides
 from utils.events import compute_event_spans_vectorized
 from dna_learner.model import GenePredictorModule as ModelModule
+from dna_learner.model import AuxStreamEncoder
 from torch.utils.data import DataLoader
 from utils.genome import AnnotatedGenomeDataset
 from utils.metrics import convert_tokens_to_sequence
@@ -698,7 +699,33 @@ def main():
         aux_stream=args.aux_stream,
         aux_normalize=bool(args.aux_normalize),
     )
-    
+
+    # Backward-compat: if checkpoint had aux_encoder weights but model didn't eagerly build, construct and load them
+    m = getattr(model, 'model', None)
+    needs_aux = (args.aux_stream is not None) and (m is not None) and (getattr(m, 'aux_encoder', None) is None)
+    if needs_aux:
+        # Determine channel count C from dataset
+        aux_c = None
+        for arr in getattr(dataset, 'aux_by_contig', []) or []:
+            if arr is not None and hasattr(arr, 'shape') and len(arr.shape) == 2:
+                aux_c = int(arr.shape[1])
+                break
+        if aux_c is not None and aux_c > 0:
+            d_model = int(getattr(m.embedding, 'd_model'))
+            dropout = float(getattr(model, 'config', {}).get('model', {}).get('dropout', 0.1)) if isinstance(getattr(model, 'config', {}), dict) else 0.1
+            m.aux_encoder = AuxStreamEncoder(in_channels=aux_c, d_model=d_model, dropout=dropout)
+            m.aux_encoder = m.aux_encoder.to(args.device)
+            ckpt = torch.load(ckpt_path, map_location=args.device)
+            sd = ckpt.get('state_dict', {}) if isinstance(ckpt, dict) else {}
+            sub = {k[len('model.aux_encoder.'):]: v for k, v in sd.items() if k.startswith('model.aux_encoder.')}
+            if sub:
+                print("Augmenting AuxStreamEncoder,", aux_c, "channels, with loaded state")
+                m.aux_encoder.load_state_dict(sub, strict=False)
+            else:
+                print("Created AuxStreamEncoder with", aux_c, "channels, but cannot load state")
+        else:
+            print("Not creating AuxStreamEncoder eagerly - AuxStreamEncoder will be created later with random starting weights")
+
     # Use motifs and head mapping saved with the trained model configuration
     cfg = getattr(model, 'config', {})
     ccfg = cfg.get('custom', {}) if isinstance(cfg, dict) else {}
