@@ -40,7 +40,7 @@ def main():
     for sid in seq_ids[0:10]:
         print(sid)
         arr = ns.get(sid)
-        print(arr[0:100,])
+        print(arr[0:25,])
 
 if __name__ == '__main__':
     main()
