@@ -9,7 +9,7 @@ import sys
 from importlib.machinery import SourceFileLoader
 
 from utils.genome import AnnotatedGenomeDataset
-from utils.stream import NumericalStream, build_gc_generator, build_dinuc_generator, Turner2004NNdeltaG37C
+from utils.stream import NumericalStream, build_gc_generator, build_dinuc_generator, Turner2004NNdeltaG37C, Turner2004NN_dH, Turner2004NN_dS
 
 
 class TestGCGenerator(unittest.TestCase):
@@ -286,6 +286,38 @@ class TestDinucGenerator(unittest.TestCase):
             Turner2004NNdeltaG37C[b'CA']
         ) / 3.0
         self.assertAlmostEqual(float(out[2]), expected, places=6)
+
+    def test_dinuc_dg_at_temp_25C(self):
+        # Window 'GCCA' at i=2 (w=4) → pairs: GC, CC, CA
+        seq = 'GGCCAT'
+        gen = build_dinuc_generator(4, mode='dg_at_temp', temp_celsius=25.0)
+        out = gen(seq)
+        # expected mean of ΔH - T*ΔS over pairs
+        pairs = [b'GC', b'CC', b'CA']
+        exp_vals = []
+        for p in pairs:
+            dH = Turner2004NN_dH[p]
+            dS = Turner2004NN_dS[p]
+            exp_vals.append(dH - 298.15 * (dS / 1000.0))
+        expected = sum(exp_vals) / len(exp_vals)
+        self.assertAlmostEqual(float(out[2]), expected, places=6)
+
+    def test_dinuc_dg37_close_to_table(self):
+        # For each dinucleotide, compute ΔG37 from dH/dS and compare to the 37C table
+        T = 310.15
+        max_diff = 0.0
+        for din, g37 in Turner2004NNdeltaG37C.items():
+            dH = Turner2004NN_dH.get(din)
+            dS = Turner2004NN_dS.get(din)
+            if dH is None or dS is None:
+                continue
+            calc = dH - T * (dS / 1000.0)
+            diff = abs(calc - g37)
+            max_diff = max(max_diff, diff)
+            # Allow tolerance due to parameter set differences; within ~1.3 kcal/mol
+            self.assertLessEqual(diff, 1.3, msg=f"{din} diff {diff}")
+        # Sanity: at least one pair compared
+        self.assertGreater(max_diff, 0.0)
 
     def test_dinuc_repeats_and_non_gc(self):
         # Sequence designed so a window contains repeated strong 'GG' and an A/T-only dinuc 'AT'

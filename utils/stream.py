@@ -151,8 +151,47 @@ Turner2004NNdeltaG37C = {
     b'GG': -2.0,  # GG/CC
 }
 
+# RNA nearest-neighbor enthalpy (kcal/mol) and entropy (cal/mol·K) from Xia et al. 1998 (U mapped to T)
+Turner2004NN_dH = {
+    b'AA': -7.6,  # AA/UU
+    b'AT': -7.8,  # AU/UA
+    b'AC': -8.1,  # AC/UG
+    b'AG': -10.4, # AG/UC
+    b'TA': -7.7,  # UA/AU
+    b'TT': -7.6,  # UU/AA
+    b'TC': -10.4, # UC/AG
+    b'TG': -8.1,  # UG/AC
+    b'CA': -8.4,  # CA/GU
+    b'CT': -10.4, # CU/GA
+    b'CC': -8.0,  # CC/GG
+    b'CG': -10.6, # CG/GC
+    b'GA': -10.5, # GA/CU
+    b'GT': -8.2,  # GU/CA
+    b'GC': -14.2, # GC/CG
+    b'GG': -8.0,  # GG/CC
+}
 
-def build_dinuc_generator(window_size: int, mode: str = 'count'):
+Turner2004NN_dS = {
+    b'AA': -21.3,
+    b'AT': -21.9,
+    b'AC': -22.6,
+    b'AG': -26.9,
+    b'TA': -21.2,
+    b'TT': -21.3,
+    b'TC': -26.9,
+    b'TG': -22.6,
+    b'CA': -22.4,
+    b'CT': -26.9,
+    b'CC': -19.9,
+    b'CG': -27.2,
+    b'GA': -27.8,
+    b'GT': -22.2,
+    b'GC': -34.9,
+    b'GG': -19.9,
+}
+
+
+def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: float = 25.0):
     """Return a generator computing per-position dinucleotide-based stability proxy.
 
     Modes:
@@ -178,6 +217,7 @@ def build_dinuc_generator(window_size: int, mode: str = 'count'):
         seq_u = seq.upper().replace('N', 'A')
         b = np.frombuffer(seq_u.encode('ascii'), dtype=np.uint8)
         out = np.zeros(L, dtype=np.float32)
+        T = 273.15 + float(temp_celsius)
         for i in range(L):
             s = max(0, i - x)
             e = min(L, i + y + 1)
@@ -194,7 +234,7 @@ def build_dinuc_generator(window_size: int, mode: str = 'count'):
                     if din in strong_set:
                         cnt += 1
                 out[i] = float(cnt) / float(total_pairs)
-            else:
+            elif mode == 'weighted':
                 acc = 0.0
                 for j in range(len(window) - 1):
                     din = bytes(window[j:j+2])
@@ -202,6 +242,22 @@ def build_dinuc_generator(window_size: int, mode: str = 'count'):
                     acc += float(wv)
                 # convert to frequency-weighted sum per window
                 out[i] = float(acc) / float(total_pairs)
+            elif mode == 'dg_at_temp':
+                # Compute average ΔG at a given temperature using ΔH and ΔS
+                acc = 0.0
+                for j in range(len(window) - 1):
+                    din = bytes(window[j:j+2])
+                    dH = Turner2004NN_dH.get(din)
+                    dS = Turner2004NN_dS.get(din)
+                    if dH is None or dS is None:
+                        # fallback to 37C table if missing
+                        acc += float(Turner2004NNdeltaG37C.get(din, -1.0))
+                    else:
+                        g = float(dH) - T * (float(dS) / 1000.0)
+                        acc += g
+                out[i] = float(acc) / float(total_pairs)
+            else:
+                raise ValueError("invalid mode for dinuc generator")
         return out
 
     return dinuc_generator

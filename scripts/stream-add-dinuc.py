@@ -13,6 +13,7 @@ def main():
     p.add_argument('--window-size', type=int, default=50, help='Centered window size (e.g., 50)')
     p.add_argument('--mode', choices=['count', 'weighted'], default='count', help='count: fraction of strong dinucs; weighted: frequency-weighted Turner-like energies')
     p.add_argument('--channel-name', type=str, default=None, help='Optional custom channel name')
+    p.add_argument('--temp-celsius', type=float, default=25.0, help='Temperature for dg_at_temp mode (°C)')
     args = p.parse_args()
 
     # Load or create stream
@@ -22,13 +23,16 @@ def main():
     else:
         ns = NumericalStream(str(sp))
 
-    gen = build_dinuc_generator(window_size=int(args.window_size), mode=str(args.mode))
+    gen = build_dinuc_generator(window_size=int(args.window_size), mode=str(args.mode), temp_celsius=float(args.temp_celsius))
 
     if args.channel_name:
         ch_name = args.channel_name
     else:
         suffix = f"w{int(args.window_size)}"
-        ch_name = f"dinuc_{args.mode}_{suffix}"
+        if args.mode == 'dg_at_temp':
+            ch_name = f"dinuc_dgT{int(round(args.temp_celsius))}_{suffix}"
+        else:
+            ch_name = f"dinuc_{args.mode}_{suffix}"
 
     ns.add_channel(str(args.fna_fn), ch_name, gen)
     ns.save()
