@@ -414,6 +414,7 @@ class GenePredictorModel(nn.Module):
             self._aux_encoder_in_dim: Optional[int] = None
             if aux_in_channels is not None and int(aux_in_channels) > 0:
                 self._aux_encoder_in_dim = int(aux_in_channels)
+                print("Constructing AuxStreamEncoder with", self._aux_encoder_in_dim, "channels")
                 self.aux_encoder = AuxStreamEncoder(in_channels=self._aux_encoder_in_dim, d_model=int(d_model), dropout=dropout)
             else:
                 self.aux_encoder = None
