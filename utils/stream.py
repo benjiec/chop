@@ -191,7 +191,10 @@ Turner2004NN_dS = {
 }
 
 
-def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: float = 25.0):
+from typing import Optional
+
+
+def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: Optional[float] = None):
     """Return a generator computing per-position dinucleotide-based stability proxy.
 
     Modes:
@@ -217,7 +220,7 @@ def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: f
         seq_u = seq.upper().replace('N', 'A')
         b = np.frombuffer(seq_u.encode('ascii'), dtype=np.uint8)
         out = np.zeros(L, dtype=np.float32)
-        T = 273.15 + float(temp_celsius)
+        T = (273.15 + float(temp_celsius)) if (temp_celsius is not None) else None
         for i in range(L):
             s = max(0, i - x)
             e = min(L, i + y + 1)
@@ -236,25 +239,23 @@ def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: f
                 out[i] = float(cnt) / float(total_pairs)
             elif mode == 'weighted':
                 acc = 0.0
-                for j in range(len(window) - 1):
-                    din = bytes(window[j:j+2])
-                    wv = Turner2004NNdeltaG37C.get(din, -1.0)
-                    acc += float(wv)
-                # convert to frequency-weighted sum per window
-                out[i] = float(acc) / float(total_pairs)
-            elif mode == 'dg_at_temp':
-                # Compute average ΔG at a given temperature using ΔH and ΔS
-                acc = 0.0
-                for j in range(len(window) - 1):
-                    din = bytes(window[j:j+2])
-                    dH = Turner2004NN_dH.get(din)
-                    dS = Turner2004NN_dS.get(din)
-                    if dH is None or dS is None:
-                        # fallback to 37C table if missing
-                        acc += float(Turner2004NNdeltaG37C.get(din, -1.0))
-                    else:
-                        g = float(dH) - T * (float(dS) / 1000.0)
-                        acc += g
+                if T is None:
+                    # Use 37C reference table
+                    for j in range(len(window) - 1):
+                        din = bytes(window[j:j+2])
+                        wv = Turner2004NNdeltaG37C.get(din, -1.0)
+                        acc += float(wv)
+                else:
+                    # Compute ΔG(T) from ΔH and ΔS
+                    for j in range(len(window) - 1):
+                        din = bytes(window[j:j+2])
+                        dH = Turner2004NN_dH.get(din)
+                        dS = Turner2004NN_dS.get(din)
+                        if dH is None or dS is None:
+                            acc += float(Turner2004NNdeltaG37C.get(din, -1.0))
+                        else:
+                            g = float(dH) - float(T) * (float(dS) / 1000.0)
+                            acc += g
                 out[i] = float(acc) / float(total_pairs)
             else:
                 raise ValueError("invalid mode for dinuc generator")

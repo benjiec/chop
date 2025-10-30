@@ -287,10 +287,10 @@ class TestDinucGenerator(unittest.TestCase):
         ) / 3.0
         self.assertAlmostEqual(float(out[2]), expected, places=6)
 
-    def test_dinuc_dg_at_temp_25C(self):
+    def test_dinuc_weighted_at_temp_25C(self):
         # Window 'GCCA' at i=2 (w=4) → pairs: GC, CC, CA
         seq = 'GGCCAT'
-        gen = build_dinuc_generator(4, mode='dg_at_temp', temp_celsius=25.0)
+        gen = build_dinuc_generator(4, mode='weighted', temp_celsius=25.0)
         out = gen(seq)
         # expected mean of ΔH - T*ΔS over pairs
         pairs = [b'GC', b'CC', b'CA']
