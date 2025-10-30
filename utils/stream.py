@@ -130,6 +130,83 @@ def build_vienna_dg_generator(window_size: int, temp_celsius: float = 25.0, mode
     return dg_generator
 
 
+# Turner nearest-neighbor stacking free energies at ~37°C (kcal/mol) for dinucleotide steps (proxy values)
+# Keyed by DNA dinucleotide in 5'->3' (as bytes). More negative indicates greater stability.
+Turner2004NNdeltaG37C = {
+    b'AA': -0.9,
+    b'AT': -1.1,  # AU/UA
+    b'AC': -2.1,  # AC/UG
+    b'AG': -2.1,  # AG/UC
+    b'TA': -1.3,  # UA/AU
+    b'TT': -0.9,  # UU/AA
+    b'TC': -2.4,  # UC/AG
+    b'TG': -2.1,  # UG/AC
+    b'CA': -1.4,  # CA/GU
+    b'CT': -2.1,  # CU/GA
+    b'CC': -2.0,  # CC/GG
+    b'CG': -3.4,  # CG/GC
+    b'GA': -2.4,  # GA/CU
+    b'GT': -1.5,  # GU/CA
+    b'GC': -3.3,  # GC/CG
+    b'GG': -2.0,  # GG/CC
+}
+
+
+def build_dinuc_generator(window_size: int, mode: str = 'count'):
+    """Return a generator computing per-position dinucleotide-based stability proxy.
+
+    Modes:
+      - 'count': fraction of strong-stacking dinucleotides in the window (GG, GC, CG, CC).
+      - 'weighted': frequency-weighted sum using approximate stacking free energies (kcal/mol).
+
+    Output is float32 array length L. 'count' yields values in [0,1]; 'weighted' yields negative numbers for stronger structure.
+    """
+    w = int(window_size)
+    if w <= 0:
+        raise ValueError("window size must be positive")
+    if w % 2 == 1:
+        x = y = w // 2
+    else:
+        y = w // 2
+        x = y - 1
+
+    strong_set = {b'GG', b'GC', b'CG', b'CC'}
+    # Approximate stacking free energies (proxy, kcal/mol) per dinucleotide step; more negative = more stable
+    # Values are illustrative; if precise values are needed, this can be overridden in a future extension.
+    def dinuc_generator(seq: str) -> np.ndarray:
+        L = len(seq)
+        seq_u = seq.upper().replace('N', 'A')
+        b = np.frombuffer(seq_u.encode('ascii'), dtype=np.uint8)
+        out = np.zeros(L, dtype=np.float32)
+        for i in range(L):
+            s = max(0, i - x)
+            e = min(L, i + y + 1)
+            total_pairs = max(0, e - s - 1)
+            if total_pairs <= 0:
+                out[i] = 0.0
+                continue
+            window = b[s:e]
+            # Count all dinucleotides in window (overlapping)
+            if mode == 'count':
+                cnt = 0
+                for j in range(len(window) - 1):
+                    din = bytes(window[j:j+2])
+                    if din in strong_set:
+                        cnt += 1
+                out[i] = float(cnt) / float(total_pairs)
+            else:
+                acc = 0.0
+                for j in range(len(window) - 1):
+                    din = bytes(window[j:j+2])
+                    wv = Turner2004NNdeltaG37C.get(din, -1.0)
+                    acc += float(wv)
+                # convert to frequency-weighted sum per window
+                out[i] = float(acc) / float(total_pairs)
+        return out
+
+    return dinuc_generator
+
+
 class NumericalStream:
     """Loader and normalizer for per-sequence numerical streams.
 

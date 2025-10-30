@@ -9,7 +9,7 @@ import sys
 from importlib.machinery import SourceFileLoader
 
 from utils.genome import AnnotatedGenomeDataset
-from utils.stream import NumericalStream, build_gc_generator
+from utils.stream import NumericalStream, build_gc_generator, build_dinuc_generator, Turner2004NNdeltaG37C
 
 
 class TestGCGenerator(unittest.TestCase):
@@ -265,6 +265,80 @@ class TestViennaDG(unittest.TestCase):
         out = gen(seq)
         self.assertEqual(out.shape, (len(seq),))
         self.assertEqual(out.dtype, np.float32)
+
+
+class TestDinucGenerator(unittest.TestCase):
+    def test_dinuc_count_fraction(self):
+        seq = 'GGCCAT'  # L=6
+        gen = build_dinuc_generator(4, mode='count')
+        out = gen(seq)
+        # For i=2 with w=4 (even): window [1..5) = 'GCCA'; pairs: GC, CC, CA -> 2/3 strong
+        self.assertAlmostEqual(float(out[2]), 2.0/3.0, places=6)
+
+    def test_dinuc_weighted_sum(self):
+        seq = 'GGCCAT'
+        gen = build_dinuc_generator(4, mode='weighted')
+        out = gen(seq)
+        # For i=2, window 'GCCA'; weights from Turner2004NNdeltaG37C
+        expected = (
+            Turner2004NNdeltaG37C[b'GC'] +
+            Turner2004NNdeltaG37C[b'CC'] +
+            Turner2004NNdeltaG37C[b'CA']
+        ) / 3.0
+        self.assertAlmostEqual(float(out[2]), expected, places=6)
+
+    def test_dinuc_repeats_and_non_gc(self):
+        # Sequence designed so a window contains repeated strong 'GG' and an A/T-only dinuc 'AT'
+        # seq: GGGGAT (L=6); with w=5 (odd), at i=3 → window [1..6) = 'GGGAT'
+        # pairs: GG, GG, GA, AT → strong count = 2/4; weighted = (GG+GG+GA+AT)/4
+        seq = 'GGGGAT'
+        gen_count = build_dinuc_generator(5, mode='count')
+        gen_weighted = build_dinuc_generator(5, mode='weighted')
+        out_c = gen_count(seq)
+        out_w = gen_weighted(seq)
+        # i=3
+        self.assertAlmostEqual(float(out_c[3]), 2.0/4.0, places=6)
+        expected_w = (
+            Turner2004NNdeltaG37C[b'GG'] +
+            Turner2004NNdeltaG37C[b'GG'] +
+            Turner2004NNdeltaG37C[b'GA'] +
+            Turner2004NNdeltaG37C[b'AT']
+        ) / 4.0
+        self.assertAlmostEqual(float(out_w[3]), expected_w, places=6)
+
+
+class TestStreamAddDinucScript(unittest.TestCase):
+    def _write_fasta(self, path: Path, seqs):
+        with open(path, 'w') as f:
+            for sid, s in seqs.items():
+                f.write(f">{sid}\n")
+                f.write(s + "\n")
+
+    def test_stream_add_dinuc_end_to_end(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            sid = 'ctg'
+            seq = 'GGCCAT'
+            fa = td / 's.fa'
+            self._write_fasta(fa, {sid: seq})
+            pkl = td / 'dinuc.pkl'
+
+            script_path = str((Path(__file__).parents[2] / 'scripts' / 'stream-add-dinuc.py').resolve())
+            mod = SourceFileLoader('stream_add_dinuc', script_path).load_module()
+            argv_backup = sys.argv
+            try:
+                sys.argv = ['stream-add-dinuc.py', '--fna-fn', str(fa), '--stream-path', str(pkl), '--window-size', '4', '--mode', 'count']
+                mod.main()
+            finally:
+                sys.argv = argv_backup
+
+            ns = NumericalStream(str(pkl))
+            # Default channel name
+            self.assertIn('dinuc_count_w4', ns.channels)
+            arr = ns.get(sid)
+            self.assertEqual(arr.shape, (len(seq), 1))
+            # i=2 expected 2/3
+            self.assertAlmostEqual(float(arr[2, 0]), 2.0/3.0, places=6)
 
 
 if __name__ == '__main__':
