@@ -230,6 +230,11 @@ PYTHONPATH=. python scripts/stream-add-gc.py \
   --win 20 \
   --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
 
+PYTHONPATH=. python scripts/stream-add-dinuc.py \
+  --fna data/GCA_001939145.1_round0_test_query.fna.gz \
+  --win 20 --mode weighted --temp-celsius 25 \
+  --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
+
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCA_001939145.1_round0_test_query.fna.gz \
   --win 25 --mode pf --temp 25 \

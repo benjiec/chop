@@ -359,14 +359,14 @@ class TestStreamAddDinucScript(unittest.TestCase):
             mod = SourceFileLoader('stream_add_dinuc', script_path).load_module()
             argv_backup = sys.argv
             try:
-                sys.argv = ['stream-add-dinuc.py', '--fna-fn', str(fa), '--stream-path', str(pkl), '--window-size', '4', '--mode', 'count']
+                sys.argv = ['stream-add-dinuc.py', '--fna-fn', str(fa), '--stream-path', str(pkl), '--win', '4', '--mode', 'count']
                 mod.main()
             finally:
                 sys.argv = argv_backup
 
             ns = NumericalStream(str(pkl))
             # Default channel name
-            self.assertIn('dinuc_count_w4', ns.channels)
+            self.assertIn('dinuc_count_win_4', ns.channels)
             arr = ns.get(sid)
             self.assertEqual(arr.shape, (len(seq), 1))
             # i=2 expected 2/3
