@@ -128,41 +128,42 @@ PYTHONPATH=. python scripts/augment-decoder-inputs-from-flanks.py \
 
 # streams
 
+# random stream
 PYTHONPATH=. python scripts/stream-add-random.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --stream data/GCF_002042975.1_round0_train_stream_random.pkl
 
+PYTHONPATH=. python scripts/stream-add-random.py \
+  --fna data/GCF_002042975.1_round0_test_query.fna.gz \
+  --stream data/GCF_002042975.1_round0_test_stream_random.pkl
+
+# target stream
 PYTHONPATH=. python scripts/stream-add-targets.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --tsv data/GCF_002042975.1_round0_train_annotations.tsv \
   --stream data/GCF_002042975.1_round0_train_stream_target.pkl
-
-PYTHONPATH=. python scripts/stream-add-gc.py \
-  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 20 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
-
-PYTHONPATH=. python scripts/stream-add-dg.py \
-  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 25 --mode pf \
-  --temp 25 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
-
-PYTHONPATH=. python scripts/stream-add-dg.py \
-  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
-  --win 50 --mode pf \
-  --temp 25 \
-  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
-
-PYTHONPATH=. python scripts/stream-add-random.py \
-  --fna data/GCF_002042975.1_round0_test_query.fna.gz \
-  --stream data/GCF_002042975.1_round0_test_stream_random.pkl
 
 PYTHONPATH=. python scripts/stream-add-targets.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --tsv data/GCF_002042975.1_round0_test_annotations.tsv \
   --stream data/GCF_002042975.1_round0_test_stream_target.pkl
 
+# thermo stream
+PYTHONPATH=. python scripts/stream-add-gc.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 20 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 25 --mode pf --temp 25 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 50 --mode pf --temp 25 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
+
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 20 \
@@ -170,16 +171,15 @@ PYTHONPATH=. python scripts/stream-add-gc.py \
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
-  --win 25 --mode pf \
-  --temp 25 \
+  --win 25 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
-  --win 50 --mode pf \
-  --temp 25 \
+  --win 50 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
+# summarize
 PYTHONPATH=. python scripts/stream-summarize.py \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
@@ -203,8 +203,39 @@ source chop_env/bin/activate && python scripts/merge-and-split-data.py \
 PYTHONPATH=. python gene_predictor/train.py \
   --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz \
   --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv \
-  --attention-masks "0:4,1:12,2:60,3:300:40:0" \
-  --num-windows 20000 --stride 100 --stop-weight 8 --dss-motifs dino
+  --attention-masks "0:4,1:12,2:60:12:0,3:140:40:0,4:220:120:0,5:0:12:60,6:0:40:140" \
+  --dss-motifs dino --num-windows 0 --stride 330 \
+  --loss-type event-head-bce \
+  --start-weight 16 --start-neg-weight 1 --stop-weight 8 --stop-neg-weight 1 \
+  --dss-weight 2 --dss-neg-weight 2 --ass-weight 2 --ass-neg-weight 2 \
+  --start-alpha 1 --stop-alpha 2 --dss-alpha 4 --ass-alpha 4
 
+PYTHONPATH=. python scripts/stream-add-gc.py \
+  --fna data/GCA_001939145.1_round0_train_query.fna.gz \
+  --win 20 \
+  --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
 
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCA_001939145.1_round0_train_query.fna.gz \
+  --win 25 --mode pf --temp 25 \
+  --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
 
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCA_001939145.1_round0_train_query.fna.gz \
+  --win 50 --mode pf --temp 25 \
+  --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-add-gc.py \
+  --fna data/GCA_001939145.1_round0_test_query.fna.gz \
+  --win 20 \
+  --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCA_001939145.1_round0_test_query.fna.gz \
+  --win 25 --mode pf --temp 25 \
+  --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
+
+PYTHONPATH=. python scripts/stream-add-dg.py \
+  --fna data/GCA_001939145.1_round0_test_query.fna.gz \
+  --win 50 --mode pf --temp 25 \
+  --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
