@@ -219,46 +219,61 @@ def build_dinuc_generator(window_size: int, mode: str = 'count', temp_celsius: O
         L = len(seq)
         seq_u = seq.upper().replace('N', 'A')
         b = np.frombuffer(seq_u.encode('ascii'), dtype=np.uint8)
-        out = np.zeros(L, dtype=np.float32)
         T = (273.15 + float(temp_celsius)) if (temp_celsius is not None) else None
-        for i in range(L):
-            s = max(0, i - x)
-            e = min(L, i + y + 1)
-            total_pairs = max(0, e - s - 1)
-            if total_pairs <= 0:
-                out[i] = 0.0
-                continue
-            window = b[s:e]
-            # Count all dinucleotides in window (overlapping)
-            if mode == 'count':
-                cnt = 0
-                for j in range(len(window) - 1):
-                    din = bytes(window[j:j+2])
-                    if din in strong_set:
-                        cnt += 1
-                out[i] = float(cnt) / float(total_pairs)
-            elif mode == 'weighted':
-                acc = 0.0
-                if T is None:
-                    # Use 37C reference table
-                    for j in range(len(window) - 1):
-                        din = bytes(window[j:j+2])
-                        wv = Turner2004NNdeltaG37C.get(din, -1.0)
-                        acc += float(wv)
-                else:
-                    # Compute ΔG(T) from ΔH and ΔS
-                    for j in range(len(window) - 1):
-                        din = bytes(window[j:j+2])
-                        dH = Turner2004NN_dH.get(din)
-                        dS = Turner2004NN_dS.get(din)
-                        if dH is None or dS is None:
-                            acc += float(Turner2004NNdeltaG37C.get(din, -1.0))
-                        else:
-                            g = float(dH) - float(T) * (float(dS) / 1000.0)
-                            acc += g
-                out[i] = float(acc) / float(total_pairs)
+
+        # Map bases to indices: A=0, C=1, G=2, T=3
+        isA = (b == 65)
+        isC = (b == 67)
+        isG = (b == 71)
+        isT = (b == 84)
+        base = (isC.astype(np.int32) + 2 * isG.astype(np.int32) + 3 * isT.astype(np.int32))
+
+        # Pair codes for positions 0..L-2
+        if L >= 2:
+            code = (4 * base[:-1]) + base[1:]
+        else:
+            code = np.zeros((0,), dtype=np.int32)
+
+        # Build value lookup table for 16 dinucs
+        if mode == 'count':
+            vals = np.zeros(16, dtype=np.float32)
+            for c in (10, 9, 6, 5):  # GG, GC, CG, CC
+                vals[c] = 1.0
+        elif mode == 'weighted':
+            din_list = [b'AA', b'AC', b'AG', b'AT',
+                        b'CA', b'CC', b'CG', b'CT',
+                        b'GA', b'GC', b'GG', b'GT',
+                        b'TA', b'TC', b'TG', b'TT']
+            if T is None:
+                vals = np.array([float(Turner2004NNdeltaG37C.get(d, -1.0)) for d in din_list], dtype=np.float32)
             else:
-                raise ValueError("invalid mode for dinuc generator")
+                v = []
+                for d in din_list:
+                    dH = Turner2004NN_dH.get(d)
+                    dS = Turner2004NN_dS.get(d)
+                    if dH is None or dS is None:
+                        v.append(float(Turner2004NNdeltaG37C.get(d, -1.0)))
+                    else:
+                        v.append(float(dH) - float(T) * (float(dS) / 1000.0))
+                vals = np.array(v, dtype=np.float32)
+        else:
+            raise ValueError("invalid mode for dinuc generator")
+
+        pair_vals = vals[code] if code.size > 0 else np.zeros((0,), dtype=np.float32)
+        ps = np.zeros(code.size + 1, dtype=np.float64)
+        if code.size > 0:
+            ps[1:] = np.cumsum(pair_vals, dtype=np.float64)
+
+        idx = np.arange(L, dtype=np.int32)
+        s = np.maximum(0, idx - x)
+        e = np.minimum(L, idx + y + 1)
+        n_pairs = np.maximum(0, e - s - 1)
+        e_pair = np.maximum(0, e - 1)
+        sum_pairs = np.zeros(L, dtype=np.float64)
+        if code.size > 0:
+            sum_pairs = ps[e_pair] - ps[s]
+        with np.errstate(invalid='ignore', divide='ignore'):
+            out = np.where(n_pairs > 0, (sum_pairs / n_pairs).astype(np.float32), 0.0).astype(np.float32)
         return out
 
     return dinuc_generator

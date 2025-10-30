@@ -148,33 +148,44 @@ PYTHONPATH=. python scripts/stream-add-targets.py \
   --tsv data/GCF_002042975.1_round0_test_annotations.tsv \
   --stream data/GCF_002042975.1_round0_test_stream_target.pkl
 
-# thermo stream
-PYTHONPATH=. python scripts/stream-add-gc.py \
+# thermo stream - coral/train
+time PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --win 20 \
   --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
-PYTHONPATH=. python scripts/stream-add-dg.py \
+time PYTHONPATH=. python scripts/stream-add-dinuc.py \
+  --fna data/GCF_002042975.1_round0_train_query.fna.gz \
+  --win 20 --mode weighted --temp-celsius 25 \
+  --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
+
+time PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --win 25 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
-PYTHONPATH=. python scripts/stream-add-dg.py \
+time PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_train_query.fna.gz \
   --win 50 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_train_stream_thermo.pkl.gz
 
-PYTHONPATH=. python scripts/stream-add-gc.py \
+# thermo stream - coral/test
+time PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 20 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
-PYTHONPATH=. python scripts/stream-add-dg.py \
+time PYTHONPATH=. python scripts/stream-add-dinuc.py \
+  --fna data/GCF_002042975.1_round0_test_query.fna.gz \
+  --win 20 --mode weighted --temp-celsius 25 \
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
+
+time PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 25 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
-PYTHONPATH=. python scripts/stream-add-dg.py \
+time PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCF_002042975.1_round0_test_query.fna.gz \
   --win 50 --mode pf --temp 25 \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
@@ -210,6 +221,7 @@ PYTHONPATH=. python gene_predictor/train.py \
   --dss-weight 2 --dss-neg-weight 2 --ass-weight 2 --ass-neg-weight 2 \
   --start-alpha 1 --stop-alpha 2 --dss-alpha 4 --ass-alpha 4
 
+# thermo stream - algae/train
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCA_001939145.1_round0_train_query.fna.gz \
   --win 20 \
@@ -225,6 +237,7 @@ PYTHONPATH=. python scripts/stream-add-dg.py \
   --win 50 --mode pf --temp 25 \
   --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
 
+# thermo stream - algae/test
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCA_001939145.1_round0_test_query.fna.gz \
   --win 20 \
