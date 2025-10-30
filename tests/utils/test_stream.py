@@ -436,6 +436,66 @@ class TestStreamExportMotifTableScript(unittest.TestCase):
             self.assertEqual(header[4:], ['c0_idx', 'c1_two'])
 
 
+    def test_stream_export_with_decoder_probs(self):
+        # Single contig with START at 0, STOP at 3, ASS at 5, DSS at 6
+        seq = "ATGTAAGT"
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            fa = td / 's.fa'
+            self._write_fasta(fa, {'c1': seq})
+            # Simple TSV with one exon covering entire sequence on plus strand
+            tsv = td / 'a.tsv'
+            rows = [
+                ('c1', 'g1', 1, len(seq), 1, len(seq), '+'),
+            ]
+            self._write_tsv(tsv, rows)
+
+            # Aux stream with constant channel for easy checking
+            pkl = td / 'aux.pkl'
+            ns = NumericalStream.create_empty(str(pkl))
+            def gen_c0(s: str):
+                return np.ones(len(s), dtype=np.float32)
+            ns.add_channel(str(fa), 'ones', gen_c0)
+            ns.save()
+
+            # Build decoder pickle with explicit probabilities per class
+            from gene_decoder import PredictedSequence
+            class_order = ['INTERGENIC','UTR5','START','GENE','STOP','UTR3','DSS','ASS']
+            L = len(seq)
+            C = len(class_order)
+            probs = np.zeros((L, C), dtype=np.float32)
+            # START span 0..2 set to 0.9
+            probs[0:3, class_order.index('START')] = 0.9
+            # STOP span 3..5 set to 0.8
+            probs[3:6, class_order.index('STOP')] = 0.8
+            # ASS span 5..6 set to 0.6 (2bp)
+            probs[5:7, class_order.index('ASS')] = 0.6
+            # DSS span 6..7 set to 0.7 (2bp)
+            probs[6:8, class_order.index('DSS')] = 0.7
+            items = [PredictedSequence(sequence_index=0, sequence=seq, probabilities=probs, class_order=class_order, sequence_id='c1')]
+            dec_pkl = td / 'dec.pkl'
+            with open(dec_pkl, 'wb') as f:
+                pickle.dump(items, f)
+
+            # Run export with decoder
+            out_csv = td / 'motifs.csv'
+            script_path = str((Path(__file__).parents[2] / 'scripts' / 'stream-export-motif-table.py').resolve())
+            mod = SourceFileLoader('stream_export_motif_with_probs', script_path).load_module()
+            argv_backup = sys.argv
+            try:
+                sys.argv = ['stream-export-motif-table.py', '--fna', str(fa), '--tsv', str(tsv), '--stream', str(pkl), '--decoder-pkl', str(dec_pkl), '--output-csv', str(out_csv)]
+                mod.main()
+            finally:
+                sys.argv = argv_backup
+
+            # Parse CSV and check header only
+            import csv as _csv
+            with open(out_csv, 'r', newline='') as f:
+                rdr = _csv.reader(f)
+                header = next(rdr)
+            # Header should include motif_prob after is_positive
+            self.assertEqual(header[:5], ['sequence_id', 'pos', 'motif_type', 'is_positive', 'motif_prob'])
+
 if __name__ == '__main__':
     unittest.main()
 

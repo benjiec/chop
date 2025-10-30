@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,7 @@ def main():
     p.add_argument('--stream', required=True, help='Path to aux stream pickle (.pkl or .pkl.gz)')
     p.add_argument('--dss-motifs', choices=['standard', 'dino'], default='standard', help='Donor set for DSS scanning')
     p.add_argument('--output-csv', required=True, help='Where to write the CSV table')
+    p.add_argument('--decoder-pkl', type=str, default=None, help='Optional decoder input pickle (List[PredictedSequence]) to add motif-type probabilities')
     args = p.parse_args()
 
     # Load data
@@ -48,7 +50,29 @@ def main():
     donor_set = StandardDonorDinucleotides if args.dss_motifs == 'standard' else DinoDonorDinucleotides
     acceptor_set = ConventionalAcceptorDinucleotides
 
-    header = ['sequence_id', 'pos', 'motif_type', 'is_positive'] + channel_names
+    # Optional decoder probabilities
+    decoder_map = None  # maps sequence_id -> (probs ndarray, class_to_idx dict)
+    if args.decoder_pkl:
+        with open(args.decoder_pkl, 'rb') as f:
+            items = pickle.load(f)
+        # Build mapping by sequence_id if present, else by sequence string
+        decoder_map = {}
+        for it in items:
+            sid = getattr(it, 'sequence_id', None)
+            probs = getattr(it, 'probabilities', None)
+            class_order = getattr(it, 'class_order', None)
+            if probs is None or class_order is None:
+                continue
+            cls_to_idx = {name: i for i, name in enumerate(class_order)}
+            key = sid if isinstance(sid, str) and len(sid) > 0 else getattr(it, 'sequence', None)
+            if key is None:
+                continue
+            decoder_map[key] = (probs, cls_to_idx)
+
+    header = ['sequence_id', 'pos', 'motif_type', 'is_positive']
+    if decoder_map is not None:
+        header.append('motif_prob')
+    header += channel_names
     out_path = Path(args.output_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -73,8 +97,21 @@ def main():
             while i != -1 and i + 2 < L:
                 span = slice(i, i+3)
                 is_pos = int(np.all(tgt[span] == P.START))
+                row = [sid, i, 'START', is_pos]
+                if decoder_map is not None:
+                    key = sid if sid in decoder_map else seq
+                    if key in decoder_map:
+                        probs, cls_to_idx = decoder_map[key]
+                        if probs.shape[0] == L and 'START' in cls_to_idx:
+                            mp = float(np.mean(probs[span, cls_to_idx['START']]))
+                            row.append(f"{mp:.6f}")
+                        else:
+                            row.append("")
+                    else:
+                        row.append("")
                 vals = np.mean(arr[span, :], axis=0)
-                w.writerow([sid, i, 'START', is_pos] + [f"{float(v):.6f}" for v in vals])
+                row += [f"{float(v):.6f}" for v in vals]
+                w.writerow(row)
                 i = seq.find('ATG', i + 1)
 
             # STOP (TAA/TAG/TGA)
@@ -83,8 +120,21 @@ def main():
                 while i != -1 and i + 2 < L:
                     span = slice(i, i+3)
                     is_pos = int(np.all(tgt[span] == P.STOP))
+                    row = [sid, i, 'STOP', is_pos]
+                    if decoder_map is not None:
+                        key = sid if sid in decoder_map else seq
+                        if key in decoder_map:
+                            probs, cls_to_idx = decoder_map[key]
+                            if probs.shape[0] == L and 'STOP' in cls_to_idx:
+                                mp = float(np.mean(probs[span, cls_to_idx['STOP']]))
+                                row.append(f"{mp:.6f}")
+                            else:
+                                row.append("")
+                        else:
+                            row.append("")
                     vals = np.mean(arr[span, :], axis=0)
-                    w.writerow([sid, i, 'STOP', is_pos] + [f"{float(v):.6f}" for v in vals])
+                    row += [f"{float(v):.6f}" for v in vals]
+                    w.writerow(row)
                     i = seq.find(stop, i + 1)
 
             # DSS (donor)
@@ -93,8 +143,21 @@ def main():
                 while i != -1 and i + 1 < L:
                     span = slice(i, i+2)
                     is_pos = int(np.all(tgt[span] == P.DSS))
+                    row = [sid, i, 'DSS', is_pos]
+                    if decoder_map is not None:
+                        key = sid if sid in decoder_map else seq
+                        if key in decoder_map:
+                            probs, cls_to_idx = decoder_map[key]
+                            if probs.shape[0] == L and 'DSS' in cls_to_idx:
+                                mp = float(np.mean(probs[span, cls_to_idx['DSS']]))
+                                row.append(f"{mp:.6f}")
+                            else:
+                                row.append("")
+                        else:
+                            row.append("")
                     vals = np.mean(arr[span, :], axis=0)
-                    w.writerow([sid, i, 'DSS', is_pos] + [f"{float(v):.6f}" for v in vals])
+                    row += [f"{float(v):.6f}" for v in vals]
+                    w.writerow(row)
                     i = seq.find(don, i + 1)
 
             # ASS (acceptor)
@@ -103,8 +166,21 @@ def main():
                 while i != -1 and i + 1 < L:
                     span = slice(i, i+2)
                     is_pos = int(np.all(tgt[span] == P.ASS))
+                    row = [sid, i, 'ASS', is_pos]
+                    if decoder_map is not None:
+                        key = sid if sid in decoder_map else seq
+                        if key in decoder_map:
+                            probs, cls_to_idx = decoder_map[key]
+                            if probs.shape[0] == L and 'ASS' in cls_to_idx:
+                                mp = float(np.mean(probs[span, cls_to_idx['ASS']]))
+                                row.append(f"{mp:.6f}")
+                            else:
+                                row.append("")
+                        else:
+                            row.append("")
                     vals = np.mean(arr[span, :], axis=0)
-                    w.writerow([sid, i, 'ASS', is_pos] + [f"{float(v):.6f}" for v in vals])
+                    row += [f"{float(v):.6f}" for v in vals]
+                    w.writerow(row)
                     i = seq.find(acc, i + 1)
 
     print(f"✓ Wrote motif table to: {out_path}")
