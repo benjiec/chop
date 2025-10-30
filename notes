@@ -194,6 +194,13 @@ time PYTHONPATH=. python scripts/stream-add-dg.py \
 PYTHONPATH=. python scripts/stream-summarize.py \
   --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz
 
+PYTHONPATH=. python scripts/stream-export-motif-table.py \
+  --fna data/GCF_002042975.1_round0_test_query.fna.gz \
+  --tsv data/GCF_002042975.1_round0_test_annotations.tsv \
+  --dss-motifs standard \
+  --stream data/GCF_002042975.1_round0_test_stream_thermo.pkl.gz \
+  --output-csv motif-thermo.csv
+
 
 # prepare training and testing data
 
@@ -225,6 +232,11 @@ PYTHONPATH=. python gene_predictor/train.py \
 PYTHONPATH=. python scripts/stream-add-gc.py \
   --fna data/GCA_001939145.1_round0_train_query.fna.gz \
   --win 20 \
+  --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
+
+time PYTHONPATH=. python scripts/stream-add-dinuc.py \
+  --fna data/GCA_001939145.1_round0_train_query.fna.gz \
+  --win 20 --mode weighted --temp-celsius 25 \
   --stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
 
 PYTHONPATH=. python scripts/stream-add-dg.py \

@@ -373,6 +373,69 @@ class TestStreamAddDinucScript(unittest.TestCase):
             self.assertAlmostEqual(float(arr[2, 0]), 2.0/3.0, places=6)
 
 
+class TestStreamExportMotifTableScript(unittest.TestCase):
+    def _write_fasta(self, path: Path, seqs):
+        with open(path, 'w') as f:
+            for sid, s in seqs.items():
+                f.write(f">{sid}\n")
+                f.write(s + "\n")
+
+    def _write_tsv(self, path: Path, rows):
+        with open(path, 'w') as f:
+            f.write("sequence_id\tgene_id\tgene_start\tgene_end\texon_start\texon_end\tstrand\n")
+            for r in rows:
+                f.write("\t".join(map(str, r)) + "\n")
+
+    def test_stream_export_motif_table_end_to_end(self):
+        # Build two contigs with clear START/STOP and splice motifs; annotate one gene per contig
+        # c1: NNNN ATG GGG TAA NNN -> START at 4, STOP at 11 (1-based start 5, end 14)
+        c1 = "NNNNATGGGTAANNN"
+        # c2: donor 'GT' at 6 (0-based), acceptor 'AG' at 10
+        c2 = "NNNNNGTNNAGNNN"
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            fa = td / 's.fa'
+            self._write_fasta(fa, {'c1': c1, 'c2': c2})
+            # TSV with one plus-strand exon on c1 covering the ATG..TAA, and two exons on c2 separated by intron
+            tsv = td / 'a.tsv'
+            rows = [
+                ('c1', 'g1', 5, 14, 5, 14, '+'),
+                ('c2', 'g2', 5, 13, 5, 8, '+'),
+                ('c2', 'g2', 5, 13, 11, 13, '+'),
+            ]
+            self._write_tsv(tsv, rows)
+
+            # Build a simple stream with two channels: c0=position index, c1=2.0
+            pkl = td / 'aux.pkl'
+            ns = NumericalStream.create_empty(str(pkl))
+            def gen_c0(seq: str):
+                return np.arange(len(seq), dtype=np.float32)
+            def gen_c1(seq: str):
+                return np.full(len(seq), 2.0, dtype=np.float32)
+            ns.add_channel(str(fa), 'c0_idx', gen_c0)
+            ns.add_channel(str(fa), 'c1_two', gen_c1)
+            ns.save()
+
+            # Run export script
+            out_csv = td / 'motifs.csv'
+            script_path = str((Path(__file__).parents[2] / 'scripts' / 'stream-export-motif-table.py').resolve())
+            mod = SourceFileLoader('stream_export_motif', script_path).load_module()
+            argv_backup = sys.argv
+            try:
+                sys.argv = ['stream-export-motif-table.py', '--fna', str(fa), '--tsv', str(tsv), '--stream', str(pkl), '--output-csv', str(out_csv)]
+                mod.main()
+            finally:
+                sys.argv = argv_backup
+
+            # Load CSV and check header
+            import csv as _csv
+            with open(out_csv, 'r', newline='') as f:
+                rdr = _csv.reader(f)
+                header = next(rdr)
+            self.assertEqual(header[:4], ['sequence_id', 'pos', 'motif_type', 'is_positive'])
+            self.assertEqual(header[4:], ['c0_idx', 'c1_two'])
+
+
 if __name__ == '__main__':
     unittest.main()
 
