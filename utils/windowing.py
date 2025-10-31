@@ -31,7 +31,7 @@ def compute_window_slices(seq_len: int, window: int, stride: int) -> List[Tuple[
     return slices
 
 
-def window_weights(length: int, mode: Literal['cosine', 'triangular'] = 'cosine', margin: Optional[int] = None) -> np.ndarray:
+def window_weights(length: int, mode: Literal['cosine', 'triangular', 'uniform'] = 'cosine', margin: Optional[int] = None) -> np.ndarray:
     """
     Return center-peaked weights of given length.
     - cosine: raised cosine over [0, L-1], peak at center, 0 at edges
@@ -45,6 +45,8 @@ def window_weights(length: int, mode: Literal['cosine', 'triangular'] = 'cosine'
     elif mode == 'triangular':
         mid = (length - 1) / 2.0
         w = 1.0 - (np.abs(np.arange(length) - mid) / (mid if mid > 0 else 1.0))
+    elif mode == 'uniform':
+        w = np.ones(length, dtype=np.float32)
     else:
         raise ValueError(f"Unknown weight mode: {mode}")
     # Ensure strictly positive weights to avoid zero-weight positions at window edges
@@ -66,7 +68,7 @@ def blend_logits(
     seq_len: int,
     slices: Sequence[Tuple[int, int]],
     window_logits: Sequence[np.ndarray],  # each (win_len, num_classes)
-    weight_mode: Literal['cosine', 'triangular'] = 'cosine',
+    weight_mode: Literal['cosine', 'triangular', 'uniform'] = 'cosine',
     margin: Optional[int] = None,
     exclude_edges: bool = False,
     eps: float = 1e-8,

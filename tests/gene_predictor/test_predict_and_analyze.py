@@ -324,7 +324,7 @@ class TestWindowedRunPredictions(unittest.TestCase):
             wl = np.zeros((e - s, 2), dtype=np.float32)
             wl[:, 1] = float(i)
             window_logits.append(wl)
-        blended = blend_logits(seq_len, expected_slices, window_logits, weight_mode='cosine', margin=None)
+        blended = blend_logits(seq_len, expected_slices, window_logits, weight_mode='uniform', margin=None)
         v = blended[:, 1]
         expected_p1 = 1.0 / (1.0 + np.exp(-v))
         np.testing.assert_allclose(r.probabilities[:, 1], expected_p1, rtol=1e-6, atol=1e-6)

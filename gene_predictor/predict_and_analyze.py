@@ -156,7 +156,7 @@ def predict_sequence_outputs(model, max_seq_len, seq_tokens_b: torch.Tensor,
     if eff_margin > 0:
         eff_margin = max(0, min(eff_margin, max(0, stride // 2 - 1)))
 
-    blended_logits_np = blend_logits(L, slices, window_logits_np, weight_mode='cosine', margin=eff_margin, exclude_edges=True)
+    blended_logits_np = blend_logits(L, slices, window_logits_np, weight_mode='uniform', margin=eff_margin, exclude_edges=True)
 
     # Strip prefix if applied
     if pad_len > 0:
