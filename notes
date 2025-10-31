@@ -250,3 +250,12 @@ PYTHONPATH=. python scripts/stream-add-dg.py \
   --fna data/GCA_001939145.1_round0_test_query.fna.gz \
   --win 25 --mode pf --temp 25 \
   --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz
+
+# summary
+
+PYTHONPATH=. python scripts/stream-export-motif-table.py \
+  --fna data/GCA_001939145.1_round0_test_query.fna.gz \
+  --tsv data/GCA_001939145.1_round0_test_annotations.tsv \
+  --dss-motifs dino \
+  --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz \
+  --output-csv motif-thermo.csv
