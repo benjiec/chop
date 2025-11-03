@@ -217,7 +217,8 @@ PYTHONPATH=. python gene_predictor/train.py \
   --loss-type event-head-bce \
   --start-weight 16 --start-neg-weight 1 --stop-weight 8 --stop-neg-weight 1 \
   --dss-weight 2 --dss-neg-weight 2 --ass-weight 2 --ass-neg-weight 2 \
-  --start-alpha 1 --stop-alpha 2 --dss-alpha 4 --ass-alpha 4
+  --start-alpha 1 --stop-alpha 2 --dss-alpha 3 --ass-alpha 3
+
 
 # thermo stream - algae/train
 PYTHONPATH=. python scripts/stream-add-gc.py \
@@ -259,3 +260,17 @@ PYTHONPATH=. python scripts/stream-export-motif-table.py \
   --dss-motifs dino \
   --stream data/GCA_001939145.1_round0_test_stream_thermo.pkl.gz \
   --output-csv motif-thermo.csv
+
+# predict
+
+scripts/predict-layout GCA_001939145.1 253 gene_predictor/gene_predictor_run_20251103_110403 model_epoch=22_val_f1=0.713.ckpt dino
+
+PYTHONPATH=. python gene_decoder/decode.py --num-sequences 253 --temperature-scale 1 --dss-motifs dino \
+  --output-tsv x.tsv --output-fna x.fna \
+  --min-prob 0.15 \
+  --input-pkl ...
+
+PYTHONPATH=. python gene_decoder/assess_decoding.py \
+  --expected-tsv data/GCA_001939145.1_round0_test_annotations.tsv \
+  --topk-boundaries 3 \
+  --decoded-tsv x.tsv 
