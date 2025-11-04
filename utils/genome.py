@@ -532,15 +532,12 @@ class AnnotatedGenomeDataset:
             return
 
         target_num = max(0, int(self.num_windows))
-        total_available = len(self.windows)
-        if target_num >= total_available:
-            self._selected_window_indices = list(range(total_available))
-            return
 
         # Determine per-class target and perform recycling-based balancing via list replication
         nonempty = {c: list(lst) for c, lst in class_windows.items() if lst}
         if not nonempty:
-            self._selected_window_indices = []
+            print("none of the classes have windows assigned, using all windows")
+            self._selected_window_indices = list(range(len(self.windows)))
             return
 
         num_classes = len(nonempty)
