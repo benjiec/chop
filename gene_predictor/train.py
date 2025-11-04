@@ -242,6 +242,12 @@ def main():
     if args.aux_channels:
         aux_channels = [int(x) for x in str(args.aux_channels).split(',') if str(x).strip() != '']
 
+    if args.boost_start_stop:
+        print("boost START and STOP windows")
+        window_boost_classes = [P.START, P.STOP]
+    else:
+        window_boost_classes = None
+
     if args.num_windows:
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
@@ -250,16 +256,12 @@ def main():
             stride=args.stride,
             num_windows=args.num_windows,
             class_weights=class_weights,
+            window_boost_classes = window_boost_classes,
             aux_stream_path=args.aux_stream,
             aux_normalize=bool(args.aux_normalize),
             aux_channels=aux_channels,
         )
     else:
-        if args.boost_start_stop:
-            print("boost START and STOP windows")
-            window_boost_classes = [P.START, P.STOP]
-        else:
-            window_boost_classes = None
         dataset = AnnotatedGenomeDataset(
             args.fna_fn,
             args.tsv_fn,
