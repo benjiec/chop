@@ -153,7 +153,7 @@ def main():
     parser.add_argument('--model-path', type=str, required=True,
                        help='Checkpoint path. If relative, it is resolved under <run-dir>/checkpoints/. Absolute paths are accepted.')
     parser.add_argument('--num-windows', type=int, required=True)
-    parser.add_argument('--window-stride', type=int, required=True)
+    parser.add_argument('--stride', type=int, required=True)
     parser.add_argument('--dss-motifs', type=str, required=True, choices=['standard', 'dino'], help='Donor splice site motifs to use for event-based analysis: standard or dino')
 
     args = parser.parse_args()
@@ -176,7 +176,7 @@ def main():
             args.fna_fn,
             args.tsv_fn,
             window=max_seq_len,
-            stride=args.window_stride,
+            stride=args.stride,
             num_windows=args.num_windows,
             class_weights=model.config["loss"]["class_weights"]
         )
@@ -185,7 +185,7 @@ def main():
             args.fna_fn,
             args.tsv_fn,
             window=max_seq_len,
-            stride=args.window_stride,
+            stride=args.stride,
             class_weights=model.config["loss"]["class_weights"]
         )
 
