@@ -222,6 +222,10 @@ PYTHONPATH=. python gene_predictor/train.py \
 # add for cross attention
   --aux-stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz
 
+# only start/stop
+  --start-alpha 2 --stop-alpha 2 --dss-alpha 0.1 --ass-alpha 0.1 \
+  --stride 200 --num-windows 5000 --boost-start-stop
+
 
 PYTHONPATH=. python gene_predictor/window_validation.py \
   --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz \
@@ -246,6 +250,14 @@ PYTHONPATH=. python gene_decoder/assess_decoding.py \
   --topk-boundaries 3 \
   --decoded-tsv x.tsv 
 
+PYTHONPATH=. python gene_predictor/predict_and_analyze_inspect.py \
+  --fna-fn data/GCA_001939145.1_round0_train_query.fna.gz \
+  --tsv-fn data/GCA_001939145.1_round0_train_annotations.tsv \
+  --aux-stream data/GCA_001939145.1_round0_train_stream_thermo.pkl.gz \
+  --dss-motifs dino \
+  --num-contigs 20 \
+  --run-dir gene_predictor/gene_predictor_run_20251026_212218 \
+  --model-path model_epoch=03_val_loss=0.017.ckpt
 
 # thermo stream - algae/train
 PYTHONPATH=. python scripts/stream-add-gc.py \
